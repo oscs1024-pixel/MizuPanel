@@ -1,0 +1,5 @@
+server_url: "ws://your-panel-host:8080/api/agent/ws"
+token: "same-token-as-server-agent-token"
+node_id: "oracle-sg-01"
+name: "Oracle SG"
+interval: "5s"

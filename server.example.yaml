@@ -1,0 +1,6 @@
+listen: ":8080"
+database_path: "./data/mizupanel.db"
+metrics_retention: "6h"
+cleanup_interval: "10m"
+admin_password: "change-this-admin-password"
+agent_token: "change-this-to-a-random-secret"

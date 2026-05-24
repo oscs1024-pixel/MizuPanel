@@ -1,0 +1,20 @@
+[Unit]
+Description=MizuPanel Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/mizupanel/bin/mizupanel-agent -config /etc/mizupanel/agent.yaml
+Restart=always
+RestartSec=5s
+User=mizupanel-agent
+Group=mizupanel-agent
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/mizupanel
+
+[Install]
+WantedBy=multi-user.target

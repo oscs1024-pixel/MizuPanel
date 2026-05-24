@@ -1,0 +1,26 @@
+.claude
+
+# Local config
+server.yaml
+agent.yaml
+*.local.yaml
+
+# Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Go
+bin/
+*.test
+coverage.out
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

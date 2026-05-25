@@ -1,19 +1,26 @@
 package main
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/mizupanel/mizupanel/internal/server/config"
-)
+func TestReleasePathsResolveNextToRootExecutable(t *testing.T) {
+	paths := releasePaths("/opt/mizupanel/mizupanel-server")
 
-func TestRequireServerSecretsRejectsEmptySecrets(t *testing.T) {
-	if err := requireServerSecrets(config.Config{}); err == nil {
-		t.Fatal("requireServerSecrets returned nil, want error")
+	if paths.StaticDir != "/opt/mizupanel/web" {
+		t.Fatalf("StaticDir = %q, want /opt/mizupanel/web", paths.StaticDir)
+	}
+	if paths.DownloadDir != "/opt/mizupanel/downloads" {
+		t.Fatalf("DownloadDir = %q, want /opt/mizupanel/downloads", paths.DownloadDir)
 	}
 }
 
-func TestRequireServerSecretsAcceptsConfiguredSecrets(t *testing.T) {
-	if err := requireServerSecrets(config.Config{AdminPassword: "admin-secret"}); err != nil {
-		t.Fatalf("requireServerSecrets returned error: %v", err)
+func TestRuntimeReleasePathsUseExecutablePath(t *testing.T) {
+	paths, err := runtimeReleasePaths(func() (string, error) {
+		return "/opt/mizupanel/mizupanel-server", nil
+	})
+	if err != nil {
+		t.Fatalf("runtimeReleasePaths returned error: %v", err)
+	}
+	if paths.StaticDir != "/opt/mizupanel/web" || paths.DownloadDir != "/opt/mizupanel/downloads" {
+		t.Fatalf("paths = %#v", paths)
 	}
 }

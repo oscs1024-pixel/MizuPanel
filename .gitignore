@@ -7,6 +7,7 @@ agent.yaml
 
 # Runtime data
 data/
+dist/
 *.db
 *.db-shm
 *.db-wal
@@ -15,6 +16,7 @@ data/
 bin/
 *.test
 coverage.out
+dist/
 
 # Frontend
 web/node_modules/
@@ -24,3 +26,6 @@ web/dist/
 .DS_Store
 .vscode/
 .idea/
+
+selfhost_console_ai_build_doc.md
+planning-with-files.md

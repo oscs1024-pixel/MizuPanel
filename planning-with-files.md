@@ -16,8 +16,8 @@ v0.1 包含：
 - Dashboard 展示节点总览、节点详情、最新指标和历史图表。
 - 指标保留时间默认 `6h`，并可通过 Server 配置文件调整。
 - v0.1 前端时间范围只支持 `1h` 和 `6h`。
-- 敏感管理操作前需要最小登录门禁。
-- 添加主机会生成 install token 和安装命令。
+- v0.1 暂时不启用登录门禁，优先保证核心监控和添加主机流程可用。
+- 添加主机会直接生成 install token 和安装命令。
 - 安装命令以 `curl -fsSL` 开头，并从 Server 管理的端点下载安装脚本和 Agent 二进制。
 - 安装脚本在目标机器上检测 OS/arch，并下载对应架构的 Agent 二进制。
 - Agent 首次注册后使用长期的 per-node token。
@@ -42,7 +42,7 @@ v0.1 不包含：
 - 增加 Server 指标保留配置要求。
 - 增加默认保留时间：`6h`。
 - 增加清理间隔配置，默认 `10m`。
-- 增加“登录后才能生成安装命令”的要求。
+- 记录 v0.1 暂时去掉登录门禁，添加主机可直接生成安装命令。
 - 将旧的 `server.yaml` token 占位流程替换为 install-token 和 node-token 语言。
 - 增加 Makefile / release artifact 要求。
 - 增加 Agent 二进制下载和安装脚本下载要求。
@@ -51,14 +51,14 @@ v0.1 不包含：
 
 安装流程应由 Server 驱动，并尽量降低用户操作成本：
 
-1. 用户登录 Dashboard。
+1. 用户打开 Dashboard。
 2. 用户从筛选工具栏点击 `添加主机`，不要放在顶部导航。
 3. Server 为本次添加主机请求创建 install token。
 4. 前端渲染完整的多行 `curl -fsSL` 命令。
 5. 命令从 Server 下载 `install-agent.sh`。
 6. 命令传入 install token 和 Agent 二进制下载基础地址。
 7. 安装脚本在目标机器上用 `uname` 检测 OS/arch，并拼出正确的 Agent 二进制 URL 后下载。
-8. 安装脚本写入目标机器的 `/etc/mizupanel/agent.yaml`。
+8. 安装脚本写入目标机器的 `/usr/local/mizupanel/agent.yaml`。
 9. Agent 首次注册后获取 per-node 长期 token，并在后续连接中使用该 token。
 10. 已有节点后续可以从 UI 轮换自己的 per-node token。
 
@@ -85,8 +85,8 @@ v0.1 不包含：
 - `internal/server/agenthub/hub.go` — Agent WebSocket 处理。
 - `internal/server/api/routes.go` — HTTP 路由注册。
 - `internal/server/api/nodes.go` — 节点和指标 REST handler。
-- `internal/server/api/auth.go` — 最小登录 / session 门禁。
-- `internal/server/api/install.go` — install-token 生成和安装命令支持。
+- `internal/server/app/app.go` — HTTP 路由组合、install-token 生成、安装命令和静态资源服务。
+- `internal/server/api/routes.go` / `nodes.go` — 节点和指标 REST handler。
 - `internal/server/downloads/` — Agent 二进制下载端点或文件服务支持。
 
 ### 共享协议
@@ -133,9 +133,9 @@ v0.1 不包含：
    - 文件配置可覆盖默认值。
    - 非法保留时间返回错误。
 
-2. 认证 / 安装流程测试先于 handler 实现：
-   - 生成安装命令前必须登录。
-   - 已登录用户可以创建 install token。
+2. 安装流程测试先于 handler 实现：
+   - Dashboard 无需登录即可进入。
+   - 用户可以直接创建 install token。
    - 生成的安装命令包含 `curl -fsSL`、install token 和二进制基础下载地址。
    - 关闭安装面板后焦点回到打开它的按钮。
 
@@ -177,10 +177,10 @@ v0.1 不包含：
 - 增加初始 Server、Agent 和共享协议包布局。
 - 增加 Makefile 和 release artifact 布局。
 
-### Phase 2：Server 配置、认证和 SQLite
+### Phase 2：Server 配置和 SQLite
 
 - 实现 Server 配置和默认值。
-- 实现最小登录 / session 门禁。
+- v0.1 暂时不启用登录 / session 门禁。
 - 实现 SQLite schema 和 repository 层。
 - 实现 retention cleanup。
 
@@ -210,7 +210,7 @@ v0.1 不包含：
 - 实现总览页。
 - 实现节点详情页。
 - 实现图表和空 / 离线状态。
-- 实现登录门禁和添加主机流程。
+- 实现无登录添加主机流程。
 
 ### Phase 7：Packaging
 

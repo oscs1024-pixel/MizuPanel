@@ -40,15 +40,17 @@ vi.mock('./api/client', () => ({
       }
     ]
   })),
-  getNodeMetrics: vi.fn(async () => ({ metrics: [] }))}))
+  getNodeMetrics: vi.fn(async () => ({ metrics: [] }))
+}))
 
 describe('App', () => {
-  test('renders dashboard title and node card', async () => {
+  test('renders dashboard title and node card without authentication', async () => {
     render(<App />)
 
     expect(await screen.findByText('MizuPanel')).toBeInTheDocument()
     expect(screen.getByText('轻量级自托管服务器监控面板')).toBeInTheDocument()
     expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
     expect(screen.getByText('在线节点')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
   })
 })

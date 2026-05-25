@@ -22,16 +22,27 @@ type Options struct {
 	AgentToken  string
 	Interval    int
 	InstallAuth *InstallAuthStore
+	AgentTokens *store.AgentTokenStore
+}
+
+const (
+	installTokenTTL  = 30 * time.Minute
+	maxInstallTokens = 1024
+)
+
+type installToken struct {
+	nodeID    string
+	expiresAt time.Time
 }
 
 type InstallAuthStore struct {
 	nodeTokens    map[string]string
-	installTokens map[string]string
+	installTokens map[string]installToken
 	mu            sync.Mutex
 }
 
 func NewInstallAuthStore() *InstallAuthStore {
-	return &InstallAuthStore{nodeTokens: make(map[string]string), installTokens: make(map[string]string)}
+	return &InstallAuthStore{nodeTokens: make(map[string]string), installTokens: make(map[string]installToken)}
 }
 
 func randomNodeToken() (string, error) {
@@ -42,23 +53,47 @@ func randomNodeToken() (string, error) {
 	return hex.EncodeToString(bytes[:]), nil
 }
 
-func (s *InstallAuthStore) CreateInstallToken(token string) {
-	s.mu.Lock()
-	s.installTokens[token] = ""
-	s.mu.Unlock()
-}
-
-func (s *InstallAuthStore) ExchangeInstallToken(token string, nodeID string) (string, bool) {
+func (s *InstallAuthStore) CreateInstallToken(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if nodeIDForToken, ok := s.installTokens[token]; !ok || nodeIDForToken != "" {
+	now := time.Now()
+	s.pruneExpiredInstallTokensLocked(now)
+	if len(s.installTokens) >= maxInstallTokens {
+		return false
+	}
+	s.installTokens[token] = installToken{expiresAt: now.Add(installTokenTTL)}
+	return true
+}
+
+func (s *InstallAuthStore) pruneExpiredInstallTokensLocked(now time.Time) {
+	for token, entry := range s.installTokens {
+		if now.After(entry.expiresAt) {
+			delete(s.installTokens, token)
+		}
+	}
+}
+
+func (s *InstallAuthStore) ExchangeInstallToken(token string, nodeID string, saveToken func(string) error) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.installTokens[token]
+	if !ok || entry.nodeID != "" {
+		return "", false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.installTokens, token)
 		return "", false
 	}
 	nodeToken, err := randomNodeToken()
 	if err != nil {
 		return "", false
 	}
-	s.installTokens[token] = nodeID
+	if saveToken != nil {
+		if err := saveToken(nodeToken); err != nil {
+			return "", false
+		}
+	}
+	delete(s.installTokens, token)
 	s.nodeTokens[nodeID] = nodeToken
 	return nodeToken, true
 }
@@ -70,12 +105,22 @@ func (s *InstallAuthStore) NodeToken(nodeID string) (string, bool) {
 	return token, ok
 }
 
-func (s *InstallAuthStore) MayAuthenticate(token string) bool {
+func (s *InstallAuthStore) MayAuthenticateInstallToken(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if nodeID, ok := s.installTokens[token]; ok {
-		return nodeID == ""
+	if installToken, ok := s.installTokens[token]; ok {
+		if time.Now().After(installToken.expiresAt) {
+			delete(s.installTokens, token)
+			return false
+		}
+		return installToken.nodeID == ""
 	}
+	return false
+}
+
+func (s *InstallAuthStore) MayAuthenticateNodeToken(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, nodeToken := range s.nodeTokens {
 		if token == nodeToken {
 			return true
@@ -109,18 +154,40 @@ func NewHandler(nodes *store.NodeStore, metrics *store.MetricStore, options Opti
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	suppliedToken := r.URL.Query().Get("token")
-	if h.options.AgentToken == "" && h.options.InstallAuth == nil {
+	suppliedToken := bearerToken(r)
+	usingHeaderToken := suppliedToken != ""
+	if suppliedToken == "" {
+		suppliedToken = r.URL.Query().Get("token")
+	}
+	usingAgentToken := usingHeaderToken && h.options.AgentToken != "" && suppliedToken == h.options.AgentToken
+	persistentNodeID := ""
+	usingPersistentNodeToken := false
+	if usingHeaderToken && !usingAgentToken && h.options.AgentTokens != nil && suppliedToken != "" {
+		var err error
+		persistentNodeID, usingPersistentNodeToken, err = h.options.AgentTokens.NodeIDForToken(r.Context(), suppliedToken)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+	if h.options.AgentToken == "" && h.options.InstallAuth == nil && !usingPersistentNodeToken {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if h.options.AgentToken != "" && suppliedToken != h.options.AgentToken && h.options.InstallAuth == nil {
+	if h.options.InstallAuth == nil && !usingAgentToken && !usingPersistentNodeToken {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if h.options.InstallAuth != nil && !h.options.InstallAuth.MayAuthenticate(suppliedToken) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	if h.options.InstallAuth != nil && !usingAgentToken && !usingPersistentNodeToken {
+		if usingHeaderToken {
+			if !h.options.InstallAuth.MayAuthenticateNodeToken(suppliedToken) && !h.options.InstallAuth.MayAuthenticateInstallToken(suppliedToken) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		} else if !h.options.InstallAuth.MayAuthenticateInstallToken(suppliedToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -148,12 +215,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodeToken := ""
-	if h.options.InstallAuth != nil {
+	if usingPersistentNodeToken {
+		if persistentNodeID != nodeID {
+			return
+		}
+		nodeToken = suppliedToken
+	} else if h.options.InstallAuth != nil && !usingAgentToken {
 		var ok bool
 		if existingNodeToken, exists := h.options.InstallAuth.NodeToken(nodeID); exists && suppliedToken == existingNodeToken {
 			nodeToken = existingNodeToken
-		} else if nodeToken, ok = h.options.InstallAuth.ExchangeInstallToken(suppliedToken, nodeID); !ok {
-			return
+		} else {
+			saveToken := func(token string) error {
+				if h.options.AgentTokens == nil {
+					return nil
+				}
+				return h.options.AgentTokens.SaveNodeToken(r.Context(), nodeID, token, time.Now().UTC())
+			}
+			if nodeToken, ok = h.options.InstallAuth.ExchangeInstallToken(suppliedToken, nodeID, saveToken); !ok {
+				return
+			}
 		}
 	}
 	sessionID := h.startSession(nodeID)
@@ -215,6 +295,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func bearerToken(r *http.Request) string {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return parts[1]
 }
 
 func nodeIDForHello(hello protocol.HelloMessage) string {

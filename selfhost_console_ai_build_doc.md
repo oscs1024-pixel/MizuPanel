@@ -404,16 +404,17 @@ CREATE TABLE node_metrics (
 );
 ```
 
-### agent_tokens 表
+### node_tokens 表
 
 ```sql
-CREATE TABLE agent_tokens (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE node_tokens (
+  node_id TEXT PRIMARY KEY,
   token TEXT NOT NULL UNIQUE,
-  name TEXT,
   created_at DATETIME NOT NULL
 );
 ```
+
+`token` 存储为带版本前缀的哈希值，Agent 连接时使用明文 node token 通过 `Authorization: Bearer` 发送。
 
 ---
 
@@ -421,13 +422,7 @@ CREATE TABLE agent_tokens (
 
 ### 登录
 
-安装命令、install token 生成等敏感管理操作前必须先完成最小管理员登录。
-
-```txt
-POST /api/auth/login
-GET  /api/auth/me
-POST /api/auth/logout
-```
+v0.1 暂时不启用登录门禁，先保证 Dashboard、节点接入和添加主机流程可直接使用。
 
 ### 节点
 

@@ -20,7 +20,8 @@ vi.mock('./api/client', () => ({
       }
     ]
   })),
-  getNodeMetrics: vi.fn(async () => ({ metrics: [] }))}))
+  getNodeMetrics: vi.fn(async () => ({ metrics: [] }))
+}))
 
 describe('App routing', () => {
   test('uses /nodes/:id as the selected node path', async () => {

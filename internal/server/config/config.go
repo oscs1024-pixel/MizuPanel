@@ -16,7 +16,7 @@ type Config struct {
 	MetricsRetention time.Duration
 	CleanupInterval  time.Duration
 	AgentToken       string
-	AdminPassword    string
+	PublicURL        string
 }
 
 type fileConfig struct {
@@ -25,7 +25,7 @@ type fileConfig struct {
 	MetricsRetention string `yaml:"metrics_retention"`
 	CleanupInterval  string `yaml:"cleanup_interval"`
 	AgentToken       string `yaml:"agent_token"`
-	AdminPassword    string `yaml:"admin_password"`
+	PublicURL        string `yaml:"public_url"`
 }
 
 func Load(path string) (Config, error) {
@@ -35,7 +35,6 @@ func Load(path string) (Config, error) {
 		MetricsRetention: 6 * time.Hour,
 		CleanupInterval:  10 * time.Minute,
 		AgentToken:       os.Getenv("MIZUPANEL_AGENT_TOKEN"),
-		AdminPassword:    os.Getenv("MIZUPANEL_ADMIN_PASSWORD"),
 	}
 	if path == "" {
 		return cfg, nil
@@ -73,8 +72,8 @@ func Load(path string) (Config, error) {
 	if file.AgentToken != "" {
 		cfg.AgentToken = file.AgentToken
 	}
-	if file.AdminPassword != "" {
-		cfg.AdminPassword = file.AdminPassword
+	if file.PublicURL != "" {
+		cfg.PublicURL = strings.TrimRight(file.PublicURL, "/")
 	}
 	return cfg, nil
 }

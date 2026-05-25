@@ -33,7 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadOverridesFromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server.yaml")
-	content := []byte("listen: ':9090'\ndatabase_path: /tmp/mizu.db\nmetrics_retention: 24h\ncleanup_interval: 30m\nagent_token: secret\nadmin_password: admin-secret\n")
+	content := []byte("listen: ':9090'\ndatabase_path: /tmp/mizu.db\nmetrics_retention: 24h\ncleanup_interval: 30m\nagent_token: secret\npublic_url: https://panel.example\n")
 	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -58,8 +58,8 @@ func TestLoadOverridesFromFile(t *testing.T) {
 	if cfg.AgentToken != "secret" {
 		t.Fatalf("AgentToken = %q", cfg.AgentToken)
 	}
-	if cfg.AdminPassword != "admin-secret" {
-		t.Fatalf("AdminPassword = %q", cfg.AdminPassword)
+	if cfg.PublicURL != "https://panel.example" {
+		t.Fatalf("PublicURL = %q", cfg.PublicURL)
 	}
 }
 

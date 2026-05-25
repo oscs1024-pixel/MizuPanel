@@ -2,7 +2,9 @@ package agenthub
 
 import (
 	"database/sql"
+	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,7 @@ func TestInstallAuthStoreGeneratesRandomNodeToken(t *testing.T) {
 	auth := NewInstallAuthStore()
 	auth.CreateInstallToken("install-token")
 
-	nodeToken, ok := auth.ExchangeInstallToken("install-token", "node-1")
+	nodeToken, ok := auth.ExchangeInstallToken("install-token", "node-1", nil)
 	if !ok {
 		t.Fatal("ExchangeInstallToken returned false")
 	}
@@ -62,12 +64,276 @@ func TestAgentWebSocketExchangesInstallTokenForNodeToken(t *testing.T) {
 		t.Fatalf("NodeToken = %q, want generated node token", ack.NodeToken)
 	}
 
-	secondURL := "ws" + strings.TrimPrefix(server.URL, "http") + "?token=" + ack.NodeToken
-	secondConn, _, err := websocket.DefaultDialer.Dial(secondURL, nil)
+	secondURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	secondHeader := http.Header{"Authorization": {"Bearer " + ack.NodeToken}}
+	secondConn, _, err := websocket.DefaultDialer.Dial(secondURL, secondHeader)
 	if err != nil {
 		t.Fatalf("dial node token websocket: %v", err)
 	}
 	secondConn.Close()
+}
+
+func TestAgentWebSocketRejectsConfiguredAgentTokenInQuery(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentToken: "secret", Interval: 5})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "?token=secret"
+	_, response, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Fatal("dial succeeded, want unauthorized failure")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %#v, want 401", response)
+	}
+}
+
+func TestAgentWebSocketRejectsPersistedNodeTokenInQuery(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tokens := store.NewAgentTokenStore(database)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "node-token", time.Now().UTC()); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentTokens: tokens, Interval: 5})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "?token=node-token"
+	_, response, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Fatal("dial succeeded, want unauthorized failure")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %#v, want 401", response)
+	}
+}
+
+func TestAgentWebSocketAcceptsConfiguredAgentTokenWhenInstallAuthExists(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	auth := NewInstallAuthStore()
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentToken: "secret", InstallAuth: auth, Interval: 5})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer secret"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(protocol.HelloMessage{Type: protocol.MessageTypeHello, NodeID: "node-1", Hostname: "oracle-sg"}); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	var ack protocol.HelloAckMessage
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack.Type != protocol.MessageTypeHelloAck || ack.NodeID != "node-1" {
+		t.Fatalf("unexpected ack: %#v", ack)
+	}
+}
+
+func TestInstallAuthStoreRejectsExpiredInstallToken(t *testing.T) {
+	auth := NewInstallAuthStore()
+	auth.CreateInstallToken("install-token")
+	auth.installTokens["install-token"] = installToken{expiresAt: time.Now().Add(-time.Second)}
+
+	if auth.MayAuthenticateInstallToken("install-token") {
+		t.Fatal("MayAuthenticateInstallToken accepted expired install token")
+	}
+	if _, ok := auth.ExchangeInstallToken("install-token", "node-1", nil); ok {
+		t.Fatal("ExchangeInstallToken accepted expired install token")
+	}
+}
+
+func TestInstallAuthStorePrunesAndCapsOutstandingInstallTokens(t *testing.T) {
+	auth := NewInstallAuthStore()
+	auth.CreateInstallToken("expired")
+	auth.installTokens["expired"] = installToken{expiresAt: time.Now().Add(-time.Second)}
+
+	for i := range maxInstallTokens {
+		if !auth.CreateInstallToken("install-token-" + strconv.Itoa(i)) {
+			t.Fatalf("CreateInstallToken rejected token %d before cap", i)
+		}
+	}
+	if auth.CreateInstallToken("one-too-many") {
+		t.Fatal("CreateInstallToken accepted token beyond cap")
+	}
+	if _, ok := auth.installTokens["expired"]; ok {
+		t.Fatal("expired token was not pruned before cap check")
+	}
+}
+
+func TestAgentWebSocketAcceptsPersistedNodeTokenWithoutInstallAuth(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tokens := store.NewAgentTokenStore(database)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "node-token", time.Now().UTC()); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentTokens: tokens, Interval: 5})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer node-token"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(protocol.HelloMessage{Type: protocol.MessageTypeHello, NodeID: "node-1", Hostname: "oracle-sg"}); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	var ack protocol.HelloAckMessage
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack.NodeID != "node-1" {
+		t.Fatalf("NodeID = %q, want node-1", ack.NodeID)
+	}
+}
+
+func TestAgentWebSocketPrefersConfiguredAgentTokenOverStoredNodeToken(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tokens := store.NewAgentTokenStore(database)
+	if err := tokens.SaveNodeToken(t.Context(), "node-2", "secret", time.Now().UTC()); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentToken: "secret", AgentTokens: tokens, Interval: 5})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer secret"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(protocol.HelloMessage{Type: protocol.MessageTypeHello, NodeID: "node-1", Hostname: "oracle-sg"}); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	var ack protocol.HelloAckMessage
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack.NodeID != "node-1" {
+		t.Fatalf("NodeID = %q, want node-1", ack.NodeID)
+	}
+}
+
+func TestBearerTokenAcceptsCaseInsensitiveScheme(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/ws", nil)
+	request.Header.Set("Authorization", "bearer secret")
+
+	if got := bearerToken(request); got != "secret" {
+		t.Fatalf("bearerToken = %q, want secret", got)
+	}
+}
+
+func TestAgentWebSocketReconnectsWithPersistedNodeTokenAfterRestart(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tokens := store.NewAgentTokenStore(database)
+	auth := NewInstallAuthStore()
+	auth.CreateInstallToken("install-token")
+	firstHandler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{InstallAuth: auth, AgentTokens: tokens, Interval: 5})
+	firstServer := httptest.NewServer(firstHandler)
+
+	firstURL := "ws" + strings.TrimPrefix(firstServer.URL, "http") + "?token=install-token"
+	firstConn, _, err := websocket.DefaultDialer.Dial(firstURL, nil)
+	if err != nil {
+		firstServer.Close()
+		t.Fatalf("dial first websocket: %v", err)
+	}
+	if err := firstConn.WriteJSON(protocol.HelloMessage{Type: protocol.MessageTypeHello, NodeID: "node-1", Hostname: "oracle-sg"}); err != nil {
+		firstConn.Close()
+		firstServer.Close()
+		t.Fatalf("write first hello: %v", err)
+	}
+	var firstAck protocol.HelloAckMessage
+	if err := firstConn.ReadJSON(&firstAck); err != nil {
+		firstConn.Close()
+		firstServer.Close()
+		t.Fatalf("read first ack: %v", err)
+	}
+	firstConn.Close()
+	firstServer.Close()
+	if firstAck.NodeToken == "" {
+		t.Fatal("first ack node token is empty")
+	}
+
+	restartedHandler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{InstallAuth: NewInstallAuthStore(), AgentTokens: store.NewAgentTokenStore(database), Interval: 5})
+	restartedServer := httptest.NewServer(restartedHandler)
+	t.Cleanup(restartedServer.Close)
+
+	reconnectURL := "ws" + strings.TrimPrefix(restartedServer.URL, "http")
+	reconnectHeader := http.Header{"Authorization": {"Bearer " + firstAck.NodeToken}}
+	reconnectConn, _, err := websocket.DefaultDialer.Dial(reconnectURL, reconnectHeader)
+	if err != nil {
+		t.Fatalf("dial restarted websocket: %v", err)
+	}
+	defer reconnectConn.Close()
+	if err := reconnectConn.WriteJSON(protocol.HelloMessage{Type: protocol.MessageTypeHello, NodeID: "node-1", Hostname: "oracle-sg"}); err != nil {
+		t.Fatalf("write reconnect hello: %v", err)
+	}
+	var reconnectAck protocol.HelloAckMessage
+	if err := reconnectConn.ReadJSON(&reconnectAck); err != nil {
+		t.Fatalf("read reconnect ack: %v", err)
+	}
+	if reconnectAck.NodeToken != firstAck.NodeToken {
+		t.Fatalf("reconnect node token = %q, want persisted token", reconnectAck.NodeToken)
+	}
 }
 
 func TestAgentWebSocketRegistersNodeAndStoresMetrics(t *testing.T) {
@@ -86,8 +352,9 @@ func TestAgentWebSocketRegistersNodeAndStoresMetrics(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "?token=secret"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer secret"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}

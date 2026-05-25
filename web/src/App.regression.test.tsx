@@ -1,13 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from './App'
-import { getNodeMetrics, getNodes } from './api/client'
+import { createInstallCommand, getNodeMetrics, getNodes } from './api/client'
 import type { Metric, Node } from './types'
 
 vi.mock('./api/client', () => ({
+  createInstallCommand: vi.fn(),
   getNodes: vi.fn(),
-  getNodeMetrics: vi.fn()}))
+  getNodeMetrics: vi.fn()
+}))
 
 const nodes: Node[] = [
   {
@@ -58,6 +60,13 @@ const metric: Metric = {
 }
 
 describe('App regression behavior', () => {
+  beforeEach(() => {
+    vi.mocked(createInstallCommand).mockReset()
+    vi.mocked(createInstallCommand).mockResolvedValue({ command: 'install command', install_token: 'install-token' })
+    vi.mocked(getNodes).mockReset()
+    vi.mocked(getNodeMetrics).mockReset()
+  })
+
   test('falls back to the first node when the route node id is invalid', async () => {
     window.history.pushState({}, '', '/nodes/missing-node')
     vi.mocked(getNodes).mockResolvedValueOnce({ nodes })
@@ -84,6 +93,41 @@ describe('App regression behavior', () => {
 
     expect(await screen.findAllByText('Tokyo JP')).toHaveLength(2)
     expect(screen.getAllByText('等待指标数据').length).toBeGreaterThan(0)
+  })
+
+  test('shows a dashboard error when nodes fail without opening login', async () => {
+    vi.mocked(getNodes).mockRejectedValueOnce(new Error('network'))
+    vi.mocked(getNodeMetrics).mockResolvedValue({ metrics: [] })
+
+    render(<App />)
+
+    expect(await screen.findByText('network')).toBeInTheDocument()
+    expect(screen.getByText('暂无节点接入')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
+  })
+
+  test('shows metric load errors without opening login', async () => {
+    vi.mocked(getNodes).mockResolvedValueOnce({ nodes })
+    vi.mocked(getNodeMetrics).mockRejectedValueOnce(Object.assign(new Error('Request failed: 401'), { status: 401 }))
+
+    render(<App />)
+
+    expect(await screen.findByText('Request failed: 401')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
+    expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
+  })
+
+  test('shows a dashboard error when install command generation fails', async () => {
+    vi.mocked(getNodes).mockResolvedValue({ nodes })
+    vi.mocked(getNodeMetrics).mockResolvedValue({ metrics: [] })
+    vi.mocked(createInstallCommand).mockRejectedValueOnce(new Error('network'))
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
+
+    expect(await screen.findByText('network')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
   })
 
   test('restores encoded route node ids without falling back to the first node', async () => {

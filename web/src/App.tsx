@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { createInstallCommand, getNodeMetrics, getNodes } from './api/client'
 import { MetricCard } from './components/MetricCard'
@@ -19,6 +19,8 @@ function nodePath(nodeID: string) {
   return `/nodes/${encodeURIComponent(nodeID)}`
 }
 
+type HostFilter = 'all' | 'online' | 'offline'
+
 export default function App() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [selectedNodeID, setSelectedNodeID] = useState<string>()
@@ -26,16 +28,18 @@ export default function App() {
   const [range, setRange] = useState<RangeOption>('1h')
   const [error, setError] = useState<string>()
   const [search, setSearch] = useState('')
+  const [hostFilter, setHostFilter] = useState<HostFilter>('all')
   const [installCommand, setInstallCommand] = useState<string>()
   const [installCommandWarning, setInstallCommandWarning] = useState<string>()
+  const [installCommandCopied, setInstallCommandCopied] = useState(false)
+  const [loading, setLoading] = useState(true)
   const addHostButtonRef = useRef<HTMLButtonElement>(null)
+  const installCommandCodeRef = useRef<HTMLElement>(null)
 
-  useEffect(() => {
-    let cancelled = false
+  const loadNodes = useCallback(() => {
     const pathMatch = window.location.pathname.match(/^\/nodes\/([^/]+)$/)
-    getNodes()
+    return getNodes()
       .then((response) => {
-        if (cancelled) return
         setNodes(response.nodes)
         const routeNodeID = decodeRouteNodeID(pathMatch?.[1])
         const routeNodeExists = routeNodeID ? response.nodes.some((node) => node.id === routeNodeID) : false
@@ -44,15 +48,21 @@ export default function App() {
           return routeNodeExists ? routeNodeID : response.nodes[0]?.id
         })
       })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    loadNodes()
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : '节点加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [])
-
-  const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeID), [nodes, selectedNodeID])
+  }, [loadNodes])
 
   useEffect(() => {
     if (selectedNodeID && window.location.pathname !== nodePath(selectedNodeID)) {
@@ -88,16 +98,77 @@ export default function App() {
 
   const filteredNodes = useMemo(() => {
     const keyword = search.trim().toLowerCase()
-    if (!keyword) return nodes
-    return nodes.filter((node) => [node.name, node.hostname, node.ip, node.os, node.arch].some((value) => value.toLowerCase().includes(keyword)))
-  }, [nodes, search])
+    return nodes.filter((node) => {
+      if (hostFilter !== 'all' && node.status !== hostFilter) return false
+      if (!keyword) return true
+      return [node.name, node.hostname, node.ip, node.os, node.arch].some((value) => value.toLowerCase().includes(keyword))
+    })
+  }, [hostFilter, nodes, search])
+  const visibleSelectedNode = useMemo(() => filteredNodes.find((node) => node.id === selectedNodeID), [filteredNodes, selectedNodeID])
+
+  useEffect(() => {
+    if (filteredNodes.length > 0 && !visibleSelectedNode) {
+      setSelectedNodeID(filteredNodes[0].id)
+    }
+  }, [filteredNodes, visibleSelectedNode])
+
+  const requestInstallCommand = () => {
+    setInstallCommandWarning(undefined)
+    setInstallCommandCopied(false)
+    return createInstallCommand().then((response) => setInstallCommand(response.command))
+  }
+
+  const selectInstallCommand = () => {
+    const code = installCommandCodeRef.current
+    if (!code) return false
+    const range = document.createRange()
+    range.selectNodeContents(code)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    return true
+  }
+
+  const copyInstallCommand = () => {
+    if (!installCommand) return
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(installCommand))
+      .catch(() => {
+        if (!selectInstallCommand()) return false
+        return typeof document.execCommand === 'function' && document.execCommand('copy')
+      })
+      .then((copied) => {
+        if (copied === false) {
+          setInstallCommandCopied(false)
+          setInstallCommandWarning('复制失败，已为你选中命令，请按 Ctrl+C 手动复制。')
+          return
+        }
+        setInstallCommandWarning(undefined)
+        setInstallCommandCopied(true)
+      })
+      .catch(() => {
+        selectInstallCommand()
+        setInstallCommandCopied(false)
+        setInstallCommandWarning('复制失败，已为你选中命令，请按 Ctrl+C 手动复制。')
+      })
+  }
+
+  const hostFilterButtonClass = (filter: HostFilter, activeClass: string, inactiveClass: string) => (
+    `min-h-10 cursor-pointer rounded-2xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 ${hostFilter === filter ? activeClass : inactiveClass}`
+  )
 
   const showInstallCommand = () => {
     if (installCommand) return
-    setInstallCommandWarning(undefined)
-    createInstallCommand()
-      .then((response) => setInstallCommand(response.command))
+    requestInstallCommand()
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '安装命令生成失败'))
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f2f4f7] px-4 text-slate-950">
+        <div className="rounded-[28px] border border-white/80 bg-white px-6 py-5 text-sm font-black text-slate-500 shadow-glass">正在加载节点...</div>
+      </main>
+    )
   }
 
   const installCommandPanel = installCommand ? (
@@ -111,29 +182,40 @@ export default function App() {
       <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-black text-slate-950">Agent 安装命令</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">复制命令到目标服务器执行；install_token 后续会由登录后的添加主机接口自动生成。</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">复制命令到目标服务器执行；install_token 会在点击添加主机时自动生成。</p>
         </div>
-        <button
-          type="button"
-          aria-label="关闭安装命令"
-          onClick={() => {
-            setInstallCommand(undefined)
-            setInstallCommandWarning(undefined)
-            addHostButtonRef.current?.focus()
-          }}
-          className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-100"
-        >
-          关闭
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-label={installCommandCopied ? '已复制' : '复制安装命令'}
+            onClick={copyInstallCommand}
+            className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-xs font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
+          >
+            {installCommandCopied ? '已复制' : '复制'}
+          </button>
+          <button
+            type="button"
+            aria-label="关闭安装命令"
+            onClick={() => {
+              setInstallCommand(undefined)
+              setInstallCommandWarning(undefined)
+              setInstallCommandCopied(false)
+              addHostButtonRef.current?.focus()
+            }}
+            className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-100"
+          >
+            关闭
+          </button>
+        </div>
       </div>
-      <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code>{installCommand}</code></pre>
+      <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code ref={installCommandCodeRef}>{installCommand}</code></pre>
       {installCommandWarning ? (
         <div className="border-t border-orange-200 bg-orange-50 px-4 py-3 text-xs font-bold leading-5 text-orange-800">
           {installCommandWarning}
         </div>
       ) : null}
       <div className="border-t border-slate-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
-        token 来源：登录后点击添加主机，Server 会自动生成一次性 install_token。
+        token 来源：点击添加主机时，Server 会自动生成一次性 install_token。
       </div>
     </div>
   ) : null
@@ -156,7 +238,7 @@ export default function App() {
             </div>
 
             <nav className="flex flex-wrap items-center gap-2" aria-label="主导航">
-              {['主机列表', '历史记录', 'Docker', '后台管理', '终端'].map((item, index) => (
+              {['主机列表', '历史记录', 'Docker', '后台管理'].map((item, index) => (
                 <button
                   key={item}
                   type="button"
@@ -167,11 +249,18 @@ export default function App() {
                   {item}
                 </button>
               ))}
+              <button
+                type="button"
+                className="min-h-11 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-extrabold text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-200"
+              >
+                终端
+              </button>
             </nav>
           </div>
         </header>
 
         {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 font-semibold text-red-700 shadow-sm">{error}</div> : null}
+
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="节点总数" value={String(nodes.length)} detail="已注册 Agent" />
@@ -200,9 +289,30 @@ export default function App() {
           <section className="rounded-[32px] border border-white/80 bg-white/85 p-3 shadow-glass backdrop-blur-xl">
             <div className="mb-3 flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="主机筛选与操作">
-                <button type="button" className="min-h-10 cursor-pointer rounded-2xl bg-slate-950 px-4 text-sm font-black text-white focus:outline-none focus:ring-4 focus:ring-blue-200">全部 {nodes.length}</button>
-                <button type="button" className="min-h-10 cursor-pointer rounded-2xl border border-emerald-200 bg-emerald-50 px-4 text-sm font-black text-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-100">在线 {onlineNodes}</button>
-                <button type="button" className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-500 focus:outline-none focus:ring-4 focus:ring-slate-200">离线 {nodes.length - onlineNodes}</button>
+                <button
+                  type="button"
+                  aria-pressed={hostFilter === 'all'}
+                  onClick={() => setHostFilter('all')}
+                  className={hostFilterButtonClass('all', 'bg-slate-950 text-white shadow-lg shadow-slate-300/70 focus:ring-blue-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
+                >
+                  全部 {nodes.length}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={hostFilter === 'online'}
+                  onClick={() => setHostFilter('online')}
+                  className={hostFilterButtonClass('online', 'border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-100/70 focus:ring-emerald-100', 'border border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 focus:ring-emerald-100')}
+                >
+                  在线 {onlineNodes}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={hostFilter === 'offline'}
+                  onClick={() => setHostFilter('offline')}
+                  className={hostFilterButtonClass('offline', 'border border-slate-300 bg-slate-200 text-slate-800 shadow-lg shadow-slate-200/70 focus:ring-slate-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
+                >
+                  离线 {nodes.length - onlineNodes}
+                </button>
                 <button
                   ref={addHostButtonRef}
                   type="button"
@@ -229,8 +339,15 @@ export default function App() {
             {installCommandPanel}
 
             <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
-              <NodeList nodes={filteredNodes} selectedNodeID={selectedNodeID} onSelectNode={(node) => setSelectedNodeID(node.id)} />
-              <NodeDetail node={selectedNode} metrics={metrics} range={range} onRangeChange={setRange} />
+              {filteredNodes.length > 0 ? (
+                <NodeList nodes={filteredNodes} selectedNodeID={selectedNodeID} onSelectNode={(node) => setSelectedNodeID(node.id)} />
+              ) : (
+                <section className="rounded-[26px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+                  <p className="font-display text-2xl font-black text-slate-950">未找到匹配主机</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">请调整在线状态筛选或搜索关键词。</p>
+                </section>
+              )}
+              <NodeDetail node={visibleSelectedNode} metrics={metrics} range={range} onRangeChange={setRange} />
             </div>
           </section>
         )}

@@ -15,7 +15,7 @@ func TestClientUsesNodeTokenFromHelloAckOnNextConnection(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	tokens := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokens <- r.URL.Query().Get("token")
+		tokens <- strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Errorf("upgrade: %v", err)
@@ -89,7 +89,7 @@ func TestSendHelloAndMetricSendsHelloBeforeMetric(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	messages := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("token") != "secret" {
+		if r.Header.Get("Authorization") != "Bearer secret" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

@@ -2,16 +2,15 @@ package app
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/mizupanel/mizupanel/internal/server/agenthub"
 	"github.com/mizupanel/mizupanel/internal/server/api"
@@ -22,27 +21,29 @@ import (
 var agentInstallScript []byte
 
 type Dependencies struct {
-	Nodes         *store.NodeStore
-	Metrics       *store.MetricStore
-	AgentToken    string
-	AdminPassword string
-	Interval      int
-	StaticDir     string
-	DownloadDir   string
+	Nodes       *store.NodeStore
+	Metrics     *store.MetricStore
+	AgentTokens *store.AgentTokenStore
+	AgentToken  string
+	PublicURL   string
+	Interval    int
+	StaticDir   string
+	DownloadDir string
 }
 
 func NewHandler(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
 	installAuth := agenthub.NewInstallAuthStore()
-	auth := newAuthServer(deps.AdminPassword, installAuth)
 	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics)
 	mux.Handle("/api/nodes", apiRouter)
 	mux.Handle("/api/nodes/", apiRouter)
-	mux.HandleFunc("/api/auth/login", auth.handleLogin)
-	mux.HandleFunc("/api/install/command", auth.requireLogin(auth.handleInstallCommand))
+	mux.HandleFunc("/api/install/command", func(w http.ResponseWriter, r *http.Request) {
+		handleInstallCommand(w, r, deps.PublicURL, installAuth)
+	})
 	mux.Handle("/api/agent/ws", agenthub.NewHandler(deps.Nodes, deps.Metrics, agenthub.Options{
 		AgentToken:  deps.AgentToken,
 		InstallAuth: installAuth,
+		AgentTokens: deps.AgentTokens,
 		Interval:    deps.Interval,
 	}))
 	mux.HandleFunc("/scripts/install-agent.sh", agentInstallScriptHandler)
@@ -68,65 +69,7 @@ func agentInstallScriptHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(agentInstallScript)
 }
 
-type authServer struct {
-	mu            sync.Mutex
-	sessions      map[string]struct{}
-	adminPassword string
-	installAuth   *agenthub.InstallAuthStore
-}
-
-func newAuthServer(adminPassword string, installAuth *agenthub.InstallAuthStore) *authServer {
-	return &authServer{sessions: make(map[string]struct{}), adminPassword: adminPassword, installAuth: installAuth}
-}
-
-func (s *authServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var request struct {
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if request.Password == "" || s.adminPassword == "" || subtle.ConstantTimeCompare([]byte(request.Password), []byte(s.adminPassword)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	sessionID, err := randomToken()
-	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	s.mu.Lock()
-	s.sessions[sessionID] = struct{}{}
-	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "mizupanel_session", Value: sessionID, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *authServer) requireLogin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("mizupanel_session")
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		s.mu.Lock()
-		_, ok := s.sessions[cookie.Value]
-		s.mu.Unlock()
-		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (s *authServer) handleInstallCommand(w http.ResponseWriter, r *http.Request) {
+func handleInstallCommand(w http.ResponseWriter, r *http.Request, publicURL string, installAuth *agenthub.InstallAuthStore) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -137,27 +80,47 @@ func (s *authServer) handleInstallCommand(w http.ResponseWriter, r *http.Request
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	s.installAuth.CreateInstallToken(installToken)
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+	if !installAuth.CreateInstallToken(installToken) {
+		http.Error(w, "too many install tokens", http.StatusTooManyRequests)
+		return
 	}
-	wsScheme := "ws"
-	if scheme == "https" {
-		wsScheme = "wss"
-	}
-	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+	baseURL, wsURL := installURLs(publicURL, r)
 	command := strings.Join([]string{
 		fmt.Sprintf("curl -fsSL '%s/scripts/install-agent.sh' -o install-agent.sh \\", baseURL),
 		"  && chmod +x install-agent.sh \\",
 		"  && sudo ./install-agent.sh \\",
 		fmt.Sprintf("    --binary-base-url '%s/downloads' \\", baseURL),
-		fmt.Sprintf("    --server-url '%s://%s/api/agent/ws' \\", wsScheme, r.Host),
+		fmt.Sprintf("    --server-url '%s' \\", wsURL),
 		fmt.Sprintf("    --token '%s' \\", installToken),
 		"    --node-id \"$(hostname)\" \\",
 		"    --name \"$(hostname)\"",
 	}, "\n")
 	writeJSON(w, http.StatusOK, map[string]string{"command": command, "install_token": installToken})
+}
+
+func installURLs(publicURL string, r *http.Request) (string, string) {
+	baseURL := strings.TrimRight(publicURL, "/")
+	if baseURL == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		baseURL = fmt.Sprintf("%s://%s", scheme, r.Host)
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL, baseURL + "/api/agent/ws"
+	}
+	wsScheme := "ws"
+	if parsed.Scheme == "https" {
+		wsScheme = "wss"
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	parsed.Scheme = wsScheme
+	parsed.Path = basePath + "/api/agent/ws"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return baseURL, parsed.String()
 }
 
 func randomToken() (string, error) {

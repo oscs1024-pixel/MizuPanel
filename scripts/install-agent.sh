@@ -128,30 +128,33 @@ fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SERVICE_TEMPLATE="$SCRIPT_DIR/../systemd/mizupanel-agent.service"
-ETC_DIR="$DEST_ROOT/etc/mizupanel"
-BIN_DIR="$DEST_ROOT/opt/mizupanel/bin"
+INSTALL_DIR="$DEST_ROOT/usr/local/mizupanel"
 SYSTEMD_DIR="$DEST_ROOT/etc/systemd/system"
 
 if [ -z "$DEST_ROOT" ] && ! id -u mizupanel-agent >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin mizupanel-agent
 fi
 
-install -d -m 0755 "$BIN_DIR" "$SYSTEMD_DIR"
-install -d -m 0750 "$ETC_DIR"
+install -d -m 0755 "$INSTALL_DIR"
+if [ -z "$DEST_ROOT" ]; then
+  chown root:root "$INSTALL_DIR"
+  chmod 0755 "$INSTALL_DIR"
+fi
+install -d -m 0755 "$SYSTEMD_DIR"
 if [ -n "$BINARY_URL" ]; then
-  BINARY_TMP=$(mktemp "$BIN_DIR/mizupanel-agent.XXXXXX")
+  BINARY_TMP=$(mktemp "$INSTALL_DIR/mizupanel-agent.XXXXXX")
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$BINARY_URL" -o "$BINARY_TMP"
   else
     wget -qO "$BINARY_TMP" "$BINARY_URL"
   fi
-  install -m 0755 "$BINARY_TMP" "$BIN_DIR/mizupanel-agent"
+  install -m 0755 "$BINARY_TMP" "$INSTALL_DIR/mizupanel-agent"
   rm -f "$BINARY_TMP"
 else
-  install -m 0755 "$BINARY" "$BIN_DIR/mizupanel-agent"
+  install -m 0755 "$BINARY" "$INSTALL_DIR/mizupanel-agent"
 fi
 
-CONFIG_TMP=$(mktemp "$ETC_DIR/agent.yaml.XXXXXX")
+CONFIG_TMP=$(mktemp "$INSTALL_DIR/agent.yaml.XXXXXX")
 chmod 0600 "$CONFIG_TMP"
 {
   printf 'server_url: '
@@ -170,11 +173,12 @@ chmod 0600 "$CONFIG_TMP"
   quote_yaml "$INTERVAL"
   printf '\n'
 } > "$CONFIG_TMP"
-install -m 0600 "$CONFIG_TMP" "$ETC_DIR/agent.yaml"
+install -m 0600 "$CONFIG_TMP" "$INSTALL_DIR/agent.yaml"
 rm -f "$CONFIG_TMP"
 
 if [ -z "$DEST_ROOT" ]; then
-  chown mizupanel-agent:mizupanel-agent "$ETC_DIR" "$ETC_DIR/agent.yaml"
+  chown root:root "$INSTALL_DIR" "$INSTALL_DIR/mizupanel-agent"
+  chown mizupanel-agent:mizupanel-agent "$INSTALL_DIR/agent.yaml"
 fi
 
 if [ -f "$SERVICE_TEMPLATE" ]; then
@@ -188,7 +192,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/mizupanel/bin/mizupanel-agent -config /etc/mizupanel/agent.yaml
+ExecStart=/usr/local/mizupanel/mizupanel-agent -config /usr/local/mizupanel/agent.yaml
 Restart=always
 RestartSec=5s
 User=mizupanel-agent
@@ -197,7 +201,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/mizupanel
+ReadWritePaths=/usr/local/mizupanel/agent.yaml
 
 [Install]
 WantedBy=multi-user.target
@@ -206,7 +210,8 @@ fi
 
 if [ -z "$DEST_ROOT" ]; then
   systemctl daemon-reload
-  systemctl enable --now mizupanel-agent
+  systemctl enable mizupanel-agent
+  systemctl restart mizupanel-agent
 fi
 
-printf 'MizuPanel agent installed. Config: %s\n' "$ETC_DIR/agent.yaml"
+printf 'MizuPanel agent installed. Config: %s\n' "$INSTALL_DIR/agent.yaml"

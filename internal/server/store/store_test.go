@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,97 @@ func TestNodeUpsertCreatesAndUpdatesNode(t *testing.T) {
 	}
 	if !got.LastSeenAt.Equal(now.Add(time.Minute)) {
 		t.Fatalf("LastSeenAt = %s", got.LastSeenAt)
+	}
+}
+
+func TestAgentTokenStorePersistsNodeToken(t *testing.T) {
+	db := openTestDB(t)
+	tokens := NewAgentTokenStore(db)
+
+	createdAt := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "node-token", createdAt); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+
+	var storedToken string
+	if err := db.QueryRow(`SELECT token FROM node_tokens WHERE node_id = ?`, "node-1").Scan(&storedToken); err != nil {
+		t.Fatalf("read stored token: %v", err)
+	}
+	if storedToken == "node-token" {
+		t.Fatal("node token was stored in plaintext")
+	}
+	gotNodeID, ok, err := NewAgentTokenStore(db).NodeIDForToken(t.Context(), "node-token")
+	if err != nil {
+		t.Fatalf("lookup node token: %v", err)
+	}
+	if !ok || gotNodeID != "node-1" {
+		t.Fatalf("NodeIDForToken = %q, %v; want node-1, true", gotNodeID, ok)
+	}
+}
+
+func TestAgentTokenStoreRejectsStoredHashAsBearerToken(t *testing.T) {
+	db := openTestDB(t)
+	tokens := NewAgentTokenStore(db)
+	createdAt := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "node-token", createdAt); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+
+	var storedToken string
+	if err := db.QueryRow(`SELECT token FROM node_tokens WHERE node_id = ?`, "node-1").Scan(&storedToken); err != nil {
+		t.Fatalf("read stored token: %v", err)
+	}
+	if _, ok, err := tokens.NodeIDForToken(t.Context(), storedToken); err != nil || ok {
+		t.Fatalf("stored hash lookup ok = %v, err = %v; want false, nil", ok, err)
+	}
+}
+
+func TestAgentTokenStoreMigratesLegacyPlaintextNodeToken(t *testing.T) {
+	db := openTestDB(t)
+	tokens := NewAgentTokenStore(db)
+	createdAt := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`INSERT INTO node_tokens (node_id, token, created_at) VALUES (?, ?, ?)`, "node-1", "legacy-token", formatTime(createdAt)); err != nil {
+		t.Fatalf("insert legacy token: %v", err)
+	}
+
+	gotNodeID, ok, err := tokens.NodeIDForToken(t.Context(), "legacy-token")
+	if err != nil {
+		t.Fatalf("lookup legacy token: %v", err)
+	}
+	if !ok || gotNodeID != "node-1" {
+		t.Fatalf("NodeIDForToken = %q, %v; want node-1, true", gotNodeID, ok)
+	}
+
+	var storedToken string
+	if err := db.QueryRow(`SELECT token FROM node_tokens WHERE node_id = ?`, "node-1").Scan(&storedToken); err != nil {
+		t.Fatalf("read migrated token: %v", err)
+	}
+	if storedToken == "legacy-token" || !strings.HasPrefix(storedToken, "sha256:") {
+		t.Fatalf("legacy token migrated to %q, want prefixed hash", storedToken)
+	}
+}
+
+func TestAgentTokenStoreRotatesDuplicateNodeToken(t *testing.T) {
+	db := openTestDB(t)
+	tokens := NewAgentTokenStore(db)
+
+	createdAt := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "first-token", createdAt); err != nil {
+		t.Fatalf("save first token: %v", err)
+	}
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "second-token", createdAt.Add(time.Minute)); err != nil {
+		t.Fatalf("save rotated token: %v", err)
+	}
+
+	got, ok, err := tokens.NodeIDForToken(t.Context(), "second-token")
+	if err != nil {
+		t.Fatalf("lookup rotated token: %v", err)
+	}
+	if !ok || got != "node-1" {
+		t.Fatalf("NodeIDForToken = %q, %v; want node-1, true", got, ok)
+	}
+	if _, ok, err := tokens.NodeIDForToken(t.Context(), "first-token"); err != nil || ok {
+		t.Fatalf("old token lookup ok = %v, err = %v; want false, nil", ok, err)
 	}
 }
 

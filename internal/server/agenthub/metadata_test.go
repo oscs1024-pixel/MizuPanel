@@ -2,6 +2,7 @@ package agenthub
 
 import (
 	"database/sql"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -30,7 +31,8 @@ func TestAgentWebSocketUpdatesNodeMetadataFromMetrics(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"?token=secret", nil)
+	header := http.Header{"Authorization": {"Bearer secret"}}
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), header)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}

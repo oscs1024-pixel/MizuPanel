@@ -2,5 +2,7 @@ listen: ":8080"
 database_path: "./data/mizupanel.db"
 metrics_retention: "6h"
 cleanup_interval: "10m"
-admin_password: "change-this-admin-password"
-agent_token: "change-this-to-a-random-secret"
+public_url: ""
+# agent_token is optional and should only be set if you need a long-lived bootstrap token.
+# Prefer the Dashboard-generated one-time install token flow for adding hosts.
+# agent_token: "change-this-to-a-random-secret"

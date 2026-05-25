@@ -19,7 +19,7 @@ import (
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
-func TestNewHandlerRequiresLoginBeforeCreatingInstallCommand(t *testing.T) {
+func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 	database, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -33,43 +33,10 @@ func TestNewHandlerRequiresLoginBeforeCreatingInstallCommand(t *testing.T) {
 		Nodes:   store.NewNodeStore(database),
 		Metrics: store.NewMetricStore(database),
 	})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
-
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
-	}
-}
-
-func TestNewHandlerCreatesInstallCommandForLoggedInUser(t *testing.T) {
-	database, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { database.Close() })
-	if err := serverdb.Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	handler := NewHandler(Dependencies{
-		Nodes:         store.NewNodeStore(database),
-		Metrics:       store.NewMetricStore(database),
-		AdminPassword: "configured-secret",
-	})
-
-	loginRecorder := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"configured-secret"}`))
-	handler.ServeHTTP(loginRecorder, loginRequest)
-	if loginRecorder.Code != http.StatusOK {
-		t.Fatalf("login status = %d, want 200", loginRecorder.Code)
-	}
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
 	request.Host = "panel.example:8080"
-	request.AddCookie(loginRecorder.Result().Cookies()[0])
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -87,7 +54,7 @@ func TestNewHandlerCreatesInstallCommandForLoggedInUser(t *testing.T) {
 	}
 }
 
-func TestNewHandlerRejectsDefaultAdminPasswordWhenNotConfigured(t *testing.T) {
+func TestNewHandlerCreatesInstallCommandFromPublicURL(t *testing.T) {
 	database, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -98,17 +65,70 @@ func TestNewHandlerRejectsDefaultAdminPasswordWhenNotConfigured(t *testing.T) {
 	}
 
 	handler := NewHandler(Dependencies{
-		Nodes:         store.NewNodeStore(database),
-		Metrics:       store.NewMetricStore(database),
-		AdminPassword: "configured-secret",
+		Nodes:     store.NewNodeStore(database),
+		Metrics:   store.NewMetricStore(database),
+		PublicURL: "https://panel.example",
 	})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"admin"}`))
 
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
+	request.Host = "internal:8080"
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "curl -fsSL 'https://panel.example/scripts/install-agent.sh'") {
+		t.Fatalf("install command missing public script URL: %s", body)
+	}
+	if !strings.Contains(body, "--binary-base-url 'https://panel.example/downloads'") {
+		t.Fatalf("install command missing public binary base URL: %s", body)
+	}
+	if !strings.Contains(body, "--server-url 'wss://panel.example/api/agent/ws'") {
+		t.Fatalf("install command missing public websocket URL: %s", body)
+	}
+	if strings.Contains(body, "internal:8080") {
+		t.Fatalf("install command leaked internal host: %s", body)
+	}
+}
+
+func TestNewHandlerCreatesInstallCommandFromPublicURLWithPathPrefix(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:     store.NewNodeStore(database),
+		Metrics:   store.NewMetricStore(database),
+		PublicURL: "https://panel.example/mizupanel",
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
+	request.Host = "internal:8080"
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "curl -fsSL 'https://panel.example/mizupanel/scripts/install-agent.sh'") {
+		t.Fatalf("install command missing public script URL with path prefix: %s", body)
+	}
+	if !strings.Contains(body, "--binary-base-url 'https://panel.example/mizupanel/downloads'") {
+		t.Fatalf("install command missing public binary base URL with path prefix: %s", body)
+	}
+	if !strings.Contains(body, "--server-url 'wss://panel.example/mizupanel/api/agent/ws'") {
+		t.Fatalf("install command missing public websocket URL with path prefix: %s", body)
+	}
+	if strings.Contains(body, "internal:8080") {
+		t.Fatalf("install command leaked internal host: %s", body)
 	}
 }
 
@@ -124,24 +144,15 @@ func TestNewHandlerGeneratedInstallTokenRegistersAgentAndReturnsNodeToken(t *tes
 	}
 
 	handler := NewHandler(Dependencies{
-		Nodes:         store.NewNodeStore(database),
-		Metrics:       store.NewMetricStore(database),
-		AdminPassword: "configured-secret",
-		Interval:      5,
+		Nodes:    store.NewNodeStore(database),
+		Metrics:  store.NewMetricStore(database),
+		Interval: 5,
 	})
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	loginRecorder := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"configured-secret"}`))
-	handler.ServeHTTP(loginRecorder, loginRequest)
-	if loginRecorder.Code != http.StatusOK {
-		t.Fatalf("login status = %d, want 200", loginRecorder.Code)
-	}
-
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
-	request.AddCookie(loginRecorder.Result().Cookies()[0])
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("install command status = %d, want 200", recorder.Code)
@@ -213,7 +224,7 @@ func TestServedAgentInstallScriptSelectsBinaryURLForMachineArchitecture(t *testi
 	if downloads["/downloads/mizupanel-agent-linux-arm64"] != 1 {
 		t.Fatalf("arm64 binary downloads = %d, want 1", downloads["/downloads/mizupanel-agent-linux-arm64"])
 	}
-	installedBinary, err := os.ReadFile(filepath.Join(dest, "opt", "mizupanel", "bin", "mizupanel-agent"))
+	installedBinary, err := os.ReadFile(filepath.Join(dest, "usr", "local", "mizupanel", "mizupanel-agent"))
 	if err != nil {
 		t.Fatalf("read downloaded binary: %v", err)
 	}
@@ -232,7 +243,7 @@ func TestEmbeddedAgentInstallScriptMatchesRepositoryScript(t *testing.T) {
 	}
 }
 
-func TestNewHandlerMountsNodeAPI(t *testing.T) {
+func TestNewHandlerMountsNodeAPIWithoutLogin(t *testing.T) {
 	database, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -246,6 +257,7 @@ func TestNewHandlerMountsNodeAPI(t *testing.T) {
 		Nodes:   store.NewNodeStore(database),
 		Metrics: store.NewMetricStore(database),
 	})
+
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
 
@@ -396,7 +408,7 @@ func TestServedAgentInstallScriptGeneratesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("embedded install script failed: %v\n%s", err, output)
 	}
-	config, err := os.ReadFile(filepath.Join(dest, "etc", "mizupanel", "agent.yaml"))
+	config, err := os.ReadFile(filepath.Join(dest, "usr", "local", "mizupanel", "agent.yaml"))
 	if err != nil {
 		t.Fatalf("read generated config: %v", err)
 	}
@@ -437,14 +449,14 @@ func TestServedAgentInstallScriptDownloadsBinaryURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("embedded install script failed: %v\n%s", err, output)
 	}
-	installedBinary, err := os.ReadFile(filepath.Join(dest, "opt", "mizupanel", "bin", "mizupanel-agent"))
+	installedBinary, err := os.ReadFile(filepath.Join(dest, "usr", "local", "mizupanel", "mizupanel-agent"))
 	if err != nil {
 		t.Fatalf("read downloaded binary: %v", err)
 	}
 	if string(installedBinary) != string(binaryPayload) {
 		t.Fatalf("installed binary = %q, want downloaded payload", installedBinary)
 	}
-	config, err := os.ReadFile(filepath.Join(dest, "etc", "mizupanel", "agent.yaml"))
+	config, err := os.ReadFile(filepath.Join(dest, "usr", "local", "mizupanel", "agent.yaml"))
 	if err != nil {
 		t.Fatalf("read generated config: %v", err)
 	}

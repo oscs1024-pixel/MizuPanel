@@ -2,7 +2,7 @@ package ws
 
 import (
 	"context"
-	"net/url"
+	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -78,7 +78,11 @@ func (c *Client) RunForever(ctx context.Context, hello protocol.HelloMessage, in
 }
 
 func (c *Client) connect(ctx context.Context, hello protocol.HelloMessage) (*websocket.Conn, protocol.HelloAckMessage, error) {
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.urlWithToken(), nil)
+	header := http.Header{}
+	if c.token != "" {
+		header.Set("Authorization", "Bearer "+c.token)
+	}
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.serverURL, header)
 	if err != nil {
 		return nil, protocol.HelloAckMessage{}, err
 	}
@@ -111,18 +115,4 @@ func (c *Client) writeCollectedMetric(conn *websocket.Conn, nodeID string, colle
 	message.NodeID = nodeID
 	message.Type = protocol.MessageTypeMetrics
 	return conn.WriteJSON(message)
-}
-
-func (c *Client) urlWithToken() string {
-	if c.token == "" {
-		return c.serverURL
-	}
-	parsed, err := url.Parse(c.serverURL)
-	if err != nil {
-		return c.serverURL
-	}
-	query := parsed.Query()
-	query.Set("token", c.token)
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
 }

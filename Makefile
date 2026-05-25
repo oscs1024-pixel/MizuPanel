@@ -16,6 +16,8 @@ package: prepare-package
 	cp server.example.yaml $(RELEASE_DIR)/server.example.yaml
 	mkdir -p $(RELEASE_DIR)/scripts
 	cp scripts/install-agent.sh $(RELEASE_DIR)/scripts/install-agent.sh
+	mkdir -p $(RELEASE_DIR)/systemd
+	cp systemd/*.service $(RELEASE_DIR)/systemd/
 
 prepare-package:
 	rm -rf $(RELEASE_DIR)

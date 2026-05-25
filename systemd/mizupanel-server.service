@@ -1,0 +1,22 @@
+[Unit]
+Description=MizuPanel Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mizupanel
+ExecStart=/opt/mizupanel/mizupanel-server -config /opt/mizupanel/server.yaml
+Restart=always
+RestartSec=5s
+User=mizupanel
+Group=mizupanel
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mizupanel/data
+
+[Install]
+WantedBy=multi-user.target

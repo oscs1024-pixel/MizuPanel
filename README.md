@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Lightweight self-hosted monitoring for personal servers and small fleets.</strong>
+  <strong>Lightweight self-hosted server monitoring</strong>
 </p>
 
 <p align="center">
@@ -23,9 +23,7 @@
 
 ## Overview
 
-MizuPanel is a lightweight self-hosted server monitoring panel for personal servers and small fleets. The Server serves the Dashboard, REST APIs, Agent WebSocket endpoint, SQLite storage, installer script, and Agent downloads. The Agent runs on each target machine, connects back to the Server, and reports CPU, memory, disk, network, and load metrics.
-
-The current v0.1 preview focuses on the core workflow: **open the Dashboard, generate an add-host install command, connect Agents actively, store metrics, and display them in the UI**.
+MizuPanel is a lightweight self-hosted server monitoring panel for personal servers and small fleets. It is composed of a Server, a Dashboard, and Agents. Agents actively connect to the Server over WebSocket and report CPU, memory, disk, network, and load metrics.
 
 > Note: the current preview temporarily has no login gate. `/api/install/command` can mint install tokens without authentication. Restore minimal admin authentication before exposing MizuPanel publicly.
 
@@ -55,8 +53,6 @@ MizuPanel Server  <---------------- WebSocket ----------------  MizuPanel Agent
 nodes / metrics / node tokens
 ```
 
-The network direction is always Agent to Server. The Server does not need to SSH into target hosts, and target hosts do not need to expose Agent ports.
-
 ## Release layout
 
 Run `make build` to create:
@@ -67,6 +63,9 @@ dist/mizupanel/
 ├── server.example.yaml
 ├── scripts/
 │   └── install-agent.sh
+├── systemd/
+│   ├── mizupanel-server.service
+│   └── mizupanel-agent.service
 ├── downloads/
 │   ├── mizupanel-agent-linux-amd64
 │   └── mizupanel-agent-linux-arm64
@@ -75,53 +74,38 @@ dist/mizupanel/
     └── assets/
 ```
 
-The installer chooses the correct architecture-specific file from `downloads/`, but installs it on the target host as:
+## Server setup
 
-```text
-/usr/local/mizupanel/mizupanel-agent
-```
-
-The Agent config is colocated at:
-
-```text
-/usr/local/mizupanel/agent.yaml
-```
-
-## Quick start
-
-### 1. Build the release package
+### 1. Prepare the release directory
 
 ```bash
 make build
-```
-
-### 2. Prepare Server config
-
-```bash
 cd dist/mizupanel
 cp server.example.yaml server.yaml
 ```
 
-Example `server.yaml`:
+`server.example.yaml` is the versioned template. `server.yaml` is your local runtime config, so you can edit it without changing the template.
+
+### 2. Edit `server.yaml`
 
 ```yaml
-listen: ":8080"
-database_path: "./data/mizupanel.db"
-metrics_retention: "6h"
-cleanup_interval: "10m"
-public_url: ""
+listen: ":8080" # HTTP listen address for the MizuPanel Server.
+database_path: "./data/mizupanel.db" # SQLite database path for nodes, metrics, and persisted node tokens.
+metrics_retention: "6h" # How long historical metrics are kept before cleanup.
+cleanup_interval: "10m" # How often the retention cleanup job runs.
+public_url: "" # Public panel URL used to generate Agent install commands; leave empty to infer from the request host.
 # agent_token is optional and should only be set if you need a long-lived bootstrap token.
 # Prefer the Dashboard-generated one-time install token flow for adding hosts.
-# agent_token: "change-this-to-a-random-secret"
+# agent_token: "change-this-to-a-random-secret" # Optional long-lived Agent bootstrap token; avoid exposing it in browsers or public docs.
 ```
 
-If other machines need to access the panel, set `public_url`:
+Set `public_url` if Agents will access the panel from another machine:
 
 ```yaml
 public_url: "http://your-server-ip:8080"
 ```
 
-### 3. Start Server
+### 3. Start Server directly
 
 ```bash
 ./mizupanel-server -config server.yaml
@@ -133,7 +117,33 @@ Open:
 http://your-server-ip:8080
 ```
 
-### 4. Add a host
+### 4. Optional: run Server with systemd
+
+The release package includes `systemd/mizupanel-server.service`. It assumes MizuPanel is installed at `/opt/mizupanel` and uses `/opt/mizupanel/server.yaml`.
+
+```bash
+NOLOGIN=$(command -v nologin || printf '%s\n' /usr/sbin/nologin)
+getent passwd mizupanel >/dev/null || sudo useradd --system --no-create-home --shell "$NOLOGIN" mizupanel
+sudo mkdir -p /opt/mizupanel
+sudo cp -R . /opt/mizupanel/
+sudo chown -R root:root /opt/mizupanel
+sudo chown root:mizupanel /opt/mizupanel/server.yaml
+sudo chmod 0640 /opt/mizupanel/server.yaml
+sudo mkdir -p /opt/mizupanel/data
+sudo chown mizupanel:mizupanel /opt/mizupanel/data
+sudo chmod 0750 /opt/mizupanel/data
+sudo cp /opt/mizupanel/systemd/mizupanel-server.service /etc/systemd/system/mizupanel-server.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now mizupanel-server
+```
+
+Check logs:
+
+```bash
+journalctl -u mizupanel-server -f
+```
+
+## Agent setup
 
 Open the Dashboard, click **Add Host**, and run the generated command on the target host. It looks like:
 
@@ -148,7 +158,7 @@ curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-age
     --name "$(hostname)"
 ```
 
-After installation, the target host contains:
+The installer selects the correct file from `downloads/`, then installs the Agent as:
 
 ```text
 /usr/local/mizupanel/mizupanel-agent
@@ -156,11 +166,19 @@ After installation, the target host contains:
 /etc/systemd/system/mizupanel-agent.service
 ```
 
-Check the service:
+Check the Agent service:
 
 ```bash
 systemctl status mizupanel-agent
+journalctl -u mizupanel-agent -f
 ```
+
+Agent install permissions:
+
+- `/usr/local/mizupanel` is managed by `root:root`.
+- `/usr/local/mizupanel/mizupanel-agent` is root-owned and executable.
+- `/usr/local/mizupanel/agent.yaml` is owned by `mizupanel-agent:mizupanel-agent` with `0600` permissions.
+- systemd `ReadWritePaths` is limited to `agent.yaml` so the Agent can persist the exchanged `node_token` without being able to replace its own binary.
 
 ## Token model
 
@@ -181,81 +199,3 @@ systemctl status mizupanel-agent
 - Persisted by the Agent into `/usr/local/mizupanel/agent.yaml`.
 - Used for Agent restarts and reconnects.
 - Stored on the Server side as a hash, not plaintext.
-
-## Agent install layout and permissions
-
-Target host layout:
-
-```text
-/usr/local/mizupanel/
-├── mizupanel-agent
-└── agent.yaml
-```
-
-Permission model:
-
-- `/usr/local/mizupanel` is managed by `root:root`.
-- `/usr/local/mizupanel/mizupanel-agent` is root-owned and executable.
-- `/usr/local/mizupanel/agent.yaml` is owned by `mizupanel-agent:mizupanel-agent` with `0600` permissions.
-- systemd `ReadWritePaths` is limited to `agent.yaml` so the Agent can persist the exchanged `node_token` without being able to replace its own binary.
-
-## Config files
-
-Server config: `server.example.yaml`
-
-```yaml
-listen: ":8080"
-database_path: "./data/mizupanel.db"
-metrics_retention: "6h"
-cleanup_interval: "10m"
-public_url: ""
-# agent_token: "change-this-to-a-random-secret"
-```
-
-Agent config is generated by the installer and usually does not need to be created manually:
-
-```yaml
-server_url: "ws://your-panel-host:8080/api/agent/ws"
-token: "node-token-after-registration"
-node_id: "oracle-sg-01"
-name: "Oracle SG"
-interval: "5s"
-```
-
-## Development commands
-
-```bash
-# Go tests
-go test ./...
-
-# Frontend tests
-npm --prefix web test
-
-# Frontend dev server
-npm --prefix web run dev
-
-# Build release package
-make build
-
-# Clean build artifacts
-make clean
-```
-
-## Current scope
-
-v0.1 focuses on basic monitoring:
-
-- Server + Agent + Dashboard.
-- Node registration and metrics ingestion.
-- 1h / 6h history ranges.
-- Dashboard-generated Agent install command.
-
-Not included yet:
-
-- Docker management.
-- Kubernetes management.
-- Web Terminal.
-- SSH password-based installation.
-- Multi-user permission system.
-
-SSH-assisted installation can be added later, but v0.1 should avoid storing SSH passwords or private keys.

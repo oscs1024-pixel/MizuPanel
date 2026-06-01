@@ -343,10 +343,10 @@ features:
 
 ## Token 模型
 
-| Token | 生命周期 | 谁生成 | 存放位置 | 用途 |
-| --- | --- | --- | --- | --- |
-| `install_token` | 一次性 | Dashboard 创建添加主机命令时由 Server 生成 | 不持久化给 Agent | 只用于 Agent 首次注册 |
-| `node_token` | 长期，每个节点独立 | Server 在首次注册成功后换发 | Agent 本机配置文件；Server 端保存哈希 | Agent 重启和断线重连 |
+| Token           | 生命周期           | 谁生成                                     | 存放位置                              | 用途                  |
+| --------------- | ------------------ | ------------------------------------------ | ------------------------------------- | --------------------- |
+| `install_token` | 一次性             | Dashboard 创建添加主机命令时由 Server 生成 | 不持久化给 Agent                      | 只用于 Agent 首次注册 |
+| `node_token`    | 长期，每个节点独立 | Server 在首次注册成功后换发                | Agent 本机配置文件；Server 端保存哈希 | Agent 重启和断线重连  |
 
 注册流程：
 
@@ -363,3 +363,11 @@ Agent 后续使用 node_token 重连
 ```
 
 `install_token` 不应作为持久凭据使用；`node_token` 在 Server 端只保存哈希，不保存明文。
+
+## 致谢
+
+感谢 Linux.do 社区的反馈、讨论和启发。
+
+<p align="center">
+  <a href="https://linux.do/"><img alt="Linux.do community" src="https://img.shields.io/badge/Linux.do-community-0ea5e9?style=for-the-badge"></a>
+</p>

@@ -343,10 +343,10 @@ features:
 
 ## Token model
 
-| Token | Lifetime | Issuer | Stored in | Purpose |
-| --- | --- | --- | --- | --- |
-| `install_token` | One-time | Server when Dashboard creates an add-host command | Not persisted by Agent | First Agent registration only |
-| `node_token` | Long-lived, per node | Server after first registration succeeds | Agent local config; Server stores a hash | Agent restarts and reconnects |
+| Token           | Lifetime             | Issuer                                            | Stored in                                | Purpose                       |
+| --------------- | -------------------- | ------------------------------------------------- | ---------------------------------------- | ----------------------------- |
+| `install_token` | One-time             | Server when Dashboard creates an add-host command | Not persisted by Agent                   | First Agent registration only |
+| `node_token`    | Long-lived, per node | Server after first registration succeeds          | Agent local config; Server stores a hash | Agent restarts and reconnects |
 
 Registration flow:
 
@@ -363,3 +363,11 @@ Agent reconnects with node_token
 ```
 
 `install_token` is not intended as a persistent credential. `node_token` is stored on the Server side as a hash, not plaintext.
+
+## Acknowledgements
+
+Thanks to the Linux.do community for feedback, discussion, and inspiration.
+
+<p align="center">
+  <a href="https://linux.do/"><img alt="Linux.do community" src="https://img.shields.io/badge/Linux.do-community-0ea5e9?style=for-the-badge"></a>
+</p>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 480" role="img" aria-label="MizuPanel architecture diagram" width="100%">
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#22d3ee" />
+    </marker>
+  </defs>
+  <rect width="1600" height="480" fill="#050505" />
+
+  <rect x="90" y="140" width="330" height="140" rx="14" fill="#050505" stroke="#22d3ee" stroke-width="3" />
+  <text x="255" y="198" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#e0faff">Browser Dashboard</text>
+  <text x="255" y="238" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#7dd3fc">Web UI</text>
+
+  <rect x="620" y="105" width="360" height="210" rx="14" fill="#050505" stroke="#38bdf8" stroke-width="3" />
+  <text x="800" y="168" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#e0faff">MizuPanel Server</text>
+  <text x="800" y="214" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#7dd3fc">nodes / metrics / node tokens</text>
+  <text x="800" y="252" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">API · WebSocket Hub · Static Assets</text>
+
+  <rect x="1180" y="140" width="330" height="140" rx="14" fill="#050505" stroke="#22d3ee" stroke-width="3" />
+  <text x="1345" y="198" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#e0faff">MizuPanel Agent</text>
+  <text x="1345" y="238" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#7dd3fc">Target Host</text>
+
+  <rect x="650" y="360" width="300" height="72" rx="12" fill="#050505" stroke="#22d3ee" stroke-width="3" />
+  <text x="800" y="405" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#e0faff">SQLite / MySQL</text>
+
+  <line x1="420" y1="210" x2="600" y2="210" stroke="#22d3ee" stroke-width="3" marker-end="url(#arrow-blue)" />
+  <text x="510" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">REST API</text>
+  <text x="510" y="238" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">Static Web</text>
+
+  <line x1="1180" y1="210" x2="1000" y2="210" stroke="#22d3ee" stroke-width="3" marker-end="url(#arrow-blue)" />
+  <text x="1090" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">WebSocket</text>
+  <text x="1090" y="238" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">Agent connects actively</text>
+
+  <line x1="800" y1="315" x2="800" y2="345" stroke="#22d3ee" stroke-width="3" marker-end="url(#arrow-blue)" />
+  <text x="850" y="342" font-family="Arial, sans-serif" font-size="18" fill="#bae6fd">storage</text>
+</svg>

@@ -1,3 +1,7 @@
+<p align="right">
+  <a href="README.md">中文</a> · English
+</p>
+
 <p align="center">
   <img src="assets/mizupanel-banner.svg" alt="MizuPanel banner" width="100%" />
 </p>
@@ -17,10 +21,6 @@
   <strong>Lightweight self-hosted server monitoring</strong>
 </p>
 
-<p align="center">
-  <a href="README.md">中文</a> · English
-</p>
-
 ---
 
 ## Overview
@@ -31,31 +31,28 @@ MizuPanel is a lightweight self-hosted server monitoring panel for personal serv
 
 ## Features
 
+Core features:
+
 - Multi-node server list and node details.
 - CPU, memory, disk, network, and load metrics.
-- Local SQLite persistence with 6-hour default retention.
-- Optional MySQL storage for longer-running deployments.
-- Docker Compose deployment with SQLite by default.
+- Historical metrics queries with 6-hour default retention.
+- Dashboard-generated Linux and Windows Agent install commands.
+- Agents actively connect to Server; target hosts do not expose Agent ports.
+
+Stack and deployment:
+
 - React + Vite + Tailwind CSS v3 Dashboard.
 - Server-hosted web assets, installer script, and Agent downloads.
-- Agent actively connects to Server; target hosts do not expose Agent ports.
-- Dashboard-generated Linux and Windows Agent install commands.
+- Local SQLite persistence with optional MySQL storage.
+- Docker Compose deployment with SQLite by default.
 - One-time `install_token` for first registration and long-lived `node_token` for reconnects.
 - Linux amd64 / arm64 and Windows amd64 Agent binaries bundled in the release package.
 
 ## Architecture
 
-```text
-Browser Dashboard
-      |
-      | REST API / static web
-      v
-MizuPanel Server  <---------------- WebSocket ----------------  MizuPanel Agent
-      |                                                        target host
-      | SQLite / MySQL
-      v
-nodes / metrics / node tokens
-```
+<p align="center">
+  <img src="assets/mizupanel-architecture.svg" alt="MizuPanel architecture diagram" width="100%" />
+</p>
 
 ## Docker quick start
 
@@ -276,7 +273,8 @@ journalctl -u mizupanel-server -f
 
 Open the Dashboard, click **Add Host**, choose **Linux** or **Windows**, and run the generated command on the target host.
 
-Linux command shape:
+<details>
+<summary>Linux install command example</summary>
 
 ```bash
 curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-agent.sh \
@@ -289,7 +287,10 @@ curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-age
     --name "$(hostname)"
 ```
 
-Windows command shape, run from an elevated PowerShell session:
+</details>
+
+<details>
+<summary>Windows install command example</summary>
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference='Stop'; `$script = Join-Path `$env:TEMP ('mizupanel-install-' + [guid]::NewGuid().ToString() + '.ps1'); Invoke-WebRequest -Uri 'http://your-panel-host:8080/scripts/install-agent.ps1' -UseBasicParsing -OutFile `$script -ErrorAction Stop; & `$script `
@@ -299,6 +300,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference=
     -NodeId `$env:COMPUTERNAME `
     -Name `$env:COMPUTERNAME"
 ```
+
+</details>
 
 The Linux installer selects the correct file from `downloads/`, then installs the Agent as:
 
@@ -362,20 +365,23 @@ features:
 
 ## Token model
 
-### `install_token`
+| Token | Lifetime | Issuer | Stored in | Purpose |
+| --- | --- | --- | --- | --- |
+| `install_token` | One-time | Server when Dashboard creates an add-host command | Not persisted by Agent | First Agent registration only |
+| `node_token` | Long-lived, per node | Server after first registration succeeds | Agent local config; Server stores a hash | Agent restarts and reconnects |
 
-`install_token` is a one-time bootstrap token.
+Registration flow:
 
-- Generated when the Dashboard creates an add-host command.
-- Used only for the first Agent registration.
-- Exchanged by the Server for a long-lived `node_token`.
-- Not intended as a persistent credential.
+```text
+Dashboard creates install_token
+        ↓
+Agent registers for the first time
+        ↓
+Server verifies install_token
+        ↓
+Server exchanges it for node_token
+        ↓
+Agent reconnects with node_token
+```
 
-### `node_token`
-
-`node_token` is a long-lived per-node token.
-
-- Generated after successful first registration.
-- Persisted by the Agent into `/usr/local/mizupanel/agent.yaml` on Linux or `C:\Program Files\MizuPanel\agent.yaml` on Windows.
-- Used for Agent restarts and reconnects.
-- Stored on the Server side as a hash, not plaintext.
+`install_token` is not intended as a persistent credential. `node_token` is stored on the Server side as a hash, not plaintext.

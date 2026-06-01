@@ -8,30 +8,85 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	serverdb "github.com/mizupanel/mizupanel/internal/server/db"
+	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
 type Config struct {
 	Listen           string
 	DatabasePath     string
+	Storage          serverdb.StorageConfig
 	MetricsRetention time.Duration
 	CleanupInterval  time.Duration
 	AgentToken       string
 	PublicURL        string
+	EnableTerminal   bool
 }
 
 type fileConfig struct {
-	Listen           string `yaml:"listen"`
-	DatabasePath     string `yaml:"database_path"`
-	MetricsRetention string `yaml:"metrics_retention"`
-	CleanupInterval  string `yaml:"cleanup_interval"`
-	AgentToken       string `yaml:"agent_token"`
-	PublicURL        string `yaml:"public_url"`
+	Server struct {
+		Listen         string `yaml:"listen"`
+		PublicURL      string `yaml:"public_url"`
+		EnableTerminal *bool  `yaml:"enable_terminal"`
+	} `yaml:"server"`
+	Storage struct {
+		Driver       string `yaml:"driver"`
+		DatabasePath string `yaml:"database_path"`
+		SQLite       struct {
+			Path string `yaml:"path"`
+		} `yaml:"sqlite"`
+		MySQL struct {
+			Host     string `yaml:"host"`
+			Port     int    `yaml:"port"`
+			Username string `yaml:"username"`
+			Password string `yaml:"password"`
+			Database string `yaml:"database"`
+		} `yaml:"mysql"`
+	} `yaml:"storage"`
+	Metrics struct {
+		Retention       string `yaml:"retention"`
+		CleanupInterval string `yaml:"cleanup_interval"`
+	} `yaml:"metrics"`
+	Security struct {
+		AgentToken string `yaml:"agent_token"`
+	} `yaml:"security"`
+
+	Listen                  string `yaml:"listen"`
+	DatabasePath            string `yaml:"database_path"`
+	MetricsRetention        string `yaml:"metrics_retention"`
+	CleanupInterval         string `yaml:"cleanup_interval"`
+	AgentToken              string `yaml:"agent_token"`
+	PublicURL               string `yaml:"public_url"`
+	LegacyEnableTerminal    bool   `yaml:"enable_terminal"`
+	legacyEnableTerminalSet bool
+}
+
+func (c *fileConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawFileConfig fileConfig
+	var raw rawFileConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*c = fileConfig(raw)
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "enable_terminal" {
+			c.legacyEnableTerminalSet = true
+			break
+		}
+	}
+	return nil
 }
 
 func Load(path string) (Config, error) {
 	cfg := Config{
-		Listen:           ":8080",
-		DatabasePath:     "./data/mizupanel.db",
+		Listen:       ":8080",
+		DatabasePath: "./data/mizupanel.db",
+		Storage: serverdb.StorageConfig{
+			Driver: "sqlite",
+			SQLite: serverdb.SQLiteConfig{Path: "./data/mizupanel.db"},
+			MySQL:  serverdb.MySQLConfig{Port: 3306},
+		},
 		MetricsRetention: 6 * time.Hour,
 		CleanupInterval:  10 * time.Minute,
 		AgentToken:       os.Getenv("MIZUPANEL_AGENT_TOKEN"),
@@ -49,23 +104,31 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(content, &file); err != nil {
 		return Config{}, err
 	}
+	if err := applyFileConfig(&cfg, file); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func applyFileConfig(cfg *Config, file fileConfig) error {
 	if file.Listen != "" {
 		cfg.Listen = file.Listen
 	}
 	if file.DatabasePath != "" {
 		cfg.DatabasePath = file.DatabasePath
+		cfg.Storage.SQLite.Path = file.DatabasePath
 	}
 	if file.MetricsRetention != "" {
-		duration, err := parseDuration(file.MetricsRetention)
+		duration, err := store.ParseMetricsRetention(file.MetricsRetention)
 		if err != nil {
-			return Config{}, fmt.Errorf("parse metrics_retention: %w", err)
+			return fmt.Errorf("parse metrics_retention: %w", err)
 		}
 		cfg.MetricsRetention = duration
 	}
 	if file.CleanupInterval != "" {
 		duration, err := parseDuration(file.CleanupInterval)
 		if err != nil {
-			return Config{}, fmt.Errorf("parse cleanup_interval: %w", err)
+			return fmt.Errorf("parse cleanup_interval: %w", err)
 		}
 		cfg.CleanupInterval = duration
 	}
@@ -75,7 +138,96 @@ func Load(path string) (Config, error) {
 	if file.PublicURL != "" {
 		cfg.PublicURL = strings.TrimRight(file.PublicURL, "/")
 	}
-	return cfg, nil
+	if file.legacyEnableTerminalSet {
+		cfg.EnableTerminal = file.LegacyEnableTerminal
+	}
+
+	if file.Server.Listen != "" {
+		cfg.Listen = file.Server.Listen
+	}
+	if file.Storage.Driver != "" {
+		cfg.Storage.Driver = strings.ToLower(strings.TrimSpace(file.Storage.Driver))
+	}
+	if file.Storage.DatabasePath != "" {
+		cfg.DatabasePath = file.Storage.DatabasePath
+		cfg.Storage.SQLite.Path = file.Storage.DatabasePath
+	}
+	if file.Storage.SQLite.Path != "" {
+		cfg.DatabasePath = file.Storage.SQLite.Path
+		cfg.Storage.SQLite.Path = file.Storage.SQLite.Path
+	}
+	if file.Storage.MySQL.Host != "" {
+		cfg.Storage.MySQL.Host = file.Storage.MySQL.Host
+	}
+	if file.Storage.MySQL.Port != 0 {
+		cfg.Storage.MySQL.Port = file.Storage.MySQL.Port
+	}
+	if file.Storage.MySQL.Username != "" {
+		cfg.Storage.MySQL.Username = file.Storage.MySQL.Username
+	}
+	if file.Storage.MySQL.Password != "" {
+		cfg.Storage.MySQL.Password = file.Storage.MySQL.Password
+	}
+	if file.Storage.MySQL.Database != "" {
+		cfg.Storage.MySQL.Database = file.Storage.MySQL.Database
+	}
+	if file.Metrics.Retention != "" {
+		duration, err := store.ParseMetricsRetention(file.Metrics.Retention)
+		if err != nil {
+			return fmt.Errorf("parse metrics.retention: %w", err)
+		}
+		cfg.MetricsRetention = duration
+	}
+	if file.Metrics.CleanupInterval != "" {
+		duration, err := parseDuration(file.Metrics.CleanupInterval)
+		if err != nil {
+			return fmt.Errorf("parse metrics.cleanup_interval: %w", err)
+		}
+		cfg.CleanupInterval = duration
+	}
+	if file.Security.AgentToken != "" {
+		cfg.AgentToken = file.Security.AgentToken
+	}
+	if file.Server.PublicURL != "" {
+		cfg.PublicURL = strings.TrimRight(file.Server.PublicURL, "/")
+	}
+	if file.Server.EnableTerminal != nil {
+		cfg.EnableTerminal = *file.Server.EnableTerminal
+	}
+	expandStorageEnv(&cfg.Storage)
+	return validateStorageConfig(&cfg.Storage)
+}
+
+func expandStorageEnv(storage *serverdb.StorageConfig) {
+	storage.SQLite.Path = os.ExpandEnv(storage.SQLite.Path)
+	storage.MySQL.Host = os.ExpandEnv(storage.MySQL.Host)
+	storage.MySQL.Username = os.ExpandEnv(storage.MySQL.Username)
+	storage.MySQL.Password = os.ExpandEnv(storage.MySQL.Password)
+	storage.MySQL.Database = os.ExpandEnv(storage.MySQL.Database)
+}
+
+func validateStorageConfig(storage *serverdb.StorageConfig) error {
+	storage.Driver = strings.ToLower(strings.TrimSpace(storage.Driver))
+	if storage.Driver == "" {
+		storage.Driver = "sqlite"
+	}
+	if storage.SQLite.Path == "" {
+		storage.SQLite.Path = "./data/mizupanel.db"
+	}
+	if storage.MySQL.Port == 0 {
+		storage.MySQL.Port = 3306
+	}
+	switch storage.Driver {
+	case "sqlite":
+		return nil
+	case "mysql":
+		if storage.MySQL.Host == "" || storage.MySQL.Username == "" || storage.MySQL.Database == "" {
+			return fmt.Errorf("storage.mysql host, username, and database are required")
+		}
+		return nil
+	default:
+		return fmt.Errorf("storage.driver must be sqlite or mysql")
+	}
 }
 
 func parseDuration(value string) (time.Duration, error) {

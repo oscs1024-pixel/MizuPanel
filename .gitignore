@@ -27,5 +27,5 @@ web/dist/
 .vscode/
 .idea/
 
-selfhost_console_ai_build_doc.md
-planning-with-files.md
+
+skills-lock.json

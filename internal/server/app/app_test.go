@@ -52,6 +52,161 @@ func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 	if strings.Contains(body, "<install_token>") || strings.Contains(body, "agent_token") {
 		t.Fatalf("install command exposed placeholder or global token language: %s", body)
 	}
+	if !strings.Contains(body, "--mode 'normal'") {
+		t.Fatalf("default install command missing normal mode: %s", body)
+	}
+	if strings.Contains(body, "--enable-docker") {
+		t.Fatalf("default install command contains Docker opt-in flag: %s", body)
+	}
+	if strings.Contains(body, "--enable-terminal") {
+		t.Fatalf("default install command contains terminal opt-in flag: %s", body)
+	}
+}
+
+func TestNewHandlerCreatesLinuxInstallCommandWithOpsMode(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=linux&mode=ops", nil)
+	request.Host = "panel.example:8080"
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "--mode 'ops'") {
+		t.Fatalf("ops install command missing mode flag: %s", body)
+	}
+}
+
+func TestNewHandlerCreatesLinuxInstallCommandWithDockerOptIn(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=linux&enable_docker=true", nil)
+	request.Host = "panel.example:8080"
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "--enable-docker") {
+		t.Fatalf("linux install command missing Docker opt-in flag: %s", body)
+	}
+}
+
+func TestNewHandlerCreatesLinuxInstallCommandWithTerminalOptIn(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=linux&enable_terminal=true", nil)
+	request.Host = "panel.example:8080"
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "--enable-terminal") {
+		t.Fatalf("linux install command missing terminal opt-in flag: %s", body)
+	}
+}
+
+func TestNewHandlerIgnoresLinuxOptInsForWindowsInstallCommand(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=windows&enable_docker=true&enable_terminal=true", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	for _, flag := range []string{"--enable-docker", "--enable-terminal"} {
+		if strings.Contains(body, flag) {
+			t.Fatalf("windows install command contains linux-only opt-in flag %q: %s", flag, body)
+		}
+	}
+}
+
+func TestNewHandlerQuotesHostDerivedInstallCommandURLs(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{Nodes: store.NewNodeStore(database), Metrics: store.NewMetricStore(database)})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
+	request.Host = "panel.example'$(touch /tmp/pwned)"
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var response struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.Contains(response.Command, "'$(touch /tmp/pwned)'") || strings.Contains(response.Command, "http://panel.example'$(touch") {
+		t.Fatalf("install command contains unescaped host payload: %s", response.Command)
+	}
 }
 
 func TestNewHandlerCreatesInstallCommandFromPublicURL(t *testing.T) {
@@ -129,6 +284,95 @@ func TestNewHandlerCreatesInstallCommandFromPublicURLWithPathPrefix(t *testing.T
 	}
 	if strings.Contains(body, "internal:8080") {
 		t.Fatalf("install command leaked internal host: %s", body)
+	}
+}
+
+func TestNewHandlerCreatesWindowsInstallCommand(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:     store.NewNodeStore(database),
+		Metrics:   store.NewMetricStore(database),
+		PublicURL: "https://panel.example/mizupanel",
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=windows", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var response struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode install command response: %v", err)
+	}
+	body := response.Command
+	for _, want := range []string{
+		"powershell -NoProfile -ExecutionPolicy Bypass",
+		"`$ErrorActionPreference='Stop'",
+		"`$script = Join-Path `$env:TEMP",
+		"mizupanel-install-",
+		"[guid]::NewGuid()",
+		"/scripts/install-agent.ps1",
+		"Invoke-WebRequest",
+		"-UseBasicParsing",
+		"-OutFile `$script",
+		"-ErrorAction Stop",
+		"& `$script",
+		"-BinaryBaseUrl 'https://panel.example/mizupanel/downloads'",
+		"-ServerUrl 'wss://panel.example/mizupanel/api/agent/ws'",
+		"-Token '",
+		"-NodeId `$env:COMPUTERNAME",
+		"-Name `$env:COMPUTERNAME",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("windows install command missing %q: %s", want, body)
+		}
+	}
+	for _, unsafe := range []string{"\"$ErrorActionPreference='Stop'", " $script =", " $env:TEMP", "-OutFile $script", "& $script", "-NodeId $env:COMPUTERNAME", "-Name $env:COMPUTERNAME"} {
+		if strings.Contains(body, unsafe) {
+			t.Fatalf("windows install command contains parent-expanded PowerShell variable %q: %s", unsafe, body)
+		}
+	}
+	if strings.Contains(body, "OutFile install-agent.ps1") {
+		t.Fatalf("windows install command downloads into a reusable current-directory script: %s", body)
+	}
+	if strings.Contains(body, "; \\") || strings.Contains(body, "install-agent.sh") || strings.Contains(body, "$(hostname)") {
+		t.Fatalf("windows install command contains linux-only fragments: %s", body)
+	}
+}
+
+func TestNewHandlerRejectsUnknownInstallPlatform(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command?platform=darwin", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
 	}
 }
 
@@ -243,6 +487,36 @@ func TestEmbeddedAgentInstallScriptMatchesRepositoryScript(t *testing.T) {
 	}
 }
 
+func TestEmbeddedWindowsAgentInstallScriptMatchesRepositoryScript(t *testing.T) {
+	repositoryScript, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "install-agent.ps1"))
+	if err != nil {
+		t.Fatalf("read repository windows install script: %v", err)
+	}
+	if string(windowsAgentInstallScript) != string(repositoryScript) {
+		t.Fatal("embedded install script differs from scripts/install-agent.ps1")
+	}
+}
+
+func TestEmbeddedAgentUninstallScriptMatchesRepositoryScript(t *testing.T) {
+	repositoryScript, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "uninstall-agent.sh"))
+	if err != nil {
+		t.Fatalf("read repository uninstall script: %v", err)
+	}
+	if string(agentUninstallScript) != string(repositoryScript) {
+		t.Fatal("embedded uninstall script differs from scripts/uninstall-agent.sh")
+	}
+}
+
+func TestEmbeddedWindowsAgentUninstallScriptMatchesRepositoryScript(t *testing.T) {
+	repositoryScript, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "uninstall-agent.ps1"))
+	if err != nil {
+		t.Fatalf("read repository windows uninstall script: %v", err)
+	}
+	if string(windowsAgentUninstallScript) != string(repositoryScript) {
+		t.Fatal("embedded uninstall script differs from scripts/uninstall-agent.ps1")
+	}
+}
+
 func TestNewHandlerMountsNodeAPIWithoutLogin(t *testing.T) {
 	database, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
@@ -335,6 +609,170 @@ func TestNewHandlerServesAgentInstallScript(t *testing.T) {
 	}
 }
 
+func TestNewHandlerServesWindowsAgentInstallScript(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/scripts/install-agent.ps1", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want powershell script", contentType)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "mizupanel-agent-windows-amd64.exe") {
+		t.Fatalf("unexpected windows script body: %q", body)
+	}
+}
+
+func TestNewHandlerServesAgentUninstallScript(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/scripts/uninstall-agent.sh", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/x-shellscript; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want shell script", contentType)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "MizuPanel agent uninstalled") {
+		t.Fatalf("unexpected uninstall script body: %q", body)
+	}
+}
+
+func TestNewHandlerServesWindowsAgentUninstallScript(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/scripts/uninstall-agent.ps1", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want powershell script", contentType)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "MizuPanel agent uninstalled") {
+		t.Fatalf("unexpected windows uninstall script body: %q", body)
+	}
+}
+
+func TestNewHandlerServesWindowsAgentInstallScriptHead(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/scripts/install-agent.ps1", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body length = %d, want 0", recorder.Body.Len())
+	}
+}
+
+func TestNewHandlerServesEmbeddedWindowsAgentInstallScript(t *testing.T) {
+	tempDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tempDir, "scripts"), 0755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "scripts", "install-agent.ps1"), []byte("Write-Output 'poisoned'\n"), 0644); err != nil {
+		t.Fatalf("write poisoned script: %v", err)
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/scripts/install-agent.ps1", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, "poisoned") {
+		t.Fatalf("served windows script from process working directory: %q", body)
+	}
+	if !strings.Contains(body, "MizuPanel agent installed") {
+		t.Fatalf("served windows script does not look like bundled installer: %q", body)
+	}
+}
+
 func TestNewHandlerServesEmbeddedAgentInstallScript(t *testing.T) {
 	tempDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(tempDir, "scripts"), 0755); err != nil {
@@ -412,7 +850,7 @@ func TestServedAgentInstallScriptGeneratesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read generated config: %v", err)
 	}
-	if !strings.Contains(string(config), `token: "secret-token"`) {
+	if !strings.Contains(string(config), `  token: "secret-token"`) {
 		t.Fatalf("generated config missing token:\n%s", config)
 	}
 }
@@ -460,7 +898,7 @@ func TestServedAgentInstallScriptDownloadsBinaryURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read generated config: %v", err)
 	}
-	if !strings.Contains(string(config), `token: "install-token"`) {
+	if !strings.Contains(string(config), `  token: "install-token"`) {
 		t.Fatalf("generated config missing install token:\n%s", config)
 	}
 }

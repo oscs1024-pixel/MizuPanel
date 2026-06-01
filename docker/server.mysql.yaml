@@ -1,0 +1,21 @@
+server:
+  listen: ":8080"
+  public_url: ""
+  enable_terminal: true
+
+storage:
+  driver: "mysql"
+  mysql:
+    host: "mysql"
+    port: 3306
+    username: "${MIZUPANEL_MYSQL_USERNAME}"
+    password: "${MIZUPANEL_MYSQL_PASSWORD}"
+    database: "${MIZUPANEL_MYSQL_DATABASE}"
+
+metrics:
+  retention: "6h"
+  cleanup_interval: "10m"
+
+security:
+  # Prefer Dashboard-generated one-time install tokens.
+  # agent_token: "change-this-to-a-random-secret"

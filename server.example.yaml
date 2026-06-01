@@ -1,8 +1,25 @@
-listen: ":8080" # HTTP listen address for the MizuPanel Server.
-database_path: "./data/mizupanel.db" # SQLite database path for nodes, metrics, and persisted node tokens.
-metrics_retention: "6h" # How long historical metrics are kept before cleanup.
-cleanup_interval: "10m" # How often the retention cleanup job runs.
-public_url: "" # Public panel URL used to generate Agent install commands; leave empty to infer from the request host.
-# agent_token is optional and should only be set if you need a long-lived bootstrap token.
-# Prefer the Dashboard-generated one-time install token flow for adding hosts.
-# agent_token: "change-this-to-a-random-secret" # Optional long-lived Agent bootstrap token; avoid exposing it in browsers or public docs.
+server:
+  listen: ":8080" # HTTP listen address for the MizuPanel Server.
+  public_url: "" # Public panel URL used to generate Agent install commands; leave empty to infer from the request host.
+  enable_terminal: true # Enables browser terminal routes; Linux Agents must also opt in with features.terminal: true.
+
+storage:
+  driver: "sqlite" # sqlite | mysql. SQLite is the default and recommended for simple self-hosted installs.
+  database_path: "./data/mizupanel.db" # Legacy SQLite database path; kept for compatibility.
+  sqlite:
+    path: "./data/mizupanel.db"
+  mysql:
+    host: "127.0.0.1"
+    port: 3306
+    username: "mizupanel"
+    password: ""
+    database: "mizupanel"
+
+metrics:
+  retention: "6h" # How long historical metrics are kept before cleanup.
+  cleanup_interval: "10m" # How often the retention cleanup job runs.
+
+security:
+  # agent_token is optional and should only be set if you need a long-lived bootstrap token.
+  # Prefer the Dashboard-generated one-time install token flow for adding hosts.
+  # agent_token: "change-this-to-a-random-secret" # Optional long-lived Agent bootstrap token; avoid exposing it in browsers or public docs.

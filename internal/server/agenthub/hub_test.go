@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,78 @@ func TestInstallAuthStoreGeneratesRandomNodeToken(t *testing.T) {
 	}
 	if strings.Contains(nodeToken, "install-token") || strings.Contains(nodeToken, "node-1") {
 		t.Fatalf("node token %q includes install token or node id", nodeToken)
+	}
+}
+
+func TestInstallAuthStoreRevokesNodeToken(t *testing.T) {
+	auth := NewInstallAuthStore()
+	auth.CreateInstallToken("install-token")
+	nodeToken, ok := auth.ExchangeInstallToken("install-token", "node-1", nil)
+	if !ok {
+		t.Fatal("ExchangeInstallToken returned false")
+	}
+	if !auth.MayAuthenticateNodeToken(nodeToken) {
+		t.Fatal("node token should authenticate before revoke")
+	}
+
+	auth.RevokeNodeToken("node-1")
+	if auth.MayAuthenticateNodeToken(nodeToken) {
+		t.Fatal("node token still authenticates after revoke")
+	}
+}
+
+func TestInstallTokenAllowsNodeOnlyWhenCreatedAfterDeletion(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{})
+	deletedAt := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := database.Exec(`INSERT INTO deleted_nodes (id, deleted_at) VALUES (?, ?)`, "node-1", deletedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert tombstone: %v", err)
+	}
+	allowed, err := handler.allowNode(t.Context(), "node-1", deletedAt.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("allow with old token: %v", err)
+	}
+	if allowed {
+		t.Fatal("old install token should not clear tombstone")
+	}
+	allowed, err = handler.allowNode(t.Context(), "node-1", deletedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("allow with new token: %v", err)
+	}
+	if !allowed {
+		t.Fatal("new install token should clear tombstone")
+	}
+}
+
+func TestAgentCredentialStillValidRejectsRevokedPersistentToken(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tokens := store.NewAgentTokenStore(database)
+	if err := tokens.SaveNodeToken(t.Context(), "node-1", "node-token", time.Now().UTC()); err != nil {
+		t.Fatalf("save node token: %v", err)
+	}
+	handler := NewHandler(store.NewNodeStore(database), store.NewMetricStore(database), Options{AgentTokens: tokens})
+	if !handler.agentCredentialStillValid(t.Context(), "node-1", "node-token", "node-token", false, true) {
+		t.Fatal("node token should be valid before delete")
+	}
+	if _, err := database.Exec(`DELETE FROM node_tokens WHERE node_id = ?`, "node-1"); err != nil {
+		t.Fatalf("delete token: %v", err)
+	}
+	if handler.agentCredentialStillValid(t.Context(), "node-1", "node-token", "node-token", false, true) {
+		t.Fatal("node token should be invalid after delete")
 	}
 }
 
@@ -271,6 +344,49 @@ func TestBearerTokenAcceptsCaseInsensitiveScheme(t *testing.T) {
 
 	if got := bearerToken(request); got != "secret" {
 		t.Fatalf("bearerToken = %q, want secret", got)
+	}
+}
+
+func TestAgentConnectionEnforcesCombinedTerminalSessionLimit(t *testing.T) {
+	agent := &agentConnection{
+		terminals:      make(map[string]*browserTerminal),
+		containerExecs: make(map[string]*browserContainerExec),
+	}
+
+	for i := range maxServerTerminalSessions - 1 {
+		if !agent.addTerminal(&browserTerminal{sessionID: "terminal-" + strconv.Itoa(i)}) {
+			t.Fatalf("addTerminal rejected terminal %d before combined cap", i)
+		}
+	}
+	if !agent.addContainerExec(&browserContainerExec{sessionID: "exec-1", containerID: "container-1"}) {
+		t.Fatal("addContainerExec rejected session at combined cap")
+	}
+	if agent.addTerminal(&browserTerminal{sessionID: "terminal-over-limit"}) {
+		t.Fatal("addTerminal accepted session beyond combined terminal/container exec cap")
+	}
+}
+
+func TestAgentConnectionMixedSessionLimitConcurrentAccess(t *testing.T) {
+	agent := &agentConnection{
+		terminals:      make(map[string]*browserTerminal),
+		containerExecs: make(map[string]*browserContainerExec),
+	}
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			_ = agent.addTerminal(&browserTerminal{sessionID: "terminal-" + strconv.Itoa(i)})
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			_ = agent.addContainerExec(&browserContainerExec{sessionID: "exec-" + strconv.Itoa(i), containerID: "container-1"})
+		}(i)
+	}
+	wg.Wait()
+
+	if got := len(agent.terminals) + len(agent.containerExecs); got > maxServerTerminalSessions {
+		t.Fatalf("combined sessions = %d, want at most %d", got, maxServerTerminalSessions)
 	}
 }
 

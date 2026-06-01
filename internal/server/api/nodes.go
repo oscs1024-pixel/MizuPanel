@@ -3,21 +3,25 @@ package api
 import (
 	"time"
 
+	"github.com/mizupanel/mizupanel/internal/protocol"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
 type NodeResponse struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Hostname     string          `json:"hostname"`
-	IP           string          `json:"ip"`
-	OS           string          `json:"os"`
-	Arch         string          `json:"arch"`
-	Kernel       string          `json:"kernel"`
-	AgentVersion string          `json:"agent_version"`
-	Status       string          `json:"status"`
-	LastSeenAt   time.Time       `json:"last_seen_at"`
-	LatestMetric *MetricResponse `json:"latest_metric,omitempty"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Hostname        string          `json:"hostname"`
+	IP              string          `json:"ip"`
+	OS              string          `json:"os"`
+	Arch            string          `json:"arch"`
+	Kernel          string          `json:"kernel"`
+	AgentVersion    string          `json:"agent_version"`
+	AgentMode       string          `json:"agent_mode"`
+	AgentUser       string          `json:"agent_user"`
+	Status          string          `json:"status"`
+	LastSeenAt      time.Time       `json:"last_seen_at"`
+	TerminalEnabled bool            `json:"terminal_enabled"`
+	LatestMetric    *MetricResponse `json:"latest_metric,omitempty"`
 }
 
 type MetricResponse struct {
@@ -41,6 +45,22 @@ type MetricResponse struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type ProcessSnapshotResponse struct {
+	NodeID      string                 `json:"node_id"`
+	CollectedAt int64                  `json:"collected_at"`
+	Error       string                 `json:"error"`
+	Processes   []protocol.ProcessInfo `json:"processes"`
+}
+
+type DockerSnapshotResponse struct {
+	NodeID      string                   `json:"node_id"`
+	CollectedAt int64                    `json:"collected_at"`
+	Available   bool                     `json:"available"`
+	Version     string                   `json:"version,omitempty"`
+	Error       string                   `json:"error"`
+	Containers  []protocol.ContainerInfo `json:"containers"`
+}
+
 func nodeResponse(node store.Node) NodeResponse {
 	return NodeResponse{
 		ID:           node.ID,
@@ -51,6 +71,8 @@ func nodeResponse(node store.Node) NodeResponse {
 		Arch:         node.Arch,
 		Kernel:       node.Kernel,
 		AgentVersion: node.AgentVersion,
+		AgentMode:    node.AgentMode,
+		AgentUser:    node.AgentUser,
 		Status:       node.Status,
 		LastSeenAt:   node.LastSeenAt,
 	}

@@ -2,13 +2,26 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from './App'
-import { createInstallCommand, getNodeMetrics, getNodes } from './api/client'
+import { createInstallCommand, deleteNode, getNodeDocker, getNodeMetrics, getNodeProcesses, getNodes } from './api/client'
 import type { Metric, Node } from './types'
 
 vi.mock('./api/client', () => ({
   createInstallCommand: vi.fn(),
   getNodes: vi.fn(),
-  getNodeMetrics: vi.fn()
+  getNodeMetrics: vi.fn(),
+  getNodeProcesses: vi.fn(),
+  getNodeDocker: vi.fn(),
+  getSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
+  updateSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
+  getNodeFiles: vi.fn(async () => ({ path: '/', entries: [] })),
+  readNodeFile: vi.fn(async () => ({ path: '/tmp/a', content: '', editable: true })),
+  writeNodeFile: vi.fn(async () => ({ path: '/tmp/a', saved: true })),
+  uploadNodeFile: vi.fn(async () => ({ path: '/tmp/upload.bin', uploaded: true })),
+  deleteNodePath: vi.fn(async () => ({ path: '/tmp/upload.bin', deleted: true })),
+  deleteNode: vi.fn(async () => undefined),
+  rebootNode: vi.fn(async () => ({ accepted: true })),
+  createTerminalSession: vi.fn(async () => ({ token: 'terminal-token' })),
+  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' }))
 }))
 
 const nodes: Node[] = [
@@ -64,7 +77,13 @@ describe('App regression behavior', () => {
     vi.mocked(createInstallCommand).mockReset()
     vi.mocked(createInstallCommand).mockResolvedValue({ command: 'install command', install_token: 'install-token' })
     vi.mocked(getNodes).mockReset()
+    vi.mocked(deleteNode).mockReset()
+    vi.mocked(deleteNode).mockResolvedValue(undefined)
     vi.mocked(getNodeMetrics).mockReset()
+    vi.mocked(getNodeProcesses).mockReset()
+    vi.mocked(getNodeDocker).mockReset()
+    vi.mocked(getNodeProcesses).mockResolvedValue({ node_id: 'node-1', collected_at: 0, error: '', processes: [] })
+    vi.mocked(getNodeDocker).mockResolvedValue({ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] })
   })
 
   test('falls back to the first node when the route node id is invalid', async () => {
@@ -93,6 +112,24 @@ describe('App regression behavior', () => {
 
     expect(await screen.findAllByText('Tokyo JP')).toHaveLength(2)
     expect(screen.getAllByText('等待指标数据').length).toBeGreaterThan(0)
+  })
+
+  test('removes the selected node record and refreshes the remaining node', async () => {
+    window.history.pushState({}, '', '/')
+    vi.mocked(getNodes)
+      .mockResolvedValueOnce({ nodes })
+      .mockResolvedValueOnce({ nodes: [nodes[1]] })
+    vi.mocked(getNodeMetrics).mockResolvedValue({ metrics: [] })
+
+    render(<App />)
+
+    expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认移除' }))
+
+    await waitFor(() => expect(deleteNode).toHaveBeenCalledWith('node-1'))
+    expect(await screen.findAllByText('Tokyo JP')).toHaveLength(2)
+    expect(screen.queryByText('Oracle SG')).not.toBeInTheDocument()
   })
 
   test('shows a dashboard error when nodes fail without opening login', async () => {

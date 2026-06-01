@@ -8,27 +8,47 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	serverdb "github.com/mizupanel/mizupanel/internal/server/db"
 )
 
 type AgentTokenStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect serverdb.Dialect
 }
 
 func NewAgentTokenStore(db *sql.DB) *AgentTokenStore {
-	return &AgentTokenStore{db: db}
+	return NewAgentTokenStoreWithDialect(db, serverdb.DialectSQLite)
+}
+
+func NewAgentTokenStoreWithDialect(db *sql.DB, dialect serverdb.Dialect) *AgentTokenStore {
+	return &AgentTokenStore{db: db, dialect: dialect}
 }
 
 const tokenHashPrefix = "sha256:"
 
 func (s *AgentTokenStore) SaveNodeToken(ctx context.Context, nodeID string, token string, createdAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO node_tokens (node_id, token, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			token = excluded.token,
-			created_at = excluded.created_at
-	`, nodeID, hashToken(token), formatTime(createdAt))
+	_, err := s.db.ExecContext(ctx, agentTokenUpsertSQL(s.dialect), nodeID, hashToken(token), formatTime(createdAt))
 	return err
+}
+
+func agentTokenUpsertSQL(dialect serverdb.Dialect) string {
+	if dialect == serverdb.DialectMySQL {
+		return `
+			INSERT INTO node_tokens (node_id, token, created_at)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				token = VALUES(token),
+				created_at = VALUES(created_at)
+		`
+	}
+	return `
+			INSERT INTO node_tokens (node_id, token, created_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(node_id) DO UPDATE SET
+				token = excluded.token,
+				created_at = excluded.created_at
+		`
 }
 
 func (s *AgentTokenStore) NodeToken(ctx context.Context, nodeID string) (string, bool, error) {

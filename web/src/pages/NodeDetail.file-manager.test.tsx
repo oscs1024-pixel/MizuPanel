@@ -1,0 +1,401 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+import { NodeDetail } from './NodeDetail'
+import type { FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, Node, RebootResponse } from '../types'
+
+const node: Node = {
+  id: 'node-1',
+  name: 'Oracle SG',
+  hostname: 'oracle-sg',
+  ip: '10.0.0.1',
+  os: 'linux',
+  arch: 'amd64',
+  kernel: '6.6',
+  agent_version: '0.1.0',
+  status: 'online',
+  last_seen_at: '2026-05-28T10:00:00Z',
+  terminal_enabled: true,
+  agent_mode: 'ops',
+  agent_user: 'root'
+}
+
+const rootList: FileListResponse = {
+  path: '/',
+  entries: [
+    { name: 'etc', path: '/etc', type: 'directory' },
+    { name: 'app.conf', path: '/app.conf', type: 'file', size: 10 }
+  ]
+}
+
+const etcList: FileListResponse = {
+  path: '/etc',
+  entries: [
+    { name: 'mizupanel.yaml', path: '/etc/mizupanel.yaml', type: 'file', size: 24 }
+  ]
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver
+  })
+  return { promise, resolve }
+}
+
+describe('NodeDetail file manager operations', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test('opens terminal, switches to file panel, enters directories, edits text files and reboots with confirmation', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onLoadFiles = vi.fn(async (_nodeID: string, path: string): Promise<FileListResponse> => path === '/etc' ? etcList : rootList)
+    const onReadFile = vi.fn(async (_nodeID: string, path: string): Promise<FileReadResponse> => ({ path, content: 'port=8080\n', editable: true, size: 10 }))
+    const onWriteFile = vi.fn(async (_nodeID: string, path: string, content: string) => ({ path, saved: true, content }))
+    const onRebootNode = vi.fn(async (): Promise<RebootResponse> => ({ accepted: true }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+        onReadFile={onReadFile}
+        onWriteFile={onWriteFile}
+        onRebootNode={onRebootNode}
+      />
+    )
+
+    expect(screen.getByText('运维模式 · root')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开终端' }))
+    expect(open).toHaveBeenCalledWith('/nodes/node-1/terminal', '_blank', 'noopener,noreferrer')
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    expect(await screen.findByRole('region', { name: '文件管理' })).toBeInTheDocument()
+    expect(onLoadFiles).toHaveBeenCalledWith('node-1', '/')
+
+    fireEvent.click(await screen.findByRole('button', { name: '进入目录 etc' }))
+    expect(onLoadFiles).toHaveBeenLastCalledWith('node-1', '/etc')
+    expect(await screen.findByText((_content, element) => element?.textContent === '当前路径：/etc')).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑文件 mizupanel.yaml' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑文件' })
+    const editor = within(dialog).getByLabelText('文件内容')
+    expect(editor).toHaveValue('port=8080\n')
+    fireEvent.change(editor, { target: { value: 'port=9090\n' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存文件' }))
+    expect(onWriteFile).toHaveBeenCalledWith('node-1', '/etc/mizupanel.yaml', 'port=9090\n')
+
+    fireEvent.click(screen.getByRole('button', { name: '重启' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('当前执行用户：root'))
+    expect(onRebootNode).toHaveBeenCalledWith('node-1')
+    expect(await screen.findByText('重启命令已发送，节点可能会暂时离线，请稍后等待 Agent 重新连接。')).toBeInTheDocument()
+  })
+
+  test('removes node records from an in-panel danger dialog', async () => {
+    const onDeleteNode = vi.fn(async () => undefined)
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onDeleteNode={onDeleteNode}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
+    const dialog = screen.getByRole('dialog', { name: '移除节点记录' })
+    expect(within(dialog).getByText(/不会停止目标机器上的 Agent/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/不会卸载目标机器上的 Agent/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/建议先按 README 中的卸载命令卸载 Agent/)).toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认移除' }))
+
+    expect(onDeleteNode).toHaveBeenCalledWith('node-1')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument())
+  })
+
+  test('keeps node records when the in-panel remove dialog is cancelled', () => {
+    const onDeleteNode = vi.fn(async () => undefined)
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onDeleteNode={onDeleteNode}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(onDeleteNode).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument()
+  })
+
+  test('shows reboot feedback from the default overview view', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onRebootNode = vi.fn(async (): Promise<RebootResponse> => ({ accepted: true }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onRebootNode={onRebootNode}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重启' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('当前执行用户：root'))
+    expect(onRebootNode).toHaveBeenCalledWith('node-1')
+    expect(await screen.findByText('重启命令已发送，节点可能会暂时离线，请稍后等待 Agent 重新连接。')).toBeInTheDocument()
+  })
+
+  test('uploads files to the current directory and deletes entries after confirmation', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let entries = [...etcList.entries]
+    const onLoadFiles = vi.fn(async (_nodeID: string, path: string): Promise<FileListResponse> => ({ path, entries }))
+    const onUploadFile = vi.fn(async (_nodeID: string, path: string, contentBase64: string): Promise<FileUploadResponse> => {
+      entries = [{ name: 'upload.bin', path, type: 'binary', size: 3 }, ...entries]
+      return { path, contentBase64, uploaded: true, size: 3 } as FileUploadResponse
+    })
+    const onDeletePath = vi.fn(async (_nodeID: string, path: string): Promise<FileDeleteResponse> => {
+      entries = entries.filter((entry) => entry.path !== path)
+      return { path, deleted: true }
+    })
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+        onUploadFile={onUploadFile}
+        onDeletePath={onDeletePath}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.change(await screen.findByLabelText('直接打开路径'), { target: { value: '/etc' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    expect(await screen.findByText('mizupanel.yaml')).toBeInTheDocument()
+
+    const file = new File([new Uint8Array([0, 1, 2])], 'upload.bin', { type: 'application/octet-stream' })
+    fireEvent.change(screen.getByLabelText('上传文件'), { target: { files: [file] } })
+    await waitFor(() => expect(onUploadFile).toHaveBeenCalledWith('node-1', '/etc/upload.bin', 'AAEC'))
+    expect(await screen.findByText('文件已上传。')).toBeInTheDocument()
+    expect(await screen.findByText('upload.bin')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除 upload.bin' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('/etc/upload.bin'))
+    await waitFor(() => expect(onDeletePath).toHaveBeenCalledWith('node-1', '/etc/upload.bin'))
+    expect(await screen.findByText('文件已删除。')).toBeInTheDocument()
+    expect(screen.queryByText('upload.bin')).not.toBeInTheDocument()
+  })
+
+  test('opens direct paths as directories or editable files and reports missing paths', async () => {
+    const onLoadFiles = vi.fn(async (_nodeID: string, path: string): Promise<FileListResponse> => {
+      if (path === '/var/log') return { path, entries: [{ name: 'app.log', path: '/var/log/app.log', type: 'file', size: 12 }] }
+      if (path === '/etc/app.conf') return { path, entries: [], code: 'not_directory', error: '路径不是目录。' }
+      return { path, entries: [], code: 'not_found', error: '路径不存在或已被删除。' }
+    })
+    const onReadFile = vi.fn(async (_nodeID: string, path: string): Promise<FileReadResponse> => ({ path, content: 'hello\n', editable: true, size: 6 }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+        onReadFile={onReadFile}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    const pathInput = await screen.findByLabelText('直接打开路径')
+    fireEvent.change(pathInput, { target: { value: '/var/log' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    expect(onLoadFiles).toHaveBeenLastCalledWith('node-1', '/var/log')
+    expect(await screen.findByText('app.log')).toBeInTheDocument()
+
+    fireEvent.change(pathInput, { target: { value: '/etc/app.conf' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    await waitFor(() => expect(onReadFile).toHaveBeenCalledWith('node-1', '/etc/app.conf'))
+    expect(await screen.findByRole('dialog', { name: '编辑文件' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭编辑器' }))
+    fireEvent.change(pathInput, { target: { value: '/missing' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    expect(await screen.findByText('路径不存在或已被删除。')).toBeInTheDocument()
+  })
+
+  test('keeps the latest directory when an older path response finishes later', async () => {
+    const oldPath = deferred<FileListResponse>()
+    const latestPath = deferred<FileListResponse>()
+    const onLoadFiles = vi.fn((_nodeID: string, path: string): Promise<FileListResponse> => {
+      if (path === '/var/log') return oldPath.promise
+      if (path === '/tmp') return latestPath.promise
+      return Promise.resolve(rootList)
+    })
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    const pathInput = await screen.findByLabelText('直接打开路径')
+
+    fireEvent.change(pathInput, { target: { value: '/var/log' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    fireEvent.change(pathInput, { target: { value: '/tmp' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+
+    await act(async () => {
+      latestPath.resolve({ path: '/tmp', entries: [{ name: 'current.log', path: '/tmp/current.log', type: 'file', size: 1 }] })
+    })
+    expect(await screen.findByText('current.log')).toBeInTheDocument()
+
+    await act(async () => {
+      oldPath.resolve({ path: '/var/log', entries: [{ name: 'stale.log', path: '/var/log/stale.log', type: 'file', size: 1 }] })
+    })
+    expect(screen.getByText((_content, element) => element?.textContent === '当前路径：/tmp')).toBeInTheDocument()
+    expect(screen.queryByText('stale.log')).not.toBeInTheDocument()
+  })
+
+  test('keeps the latest file when an older read response finishes later', async () => {
+    const oldRead = deferred<FileReadResponse>()
+    const latestRead = deferred<FileReadResponse>()
+    const onLoadFiles = vi.fn(async (): Promise<FileListResponse> => ({
+      path: '/',
+      entries: [
+        { name: 'old.conf', path: '/old.conf', type: 'file', size: 3 },
+        { name: 'latest.conf', path: '/latest.conf', type: 'file', size: 6 }
+      ]
+    }))
+    const onReadFile = vi.fn((_nodeID: string, path: string): Promise<FileReadResponse> => {
+      if (path === '/old.conf') return oldRead.promise
+      return latestRead.promise
+    })
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+        onReadFile={onReadFile}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑文件 old.conf' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑文件 latest.conf' }))
+
+    await act(async () => {
+      latestRead.resolve({ path: '/latest.conf', content: 'latest', editable: true, size: 6 })
+    })
+    const dialog = await screen.findByRole('dialog', { name: '编辑文件' })
+    expect(within(dialog).getByText('/latest.conf')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('文件内容')).toHaveValue('latest')
+
+    await act(async () => {
+      oldRead.resolve({ path: '/old.conf', content: 'old', editable: true, size: 3 })
+    })
+    expect(within(dialog).getByText('/latest.conf')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('文件内容')).toHaveValue('latest')
+  })
+
+  test('clears directory loading when opening a visible file cancels an older directory request', async () => {
+    const pendingDirectory = deferred<FileListResponse>()
+    const onLoadFiles = vi.fn((_nodeID: string, path: string): Promise<FileListResponse> => {
+      if (path === '/var/log') return pendingDirectory.promise
+      return Promise.resolve(rootList)
+    })
+    const onReadFile = vi.fn(async (_nodeID: string, path: string): Promise<FileReadResponse> => ({ path, content: 'port=8080\n', editable: true, size: 10 }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+        onReadFile={onReadFile}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    const pathInput = await screen.findByLabelText('直接打开路径')
+    fireEvent.change(pathInput, { target: { value: '/var/log' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开路径' }))
+    expect(await screen.findByText('正在加载目录...')).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑文件 app.conf' }))
+    expect(await screen.findByRole('dialog', { name: '编辑文件' })).toBeInTheDocument()
+    expect(screen.queryByText('正在加载目录...')).not.toBeInTheDocument()
+
+    await act(async () => {
+      pendingDirectory.resolve({ path: '/var/log', entries: [{ name: 'stale.log', path: '/var/log/stale.log', type: 'file', size: 1 }] })
+    })
+    expect(screen.queryByText('stale.log')).not.toBeInTheDocument()
+  })
+
+  test('shows binary files as not editable', async () => {
+    const onLoadFiles = vi.fn(async (): Promise<FileListResponse> => ({
+      path: '/',
+      entries: [{ name: 'image.bin', path: '/image.bin', type: 'binary', size: 3 }]
+    }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onLoadFiles={onLoadFiles}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    const panel = await screen.findByRole('region', { name: '文件管理' })
+    expect(await within(panel).findByText('二进制文件不可编辑')).toBeInTheDocument()
+  })
+})

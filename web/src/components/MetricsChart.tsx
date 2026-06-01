@@ -4,7 +4,7 @@ import type { Metric } from '../types'
 
 type MetricsChartProps = {
   metrics: Metric[]
-  dataKey: keyof Pick<Metric, 'cpu_usage' | 'memory_usage' | 'disk_usage' | 'rx_speed' | 'tx_speed'>
+  dataKey: keyof Pick<Metric, 'cpu_usage' | 'memory_usage' | 'disk_usage' | 'rx_speed' | 'tx_speed' | 'load1' | 'load5' | 'load15'>
   title: string
   color: string
   unitLabel?: string

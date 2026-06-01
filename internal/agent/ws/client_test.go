@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,8 +9,16 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/mizupanel/mizupanel/internal/agent/filetree"
 	"github.com/mizupanel/mizupanel/internal/protocol"
 )
+
+func TestMaxServerMessageBytesAllowsDefaultUploadPayload(t *testing.T) {
+	encodedUploadBytes := base64.StdEncoding.EncodedLen(filetree.DefaultMaxUploadBytes)
+	if maxServerMessageBytes <= encodedUploadBytes {
+		t.Fatalf("maxServerMessageBytes = %d, want > encoded default upload size %d", maxServerMessageBytes, encodedUploadBytes)
+	}
+}
 
 func TestClientUsesNodeTokenFromHelloAckOnNextConnection(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}

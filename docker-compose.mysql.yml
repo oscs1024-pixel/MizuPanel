@@ -1,0 +1,36 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: ${MIZUPANEL_MYSQL_CONTAINER_NAME:-mizupanel-mysql}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MIZUPANEL_MYSQL_DATABASE:?set MIZUPANEL_MYSQL_DATABASE}
+      MYSQL_USER: ${MIZUPANEL_MYSQL_USERNAME:?set MIZUPANEL_MYSQL_USERNAME}
+      MYSQL_PASSWORD: ${MIZUPANEL_MYSQL_PASSWORD:?set MIZUPANEL_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MIZUPANEL_MYSQL_ROOT_PASSWORD:?set MIZUPANEL_MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mizupanel-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysqladmin ping -h 127.0.0.1 -u\"$${MYSQL_USER}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mizupanel:
+    build: .
+    container_name: ${MIZUPANEL_CONTAINER_NAME:-mizupanel}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${MIZUPANEL_BIND_ADDR:-127.0.0.1}:${MIZUPANEL_PORT:-8080}:8080"
+    environment:
+      MIZUPANEL_MYSQL_DATABASE: ${MIZUPANEL_MYSQL_DATABASE:?set MIZUPANEL_MYSQL_DATABASE}
+      MIZUPANEL_MYSQL_USERNAME: ${MIZUPANEL_MYSQL_USERNAME:?set MIZUPANEL_MYSQL_USERNAME}
+      MIZUPANEL_MYSQL_PASSWORD: ${MIZUPANEL_MYSQL_PASSWORD:?set MIZUPANEL_MYSQL_PASSWORD}
+    volumes:
+      - ./docker/server.mysql.yaml:/app/server.yaml:ro
+
+volumes:
+  mizupanel-mysql-data:

@@ -10,7 +10,7 @@ import (
 func TestLoadSupportsDayDurations(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server.yaml")
-	if err := os.WriteFile(path, []byte("metrics_retention: 7d\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("metrics:\n  retention: 7d\n"), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

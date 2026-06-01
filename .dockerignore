@@ -1,0 +1,28 @@
+.git
+.claude
+.vscode
+.idea
+
+# Local config and runtime data
+server.yaml
+agent.yaml
+*.local.yaml
+data
+dist
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts
+bin
+*.test
+coverage.out
+
+# Frontend dependencies and output
+web/node_modules
+web/dist
+web/tsconfig.tsbuildinfo
+
+# OS/editor files
+.DS_Store
+skills-lock.json

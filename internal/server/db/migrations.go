@@ -1,59 +1,222 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 func Migrate(db *sql.DB) error {
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS nodes (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			hostname TEXT,
-			ip TEXT,
-			os TEXT,
-			arch TEXT,
-			kernel TEXT,
-			agent_version TEXT,
-			status TEXT NOT NULL DEFAULT 'offline',
-			last_seen_at DATETIME,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS node_metrics (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			node_id TEXT NOT NULL,
-			cpu_usage REAL,
-			cpu_cores INTEGER,
-			memory_total INTEGER,
-			memory_used INTEGER,
-			memory_usage REAL,
-			disk_total INTEGER,
-			disk_used INTEGER,
-			disk_usage REAL,
-			rx_speed INTEGER,
-			tx_speed INTEGER,
-			rx_total INTEGER,
-			tx_total INTEGER,
-			load1 REAL,
-			load5 REAL,
-			load15 REAL,
-			created_at DATETIME NOT NULL
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_node_metrics_node_created ON node_metrics(node_id, created_at);`,
-		`CREATE TABLE IF NOT EXISTS install_tokens (
-			token TEXT PRIMARY KEY,
-			used_at DATETIME,
-			created_at DATETIME NOT NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS node_tokens (
-			node_id TEXT PRIMARY KEY,
-			token TEXT NOT NULL UNIQUE,
-			created_at DATETIME NOT NULL
-		);`,
+	return MigrateDialect(db, DialectSQLite)
+}
+
+func MigrateDialect(db *sql.DB, dialect Dialect) error {
+	if dialect == DialectMySQL {
+		return migrateStatements(db, DialectMySQL, mysqlMigrationStatements())
 	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return err
+	}
+	return migrateStatements(db, DialectSQLite, sqliteMigrationStatements())
+}
+
+func sqliteMigrationStatements() []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS nodes (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					hostname TEXT,
+					ip TEXT,
+					os TEXT,
+					arch TEXT,
+					kernel TEXT,
+					agent_version TEXT,
+					agent_mode TEXT NOT NULL DEFAULT 'normal',
+					agent_user TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL DEFAULT 'offline',
+					last_seen_at DATETIME,
+					created_at DATETIME NOT NULL,
+					updated_at DATETIME NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_metrics (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					node_id TEXT NOT NULL,
+					cpu_usage REAL,
+					cpu_cores INTEGER,
+					memory_total INTEGER,
+					memory_used INTEGER,
+					memory_usage REAL,
+					disk_total INTEGER,
+					disk_used INTEGER,
+					disk_usage REAL,
+					rx_speed INTEGER,
+					tx_speed INTEGER,
+					rx_total INTEGER,
+					tx_total INTEGER,
+					load1 REAL,
+					load5 REAL,
+					load15 REAL,
+					created_at DATETIME NOT NULL
+				);`,
+		`CREATE INDEX IF NOT EXISTS idx_node_metrics_node_created ON node_metrics(node_id, created_at);`,
+		`CREATE TABLE IF NOT EXISTS node_process_snapshots (
+					node_id TEXT PRIMARY KEY,
+					collected_at INTEGER NOT NULL,
+					processes_json TEXT NOT NULL,
+					error TEXT NOT NULL DEFAULT '',
+					updated_at DATETIME NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_docker_snapshots (
+					node_id TEXT PRIMARY KEY,
+					collected_at INTEGER NOT NULL,
+					available INTEGER NOT NULL,
+					version TEXT NOT NULL DEFAULT '',
+					containers_json TEXT NOT NULL,
+					error TEXT NOT NULL DEFAULT '',
+					updated_at DATETIME NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE TABLE IF NOT EXISTS install_tokens (
+					token TEXT PRIMARY KEY,
+					used_at DATETIME,
+					created_at DATETIME NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS deleted_nodes (
+					id TEXT PRIMARY KEY,
+					deleted_at DATETIME NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_tokens (
+					node_id TEXT PRIMARY KEY,
+					token TEXT NOT NULL UNIQUE,
+					created_at DATETIME NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS settings (
+					key TEXT PRIMARY KEY,
+					value TEXT NOT NULL,
+					updated_at DATETIME NOT NULL
+				);`,
+	}
+}
+
+func mysqlMigrationStatements() []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS nodes (
+					id VARCHAR(191) PRIMARY KEY,
+					name VARCHAR(255) NOT NULL,
+					hostname VARCHAR(255),
+					ip VARCHAR(64),
+					os VARCHAR(64),
+					arch VARCHAR(64),
+					kernel VARCHAR(128),
+					agent_version VARCHAR(64),
+					agent_mode VARCHAR(32) NOT NULL DEFAULT 'normal',
+					agent_user VARCHAR(255) NOT NULL DEFAULT '',
+					status VARCHAR(32) NOT NULL DEFAULT 'offline',
+					last_seen_at VARCHAR(64),
+					created_at VARCHAR(64) NOT NULL,
+					updated_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_metrics (
+					id BIGINT AUTO_INCREMENT PRIMARY KEY,
+					node_id VARCHAR(191) NOT NULL,
+					cpu_usage DOUBLE,
+					cpu_cores INT,
+					memory_total BIGINT,
+					memory_used BIGINT,
+					memory_usage DOUBLE,
+					disk_total BIGINT,
+					disk_used BIGINT,
+					disk_usage DOUBLE,
+					rx_speed BIGINT,
+					tx_speed BIGINT,
+					rx_total BIGINT,
+					tx_total BIGINT,
+					load1 DOUBLE,
+					load5 DOUBLE,
+					load15 DOUBLE,
+					created_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE INDEX idx_node_metrics_node_created ON node_metrics(node_id, created_at);`,
+		`CREATE TABLE IF NOT EXISTS node_process_snapshots (
+					node_id VARCHAR(191) PRIMARY KEY,
+					collected_at BIGINT NOT NULL,
+					processes_json LONGTEXT NOT NULL,
+					error VARCHAR(1024) NOT NULL DEFAULT '',
+					updated_at VARCHAR(64) NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_docker_snapshots (
+					node_id VARCHAR(191) PRIMARY KEY,
+					collected_at BIGINT NOT NULL,
+					available BOOLEAN NOT NULL,
+					version VARCHAR(128) NOT NULL DEFAULT '',
+					containers_json LONGTEXT NOT NULL,
+					error VARCHAR(1024) NOT NULL DEFAULT '',
+					updated_at VARCHAR(64) NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE TABLE IF NOT EXISTS install_tokens (
+					token VARCHAR(255) PRIMARY KEY,
+					used_at VARCHAR(64),
+					created_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS deleted_nodes (
+					id VARCHAR(191) PRIMARY KEY,
+					deleted_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS node_tokens (
+					node_id VARCHAR(191) PRIMARY KEY,
+					token VARCHAR(255) NOT NULL UNIQUE,
+					created_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS settings (
+					` + "`key`" + ` VARCHAR(191) PRIMARY KEY,
+					value VARCHAR(255) NOT NULL,
+					updated_at VARCHAR(64) NOT NULL
+				);`,
+	}
+}
+
+func migrateStatements(db *sql.DB, dialect Dialect, statements []string) error {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
+			if isIgnorableMigrationError(err) {
+				continue
+			}
 			return err
 		}
 	}
-	return nil
+	for _, statement := range nodeCompatibilityColumnStatements(dialect) {
+		if err := addColumnIfMissing(db, statement); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`UPDATE nodes SET agent_mode = COALESCE(NULLIF(agent_mode, ''), 'normal'), agent_user = COALESCE(agent_user, '')`)
+	return err
+}
+
+func nodeCompatibilityColumnStatements(dialect Dialect) []string {
+	if dialect == DialectMySQL {
+		return []string{
+			`ALTER TABLE nodes ADD COLUMN agent_mode VARCHAR(32) NOT NULL DEFAULT 'normal'`,
+			`ALTER TABLE nodes ADD COLUMN agent_user VARCHAR(255) NOT NULL DEFAULT ''`,
+		}
+	}
+	return []string{
+		`ALTER TABLE nodes ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'normal'`,
+		`ALTER TABLE nodes ADD COLUMN agent_user TEXT NOT NULL DEFAULT ''`,
+	}
+}
+
+func addColumnIfMissing(db *sql.DB, statement string) error {
+	_, err := db.Exec(statement)
+	if err != nil && isIgnorableMigrationError(err) {
+		return nil
+	}
+	return err
+}
+
+func isIgnorableMigrationError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate column") || strings.Contains(message, "duplicate key name")
 }

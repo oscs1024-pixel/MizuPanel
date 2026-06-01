@@ -1,0 +1,299 @@
+package docker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mizupanel/mizupanel/internal/protocol"
+)
+
+const (
+	defaultSocketPath        = "/var/run/docker.sock"
+	defaultStatsTimeout      = 2 * time.Second
+	defaultCollectionTimeout = 5 * time.Second
+	defaultContainerLimit    = 100
+)
+
+type Collector struct {
+	socketPath        string
+	statsTimeout      time.Duration
+	collectionTimeout time.Duration
+	containerLimit    int
+	client            clientAPI
+}
+
+type clientAPI interface {
+	Version(ctx context.Context) (string, error)
+	ListContainers(ctx context.Context, limit int) ([]containerListItem, error)
+	InspectContainer(ctx context.Context, id string) (containerInspect, error)
+	ContainerStats(ctx context.Context, id string) (containerStats, error)
+}
+
+func NewCollector() *Collector {
+	return &Collector{socketPath: defaultSocketPath, statsTimeout: defaultStatsTimeout, collectionTimeout: defaultCollectionTimeout, containerLimit: defaultContainerLimit}
+}
+
+func (c *Collector) Collect() protocol.DockerSnapshot {
+	if c.socketPath == "" {
+		c.socketPath = defaultSocketPath
+	}
+	if c.statsTimeout <= 0 {
+		c.statsTimeout = defaultStatsTimeout
+	}
+	if c.collectionTimeout <= 0 {
+		c.collectionTimeout = defaultCollectionTimeout
+	}
+	if c.containerLimit <= 0 {
+		c.containerLimit = defaultContainerLimit
+	}
+	snapshot := protocol.DockerSnapshot{CollectedAt: time.Now().Unix(), Containers: []protocol.ContainerInfo{}}
+	client := c.client
+	if client == nil {
+		if _, err := os.Stat(c.socketPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				snapshot.Error = "Docker socket not found"
+			} else {
+				snapshot.Error = "Docker socket unavailable: " + err.Error()
+			}
+			return snapshot
+		}
+		client = newSocketClient(c.socketPath, c.statsTimeout)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.collectionTimeout)
+	defer cancel()
+	version, err := client.Version(ctx)
+	if err != nil {
+		snapshot.Error = "Docker unavailable: " + err.Error()
+		return snapshot
+	}
+	snapshot.Available = true
+	snapshot.Version = version
+	containers, err := client.ListContainers(ctx, c.containerLimit)
+	if err != nil {
+		snapshot.Error = "Docker containers unavailable: " + err.Error()
+		return snapshot
+	}
+	var errorsSeen []string
+	for _, item := range containers {
+		if ctx.Err() != nil {
+			errorsSeen = appendLimited(errorsSeen, "Docker collection timeout")
+			break
+		}
+		container := protocol.ContainerInfo{
+			ID:        shortID(item.ID),
+			FullID:    item.ID,
+			Name:      cleanName(firstName(item.Names)),
+			Image:     item.Image,
+			State:     item.State,
+			Status:    item.Status,
+			CreatedAt: item.Created,
+		}
+		if inspect, err := client.InspectContainer(ctx, item.ID); err == nil {
+			container.RestartCount = inspect.RestartCount
+			container.StartedAt = parseDockerTime(inspect.State.StartedAt)
+		} else {
+			errorsSeen = appendLimited(errorsSeen, shortID(item.ID)+" inspect: "+err.Error())
+		}
+		if ctx.Err() == nil {
+			if stats, err := client.ContainerStats(ctx, item.ID); err == nil {
+				applyStats(&container, stats)
+			} else {
+				errorsSeen = appendLimited(errorsSeen, shortID(item.ID)+" stats: "+err.Error())
+			}
+		}
+		snapshot.Containers = append(snapshot.Containers, container)
+	}
+	if len(errorsSeen) > 0 {
+		snapshot.Error = strings.Join(errorsSeen, "; ")
+	}
+	return snapshot
+}
+
+type socketClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+func newSocketClient(socketPath string, timeout time.Duration) *socketClient {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return &socketClient{httpClient: &http.Client{Transport: transport, Timeout: timeout}, baseURL: "http://docker"}
+}
+
+func (c *socketClient) Version(ctx context.Context) (string, error) {
+	var response struct {
+		Version string `json:"Version"`
+	}
+	if err := c.getJSON(ctx, "/version", &response); err != nil {
+		return "", err
+	}
+	return response.Version, nil
+}
+
+func (c *socketClient) ListContainers(ctx context.Context, limit int) ([]containerListItem, error) {
+	path := "/containers/json?all=1"
+	if limit > 0 {
+		path += fmt.Sprintf("&limit=%d", limit)
+	}
+	var response []containerListItem
+	if err := c.getJSON(ctx, path, &response); err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(response) > limit {
+		response = response[:limit]
+	}
+	return response, nil
+}
+
+func (c *socketClient) InspectContainer(ctx context.Context, id string) (containerInspect, error) {
+	var response containerInspect
+	if err := c.getJSON(ctx, "/containers/"+id+"/json", &response); err != nil {
+		return containerInspect{}, err
+	}
+	return response, nil
+}
+
+func (c *socketClient) ContainerStats(ctx context.Context, id string) (containerStats, error) {
+	var response containerStats
+	if err := c.getJSON(ctx, "/containers/"+id+"/stats?stream=false", &response); err != nil {
+		return containerStats{}, err
+	}
+	return response, nil
+}
+
+func (c *socketClient) getJSON(ctx context.Context, path string, target any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("Docker API status %d", response.StatusCode)
+	}
+	return json.NewDecoder(response.Body).Decode(target)
+}
+
+type containerListItem struct {
+	ID      string   `json:"Id"`
+	Names   []string `json:"Names"`
+	Image   string   `json:"Image"`
+	State   string   `json:"State"`
+	Status  string   `json:"Status"`
+	Created int64    `json:"Created"`
+}
+
+type containerInspect struct {
+	RestartCount int                   `json:"RestartCount"`
+	State        containerInspectState `json:"State"`
+}
+
+type containerInspectState struct {
+	StartedAt string `json:"StartedAt"`
+}
+
+type containerStats struct {
+	CPUStats    cpuStats                `json:"cpu_stats"`
+	PreCPUStats cpuStats                `json:"precpu_stats"`
+	MemoryStats memoryStats             `json:"memory_stats"`
+	Networks    map[string]networkStats `json:"networks"`
+}
+
+type cpuStats struct {
+	CPUUsage       cpuUsage `json:"cpu_usage"`
+	SystemCPUUsage uint64   `json:"system_cpu_usage"`
+	OnlineCPUs     uint32   `json:"online_cpus"`
+}
+
+type cpuUsage struct {
+	TotalUsage  uint64   `json:"total_usage"`
+	PercpuUsage []uint64 `json:"percpu_usage"`
+}
+
+type memoryStats struct {
+	Usage uint64 `json:"usage"`
+	Limit uint64 `json:"limit"`
+}
+
+type networkStats struct {
+	RxBytes uint64 `json:"rx_bytes"`
+	TxBytes uint64 `json:"tx_bytes"`
+}
+
+func appendLimited(values []string, value string) []string {
+	if len(values) >= 3 {
+		return values
+	}
+	return append(values, value)
+}
+
+func applyStats(container *protocol.ContainerInfo, stats containerStats) {
+	cpuDelta := stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage
+	systemDelta := stats.CPUStats.SystemCPUUsage - stats.PreCPUStats.SystemCPUUsage
+	cpuCount := stats.CPUStats.OnlineCPUs
+	if cpuCount == 0 {
+		cpuCount = uint32(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if cpuDelta > 0 && systemDelta > 0 && cpuCount > 0 {
+		container.CPUUsage = float64(cpuDelta) / float64(systemDelta) * float64(cpuCount) * 100
+	}
+	container.MemoryUsage = stats.MemoryStats.Usage
+	container.MemoryLimit = stats.MemoryStats.Limit
+	if stats.MemoryStats.Limit > 0 {
+		container.MemoryPercent = float64(stats.MemoryStats.Usage) / float64(stats.MemoryStats.Limit) * 100
+	}
+	keys := make([]string, 0, len(stats.Networks))
+	for name := range stats.Networks {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		container.NetworkRX += stats.Networks[name].RxBytes
+		container.NetworkTX += stats.Networks[name].TxBytes
+	}
+}
+
+func shortID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
+func firstName(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
+func cleanName(name string) string {
+	return strings.TrimPrefix(name, "/")
+}
+
+func parseDockerTime(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "0001-01-01") {
+		return 0
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return 0
+	}
+	return parsed.Unix()
+}

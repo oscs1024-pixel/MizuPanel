@@ -21,8 +21,12 @@ func TestCleanerDeletesMetricsOlderThanRetention(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	nodes := store.NewNodeStore(database)
 	metrics := store.NewMetricStore(database)
 	now := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
+	if err := nodes.Upsert(t.Context(), store.Node{ID: "node-1", Name: "one", Status: "online", LastSeenAt: now}); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
 	for _, metric := range []store.Metric{
 		{NodeID: "node-1", CPUUsage: 10, CreatedAt: now.Add(-7 * time.Hour)},
 		{NodeID: "node-1", CPUUsage: 20, CreatedAt: now.Add(-5 * time.Hour)},

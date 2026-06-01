@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { createInstallCommand, getNodeMetrics, getNodes } from './api/client'
+import { createInstallCommand, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
+import { HistoryPage } from './pages/HistoryPage'
 import { NodeDetail } from './pages/NodeDetail'
 import { NodeList } from './pages/NodeList'
-import type { Metric, Node, RangeOption } from './types'
+import { SystemSettingsPage } from './pages/SystemSettingsPage'
+import { TerminalPage } from './pages/TerminalPage'
+import type { AgentMode, DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse } from './types'
 
 function decodeRouteNodeID(value?: string) {
   if (!value) return undefined
@@ -19,36 +22,91 @@ function nodePath(nodeID: string) {
   return `/nodes/${encodeURIComponent(nodeID)}`
 }
 
+type AppRoute =
+  | { kind: 'node-terminal', nodeID: string }
+  | { kind: 'container-exec', nodeID: string, containerID: string }
+  | { kind: 'node-detail', nodeID: string }
+  | { kind: 'history' }
+  | { kind: 'settings' }
+  | { kind: 'dashboard' }
+
+type AppPage = 'hosts' | 'history' | 'settings'
+
+function currentRoute(): AppRoute {
+  const terminalMatch = window.location.pathname.match(/^\/nodes\/([^/]+)\/terminal$/)
+  if (terminalMatch) return { kind: 'node-terminal', nodeID: decodeRouteNodeID(terminalMatch[1]) ?? terminalMatch[1] }
+  const execMatch = window.location.pathname.match(/^\/nodes\/([^/]+)\/containers\/([^/]+)\/exec$/)
+  if (execMatch) return { kind: 'container-exec', nodeID: decodeRouteNodeID(execMatch[1]) ?? execMatch[1], containerID: decodeRouteNodeID(execMatch[2]) ?? execMatch[2] }
+  const detailMatch = window.location.pathname.match(/^\/nodes\/([^/]+)$/)
+  if (detailMatch) return { kind: 'node-detail', nodeID: decodeRouteNodeID(detailMatch[1]) ?? detailMatch[1] }
+  if (window.location.pathname === '/history') return { kind: 'history' }
+  if (window.location.pathname === '/settings') return { kind: 'settings' }
+  return { kind: 'dashboard' }
+}
+
 type HostFilter = 'all' | 'online' | 'offline'
 
+const rangeSeconds: Record<RangeOption, number> = {
+  '1h': 3600,
+  '6h': 21600,
+  '24h': 86400,
+  '3d': 259200,
+  '7d': 604800
+}
+
+const orderedRanges: RangeOption[] = ['1h', '6h', '24h', '3d', '7d']
+
+function largestAllowedRange(seconds: number): RangeOption {
+  const allowed = orderedRanges.filter((option) => rangeSeconds[option] <= seconds)
+  return allowed.length > 0 ? allowed[allowed.length - 1] : '1h'
+}
+
 export default function App() {
+  const route = useMemo(() => currentRoute(), [])
+  const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : 'hosts')
   const [nodes, setNodes] = useState<Node[]>([])
   const [selectedNodeID, setSelectedNodeID] = useState<string>()
   const [metrics, setMetrics] = useState<Metric[]>([])
+  const [processSnapshot, setProcessSnapshot] = useState<ProcessSnapshotResponse>()
+  const [dockerSnapshot, setDockerSnapshot] = useState<DockerSnapshotResponse>()
+  const [monitoringLoading, setMonitoringLoading] = useState(false)
   const [range, setRange] = useState<RangeOption>('1h')
   const [error, setError] = useState<string>()
   const [search, setSearch] = useState('')
   const [hostFilter, setHostFilter] = useState<HostFilter>('all')
+  const [installPlatform, setInstallPlatform] = useState<InstallPlatform>('linux')
+  const [installDockerEnabled, setInstallDockerEnabled] = useState(false)
+  const [installTerminalEnabled, setInstallTerminalEnabled] = useState(true)
+  const [installMode, setInstallMode] = useState<AgentMode>('normal')
   const [installCommand, setInstallCommand] = useState<string>()
   const [installCommandWarning, setInstallCommandWarning] = useState<string>()
+  const [installCommandError, setInstallCommandError] = useState<string>()
   const [installCommandCopied, setInstallCommandCopied] = useState(false)
+  const [installCommandLoading, setInstallCommandLoading] = useState(false)
+  const [installCommandOpen, setInstallCommandOpen] = useState(false)
+  const [settings, setSettings] = useState<SettingsResponse>()
+  const [settingsRetention, setSettingsRetention] = useState<RangeOption>('6h')
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsMessage, setSettingsMessage] = useState<string>()
+  const [settingsError, setSettingsError] = useState<string>()
   const [loading, setLoading] = useState(true)
   const addHostButtonRef = useRef<HTMLButtonElement>(null)
   const installCommandCodeRef = useRef<HTMLElement>(null)
+  const installCommandDialogRef = useRef<HTMLElement>(null)
+  const installCommandRequestID = useRef(0)
 
   const loadNodes = useCallback(() => {
-    const pathMatch = window.location.pathname.match(/^\/nodes\/([^/]+)$/)
     return getNodes()
       .then((response) => {
         setNodes(response.nodes)
-        const routeNodeID = decodeRouteNodeID(pathMatch?.[1])
+        const routeNodeID = route.kind === 'node-detail' || route.kind === 'node-terminal' || route.kind === 'container-exec' ? route.nodeID : undefined
         const routeNodeExists = routeNodeID ? response.nodes.some((node) => node.id === routeNodeID) : false
         setSelectedNodeID((current) => {
           if (current && response.nodes.some((node) => node.id === current)) return current
           return routeNodeExists ? routeNodeID : response.nodes[0]?.id
         })
       })
-  }, [])
+  }, [route])
 
   useEffect(() => {
     let cancelled = false
@@ -65,10 +123,33 @@ export default function App() {
   }, [loadNodes])
 
   useEffect(() => {
-    if (selectedNodeID && window.location.pathname !== nodePath(selectedNodeID)) {
+    if (page === 'hosts' && selectedNodeID && window.location.pathname !== nodePath(selectedNodeID)) {
       window.history.replaceState({}, '', nodePath(selectedNodeID))
     }
-  }, [selectedNodeID])
+  }, [page, selectedNodeID])
+
+  useEffect(() => {
+    if (page !== 'history' && page !== 'settings') return
+    let cancelled = false
+    getSettings()
+      .then((response) => {
+        if (!cancelled) {
+          setSettings(response)
+          setSettingsRetention(response.metrics_retention)
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setSettingsError(err instanceof Error ? err.message : '系统设置加载失败')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [page])
+
+  useEffect(() => {
+    if (!settings || rangeSeconds[range] <= settings.metrics_retention_seconds) return
+    setRange(largestAllowedRange(settings.metrics_retention_seconds))
+  }, [range, settings])
 
   useEffect(() => {
     if (!selectedNodeID) {
@@ -89,12 +170,52 @@ export default function App() {
     }
   }, [selectedNodeID, range])
 
+  useEffect(() => {
+    if (!selectedNodeID) {
+      setProcessSnapshot(undefined)
+      setDockerSnapshot(undefined)
+      setMonitoringLoading(false)
+      return
+    }
+    let cancelled = false
+    setProcessSnapshot(undefined)
+    setDockerSnapshot(undefined)
+    setMonitoringLoading(true)
+    Promise.all([getNodeProcesses(selectedNodeID), getNodeDocker(selectedNodeID)])
+      .then(([processes, docker]) => {
+        if (!cancelled) {
+          setProcessSnapshot(processes)
+          setDockerSnapshot(docker)
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : '监控快照加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setMonitoringLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedNodeID])
+
   const onlineNodes = nodes.filter((node) => node.status === 'online').length
   const averages = useMemo(() => {
     const latest = nodes.map((node) => node.latest_metric).filter((metric): metric is Metric => Boolean(metric))
     const average = (key: 'cpu_usage' | 'memory_usage' | 'disk_usage') => latest.length === 0 ? 0 : latest.reduce((sum, metric) => sum + metric[key], 0) / latest.length
     return { cpu: average('cpu_usage'), memory: average('memory_usage'), disk: average('disk_usage') }
   }, [nodes])
+
+  const removeNodeRecord = useCallback((nodeID: string) => {
+    return deleteNode(nodeID).then(() => {
+      if (selectedNodeID === nodeID) {
+        setMetrics([])
+        setProcessSnapshot(undefined)
+        setDockerSnapshot(undefined)
+      }
+      return loadNodes()
+    })
+  }, [loadNodes, selectedNodeID])
 
   const filteredNodes = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -105,17 +226,55 @@ export default function App() {
     })
   }, [hostFilter, nodes, search])
   const visibleSelectedNode = useMemo(() => filteredNodes.find((node) => node.id === selectedNodeID), [filteredNodes, selectedNodeID])
+  const routeNode = useMemo(() => route.kind === 'node-detail' || route.kind === 'node-terminal' || route.kind === 'container-exec' ? nodes.find((node) => node.id === route.nodeID) : undefined, [nodes, route])
+  const routeContainer = useMemo<DockerContainer | undefined>(() => {
+    if (route.kind !== 'container-exec') return undefined
+    return dockerSnapshot?.containers.find((container) => (container.full_id || container.id) === route.containerID || container.id === route.containerID)
+  }, [dockerSnapshot, route])
 
   useEffect(() => {
-    if (filteredNodes.length > 0 && !visibleSelectedNode) {
+    if (page === 'hosts' && filteredNodes.length > 0 && !visibleSelectedNode) {
       setSelectedNodeID(filteredNodes[0].id)
     }
-  }, [filteredNodes, visibleSelectedNode])
+  }, [filteredNodes, page, visibleSelectedNode])
 
-  const requestInstallCommand = () => {
+  useEffect(() => {
+    if (installCommandOpen) {
+      installCommandDialogRef.current?.focus()
+    }
+  }, [installCommandOpen])
+
+  const requestInstallCommand = (platform: InstallPlatform, enableDocker = installDockerEnabled, enableTerminal = installTerminalEnabled, mode = installMode) => {
+    const requestID = installCommandRequestID.current + 1
+    installCommandRequestID.current = requestID
+    setInstallCommand(undefined)
     setInstallCommandWarning(undefined)
+    setInstallCommandError(undefined)
     setInstallCommandCopied(false)
-    return createInstallCommand().then((response) => setInstallCommand(response.command))
+    setInstallCommandLoading(true)
+    const linuxOptions = {
+      ...(enableDocker ? { enableDocker: true } : {}),
+      ...(enableTerminal ? { enableTerminal: true } : {}),
+      mode
+    }
+    const hasLinuxOptions = platform === 'linux' && Object.keys(linuxOptions).length > 0
+    const commandRequest = hasLinuxOptions ? createInstallCommand(platform, linuxOptions) : createInstallCommand(platform)
+    return commandRequest
+      .then((response) => {
+        if (requestID === installCommandRequestID.current) {
+          setInstallCommand(response.command)
+        }
+      })
+      .catch((err: unknown) => {
+        if (requestID === installCommandRequestID.current) {
+          setInstallCommandError(err instanceof Error ? err.message : '安装命令生成失败')
+        }
+      })
+      .finally(() => {
+        if (requestID === installCommandRequestID.current) {
+          setInstallCommandLoading(false)
+        }
+      })
   }
 
   const selectInstallCommand = () => {
@@ -153,14 +312,101 @@ export default function App() {
       })
   }
 
+  const closeInstallCommand = () => {
+    installCommandRequestID.current += 1
+    setInstallCommand(undefined)
+    setInstallCommandWarning(undefined)
+    setInstallCommandError(undefined)
+    setInstallCommandCopied(false)
+    setInstallCommandLoading(false)
+    setInstallCommandOpen(false)
+    addHostButtonRef.current?.focus()
+  }
+
+  const handleInstallCommandKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      closeInstallCommand()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const dialog = installCommandDialogRef.current
+    if (!dialog) return
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'))
+      .filter((element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true')
+    if (focusable.length === 0) {
+      event.preventDefault()
+      dialog.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   const hostFilterButtonClass = (filter: HostFilter, activeClass: string, inactiveClass: string) => (
     `min-h-10 cursor-pointer rounded-2xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 ${hostFilter === filter ? activeClass : inactiveClass}`
   )
 
   const showInstallCommand = () => {
+    setInstallCommandOpen(true)
     if (installCommand) return
-    requestInstallCommand()
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '安装命令生成失败'))
+    setInstallPlatform('linux')
+    requestInstallCommand('linux')
+  }
+
+  const selectInstallPlatform = (platform: InstallPlatform) => {
+    if (platform === installPlatform) return
+    setInstallPlatform(platform)
+    requestInstallCommand(platform)
+  }
+
+  const toggleInstallDocker = (enabled: boolean) => {
+    setInstallDockerEnabled(enabled)
+    if (installPlatform === 'linux') {
+      requestInstallCommand('linux', enabled, installTerminalEnabled, installMode)
+    }
+  }
+
+  const toggleInstallTerminal = (enabled: boolean) => {
+    setInstallTerminalEnabled(enabled)
+    if (installPlatform === 'linux') {
+      requestInstallCommand('linux', installDockerEnabled, enabled, installMode)
+    }
+  }
+
+  const selectInstallMode = (mode: AgentMode) => {
+    setInstallMode(mode)
+    if (installPlatform === 'linux') {
+      requestInstallCommand('linux', installDockerEnabled, installTerminalEnabled, mode)
+    }
+  }
+
+  const openPage = (nextPage: AppPage) => {
+    setPage(nextPage)
+    const path = nextPage === 'history' ? '/history' : nextPage === 'settings' ? '/settings' : selectedNodeID ? nodePath(selectedNodeID) : '/'
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path)
+    }
+  }
+
+  const saveSettings = () => {
+    setSettingsSaving(true)
+    setSettingsMessage(undefined)
+    setSettingsError(undefined)
+    updateSettings({ metrics_retention: settingsRetention })
+      .then((response) => {
+        setSettings(response)
+        setSettingsRetention(response.metrics_retention)
+        setSettingsMessage('设置已保存，新的保留时间会立即用于历史查询和后续清理。')
+      })
+      .catch((err: unknown) => setSettingsError(err instanceof Error ? err.message : '系统设置保存失败'))
+      .finally(() => setSettingsSaving(false))
   }
 
   if (loading) {
@@ -171,52 +417,141 @@ export default function App() {
     )
   }
 
-  const installCommandPanel = installCommand ? (
-    <div
-      id="agent-install-command"
-      role="region"
-      aria-label="Agent 安装命令"
-      aria-live="polite"
-      className="mx-auto mt-5 max-w-4xl overflow-hidden rounded-[26px] border border-slate-200 bg-white text-left shadow-sm"
-    >
+  if (route.kind === 'node-terminal') {
+    return <TerminalPage kind="node" nodeID={route.nodeID} node={routeNode} />
+  }
+
+  if (route.kind === 'container-exec') {
+    return <TerminalPage kind="container" nodeID={route.nodeID} node={routeNode} containerID={route.containerID} container={routeContainer} />
+  }
+
+  const installCommandDialog = installCommandOpen ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-3 py-6 backdrop-blur-sm">
+      <section
+        id="agent-install-command"
+        ref={installCommandDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Agent 安装命令"
+        aria-live="polite"
+        tabIndex={-1}
+        onKeyDown={handleInstallCommandKeyDown}
+        className="max-h-[calc(100vh-3rem)] w-full max-w-4xl overflow-x-hidden overflow-y-auto rounded-[28px] border border-white/80 bg-white text-left shadow-2xl outline-none"
+      >
       <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-black text-slate-950">Agent 安装命令</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">复制命令到目标服务器执行；install_token 会在点击添加主机时自动生成。</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">选择目标系统后复制命令执行；install_token 会自动生成。</p>
+          <div className="mt-3 flex w-fit rounded-2xl border border-slate-200 bg-white p-1 shadow-inner shadow-slate-100" aria-label="选择 Agent 安装系统">
+            {(['linux', 'windows'] as const).map((platform) => (
+              <button
+                key={platform}
+                type="button"
+                aria-pressed={installPlatform === platform}
+                onClick={() => selectInstallPlatform(platform)}
+                className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${installPlatform === platform ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
+              >
+                {platform === 'linux' ? 'Linux' : 'Windows'}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-inner shadow-slate-100">
+            {installPlatform === 'linux' ? (
+              <div className="space-y-3">
+                <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-600">
+                  <input
+                    type="checkbox"
+                    aria-label="启用 Docker 容器监控"
+                    checked={installDockerEnabled}
+                    onChange={(event) => toggleInstallDocker(event.target.checked)}
+                    className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-100"
+                  />
+                  <span>
+                    <span className="block font-black text-slate-950">启用 Docker 容器监控</span>
+                    <span className="block text-slate-500">启用后会授予 Agent 访问 Docker socket 的权限，docker 组权限接近 root。</span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-600">
+                  <input
+                    type="checkbox"
+                    aria-label="启用节点终端"
+                    checked={installTerminalEnabled}
+                    onChange={(event) => toggleInstallTerminal(event.target.checked)}
+                    className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-100"
+                  />
+                  <span>
+                    <span className="block font-black text-slate-950">启用节点终端</span>
+                    <span className="block text-slate-500">启用后可在节点详情打开浏览器终端，命令以 Agent 当前运行用户权限运行。</span>
+                  </span>
+                </label>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                  <p className="mb-2 text-xs font-black text-slate-950">Agent 运行模式</p>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ['normal', '普通模式', '以 mizupanel-agent 用户运行'],
+                      ['ops', '运维模式', '以 root 用户运行']
+                    ] as const).map(([mode, label, description]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={installMode === mode}
+                        onClick={() => selectInstallMode(mode)}
+                        className={`min-h-10 cursor-pointer rounded-2xl px-3 text-left text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${installMode === mode ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 hover:text-slate-950'}`}
+                      >
+                        <span className="block">{label}</span>
+                        <span className="block font-semibold opacity-75">{description}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {installMode === 'ops' ? <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">运维模式会以 root 用户运行 Agent，可执行终端、文件编辑和重启等高权限操作。</p> : null}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs font-bold leading-5 text-slate-500">Windows 暂不支持 Docker 监控和节点终端安装配置。</p>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             aria-label={installCommandCopied ? '已复制' : '复制安装命令'}
             onClick={copyInstallCommand}
-            className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-xs font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
+            disabled={!installCommand}
+            className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-xs font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
           >
             {installCommandCopied ? '已复制' : '复制'}
           </button>
           <button
             type="button"
             aria-label="关闭安装命令"
-            onClick={() => {
-              setInstallCommand(undefined)
-              setInstallCommandWarning(undefined)
-              setInstallCommandCopied(false)
-              addHostButtonRef.current?.focus()
-            }}
+            onClick={closeInstallCommand}
             className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-100"
           >
             关闭
           </button>
         </div>
       </div>
-      <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code ref={installCommandCodeRef}>{installCommand}</code></pre>
+      {installCommandLoading ? (
+        <div className="bg-slate-950 px-4 py-4 text-xs font-bold leading-6 text-slate-300">正在生成安装命令...</div>
+      ) : installCommand ? (
+        <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code ref={installCommandCodeRef}>{installCommand}</code></pre>
+      ) : (
+        <div className="border-t border-red-200 bg-red-50 px-4 py-4 text-xs font-bold leading-5 text-red-700">{installCommandError || '安装命令暂不可用，请重试。'}</div>
+      )}
       {installCommandWarning ? (
         <div className="border-t border-orange-200 bg-orange-50 px-4 py-3 text-xs font-bold leading-5 text-orange-800">
           {installCommandWarning}
         </div>
       ) : null}
+      {installPlatform === 'windows' ? (
+        <div className="border-t border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-5 text-blue-800">
+          Windows 命令需要在管理员 PowerShell 中执行。
+        </div>
+      ) : null}
       <div className="border-t border-slate-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
         token 来源：点击添加主机时，Server 会自动生成一次性 install_token。
       </div>
+      </section>
     </div>
   ) : null
 
@@ -238,30 +573,36 @@ export default function App() {
             </div>
 
             <nav className="flex flex-wrap items-center gap-2" aria-label="主导航">
-              {['主机列表', '历史记录', 'Docker', '后台管理'].map((item, index) => (
+              {([
+                ['hosts', '主机列表'],
+                ['history', '历史记录'],
+                ['settings', '系统设置']
+              ] as const).map(([targetPage, item]) => (
                 <button
                   key={item}
                   type="button"
+                  onClick={() => openPage(targetPage)}
                   className={`min-h-11 cursor-pointer rounded-2xl px-4 text-sm font-extrabold transition focus:outline-none focus:ring-4 focus:ring-blue-200 ${
-                    index === 0 ? 'bg-slate-950 text-white shadow-lg shadow-slate-300/70' : 'border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-950'
+                    page === targetPage ? 'bg-slate-950 text-white shadow-lg shadow-slate-300/70' : 'border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-950'
                   }`}
                 >
                   {item}
                 </button>
               ))}
-              <button
-                type="button"
-                className="min-h-11 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-extrabold text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-200"
-              >
-                终端
-              </button>
             </nav>
           </div>
         </header>
 
         {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 font-semibold text-red-700 shadow-sm">{error}</div> : null}
 
+        {installCommandDialog}
 
+        {page === 'history' ? (
+          <HistoryPage nodes={nodes} selectedNodeID={selectedNodeID} metrics={metrics} range={range} settings={settings} onSelectNode={setSelectedNodeID} onRangeChange={setRange} />
+        ) : page === 'settings' ? (
+          <SystemSettingsPage settings={settings} selectedRetention={settingsRetention} saving={settingsSaving} message={settingsMessage} error={settingsError} onSelectRetention={setSettingsRetention} onSave={saveSettings} />
+        ) : (
+          <>
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="节点总数" value={String(nodes.length)} detail="已注册 Agent" />
           <MetricCard label="在线节点" value={String(onlineNodes)} tone="green" detail={`${nodes.length - onlineNodes} 个离线`} />
@@ -277,13 +618,12 @@ export default function App() {
               ref={addHostButtonRef}
               type="button"
               onClick={showInstallCommand}
-              aria-expanded={Boolean(installCommand)}
+              aria-expanded={installCommandOpen}
               aria-controls="agent-install-command"
               className="mt-6 min-h-11 cursor-pointer rounded-2xl bg-slate-950 px-5 text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-blue-100"
             >
               安装目标主机 Agent 进行采集
             </button>
-            {installCommandPanel}
           </section>
         ) : (
           <section className="rounded-[32px] border border-white/80 bg-white/85 p-3 shadow-glass backdrop-blur-xl">
@@ -317,7 +657,7 @@ export default function App() {
                   ref={addHostButtonRef}
                   type="button"
                   onClick={showInstallCommand}
-                  aria-expanded={Boolean(installCommand)}
+                  aria-expanded={installCommandOpen}
                   aria-controls="agent-install-command"
                   className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200"
                 >
@@ -336,7 +676,6 @@ export default function App() {
               </div>
             </div>
 
-            {installCommandPanel}
 
             <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
               {filteredNodes.length > 0 ? (
@@ -347,9 +686,11 @@ export default function App() {
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">请调整在线状态筛选或搜索关键词。</p>
                 </section>
               )}
-              <NodeDetail node={visibleSelectedNode} metrics={metrics} range={range} onRangeChange={setRange} />
+              <NodeDetail node={visibleSelectedNode} metrics={metrics} processSnapshot={processSnapshot} dockerSnapshot={dockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onDeleteNode={removeNodeRecord} />
             </div>
           </section>
+        )}
+          </>
         )}
       </div>
     </main>

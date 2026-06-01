@@ -8,16 +8,24 @@ import (
 )
 
 type Cleaner struct {
-	metrics   *store.MetricStore
-	retention time.Duration
+	metrics           *store.MetricStore
+	retentionProvider func() (time.Duration, error)
 }
 
 func NewCleaner(metrics *store.MetricStore, retention time.Duration) *Cleaner {
-	return &Cleaner{metrics: metrics, retention: retention}
+	return NewDynamicCleaner(metrics, func() (time.Duration, error) { return retention, nil })
+}
+
+func NewDynamicCleaner(metrics *store.MetricStore, retentionProvider func() (time.Duration, error)) *Cleaner {
+	return &Cleaner{metrics: metrics, retentionProvider: retentionProvider}
 }
 
 func (c *Cleaner) RunOnce(ctx context.Context, now time.Time) (int64, error) {
-	return c.metrics.DeleteOlderThan(ctx, now.Add(-c.retention))
+	retention, err := c.retentionProvider()
+	if err != nil {
+		return 0, err
+	}
+	return c.metrics.DeleteOlderThan(ctx, now.Add(-retention))
 }
 
 func (c *Cleaner) Run(ctx context.Context, interval time.Duration) {

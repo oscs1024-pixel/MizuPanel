@@ -4,10 +4,14 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os/user"
 	"time"
 
 	agentconfig "github.com/mizupanel/mizupanel/internal/agent/config"
+	agentdocker "github.com/mizupanel/mizupanel/internal/agent/docker"
 	"github.com/mizupanel/mizupanel/internal/agent/metrics"
+	agentprocess "github.com/mizupanel/mizupanel/internal/agent/process"
+	agentterminal "github.com/mizupanel/mizupanel/internal/agent/terminal"
 	agentws "github.com/mizupanel/mizupanel/internal/agent/ws"
 	"github.com/mizupanel/mizupanel/internal/protocol"
 )
@@ -16,25 +20,53 @@ func main() {
 	configPath := flag.String("config", "", "path to agent config file")
 	flag.Parse()
 
-	cfg, err := agentconfig.Load(*configPath)
-	if err != nil {
+	if err := runAgentEntrypoint(*configPath); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}
+}
+
+func currentUsername() string {
+	current, err := user.Current()
+	if err != nil || current == nil {
+		return ""
+	}
+	if current.Username != "" {
+		return current.Username
+	}
+	return current.Uid
+}
+
+func runAgent(ctx context.Context, configPath string) error {
+	cfg, err := agentconfig.Load(configPath)
+	if err != nil {
+		return err
+	}
 	collector := metrics.NewCollector()
+	processCollector := agentprocess.NewCollector()
+	var dockerCollector *agentdocker.Collector
+	if cfg.EnableDocker {
+		dockerCollector = agentdocker.NewCollector()
+	}
 	initialSnapshot, err := collector.Collect()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if initialSnapshot.Hostname == "" {
 		initialSnapshot.Hostname = cfg.Name
 	}
 	client := agentws.NewClient(cfg.ServerURL, cfg.Token)
-	if *configPath != "" {
+	client.SetTerminalHandlerFactory(func(sender agentws.TerminalSender) agentws.TerminalHandler {
+		return agentterminal.NewManager(cfg.EnableTerminal, sender)
+	})
+	client.SetContainerExecHandlerFactory(func(sender agentws.ContainerExecSender) agentws.ContainerExecHandler {
+		return agentdocker.NewExecManager(cfg.EnableDocker && cfg.EnableTerminal, sender)
+	})
+	if configPath != "" {
 		client.SetNodeTokenHandler(func(token string) error {
-			return agentconfig.SaveToken(*configPath, token)
+			return agentconfig.SaveToken(configPath, token)
 		})
 	}
-	err = client.RunForever(context.Background(), protocol.HelloMessage{
+	return client.RunForever(ctx, protocol.HelloMessage{
 		Type:         protocol.MessageTypeHello,
 		NodeID:       cfg.NodeID,
 		AgentVersion: "0.1.0",
@@ -44,6 +76,9 @@ func main() {
 		OS:           initialSnapshot.OS,
 		Arch:         initialSnapshot.Arch,
 		Kernel:       initialSnapshot.Kernel,
+		Terminal:     cfg.EnableTerminal && agentterminal.Supported(),
+		AgentMode:    cfg.AgentMode,
+		AgentUser:    currentUsername(),
 	}, cfg.Interval, 3*time.Second, func(nodeID string, timestamp int64) (protocol.MetricsMessage, error) {
 		snapshot, err := collector.Collect()
 		if err != nil {
@@ -52,10 +87,13 @@ func main() {
 		if snapshot.Hostname == "" {
 			snapshot.Hostname = cfg.Name
 		}
-		return snapshot.ToMessage(nodeID, timestamp), nil
+		message := snapshot.ToMessage(nodeID, timestamp)
+		processSnapshot := processCollector.Collect()
+		message.ProcessSnapshot = &processSnapshot
+		if dockerCollector != nil {
+			dockerSnapshot := dockerCollector.Collect()
+			message.DockerSnapshot = &dockerSnapshot
+		}
+		return message, nil
 	})
-	if err != nil && err != context.Canceled {
-		log.Fatal(err)
-	}
-	_ = time.Second
 }

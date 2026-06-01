@@ -1,25 +1,165 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
+
+	"github.com/mizupanel/mizupanel/internal/protocol"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
-type Server struct {
-	nodes   *store.NodeStore
-	metrics *store.MetricStore
+type TerminalHub interface {
+	NodeTerminalEnabled(nodeID string) bool
+	AttachTerminal(ctx context.Context, nodeID string, browser *websocket.Conn) error
+	AttachContainerExec(ctx context.Context, nodeID string, containerID string, browser *websocket.Conn) error
 }
 
-func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore) *http.ServeMux {
-	server := &Server{nodes: nodes, metrics: metrics}
+type NodeOperations interface {
+	FileList(ctx context.Context, nodeID string, path string) (protocol.FileListResponse, error)
+	FileRead(ctx context.Context, nodeID string, path string) (protocol.FileReadResponse, error)
+	FileWrite(ctx context.Context, nodeID string, path string, content string) (protocol.FileWriteResponse, error)
+	FileUpload(ctx context.Context, nodeID string, path string, contentBase64 string) (protocol.FileUploadResponse, error)
+	FileDelete(ctx context.Context, nodeID string, path string) (protocol.FileDeleteResponse, error)
+	Reboot(ctx context.Context, nodeID string) (protocol.RebootResponse, error)
+}
+
+type NodeDisconnecter interface {
+	DisconnectNode(nodeID string)
+}
+
+type Server struct {
+	nodes                   *store.NodeStore
+	metrics                 *store.MetricStore
+	processes               *store.ProcessSnapshotStore
+	docker                  *store.DockerSnapshotStore
+	terminalEnabled         bool
+	terminalHub             TerminalHub
+	agentOps                NodeOperations
+	disconnecter            NodeDisconnecter
+	settings                *store.SettingsStore
+	defaultMetricsRetention time.Duration
+	terminalTokens          map[string]terminalToken
+	terminalMu              sync.Mutex
+}
+
+type terminalToken struct {
+	kind        string
+	nodeID      string
+	containerID string
+	expiresAt   time.Time
+}
+
+type TerminalConfig struct {
+	Enabled bool
+}
+
+type SettingsConfig struct {
+	Store                   *store.SettingsStore
+	DefaultMetricsRetention time.Duration
+}
+
+const (
+	terminalTokenKindNode          = "terminal"
+	terminalTokenKindContainerExec = "container_exec"
+	terminalTokenTTL               = 30 * time.Second
+	maxTerminalTokens              = 256
+	maxTerminalWebSocketBytes      = 128 * 1024
+	maxNodeOperationBodyBytes      = 1024 * 1024
+)
+
+func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...any) *http.ServeMux {
+	server := &Server{nodes: nodes, metrics: metrics, defaultMetricsRetention: 6 * time.Hour, terminalTokens: make(map[string]terminalToken)}
+	for _, snapshotStore := range snapshots {
+		switch typed := snapshotStore.(type) {
+		case *store.ProcessSnapshotStore:
+			server.processes = typed
+		case *store.DockerSnapshotStore:
+			server.docker = typed
+		case TerminalHub:
+			server.terminalHub = typed
+			if ops, ok := snapshotStore.(NodeOperations); ok {
+				server.agentOps = ops
+			}
+			if disconnecter, ok := snapshotStore.(NodeDisconnecter); ok {
+				server.disconnecter = disconnecter
+			}
+		case TerminalConfig:
+			server.terminalEnabled = typed.Enabled
+		case SettingsConfig:
+			server.settings = typed.Store
+			if typed.DefaultMetricsRetention > 0 {
+				server.defaultMetricsRetention = typed.DefaultMetricsRetention
+			}
+		case NodeOperations:
+			server.agentOps = typed
+		}
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/settings", server.handleSettings)
 	mux.HandleFunc("/api/nodes", server.handleNodes)
 	mux.HandleFunc("/api/nodes/", server.handleNodeRoutes)
 	return mux
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeError(w, http.StatusNotFound, "settings unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.writeSettings(w, r)
+	case http.MethodPut:
+		if !sameOrigin(r) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		var request struct {
+			MetricsRetention string `json:"metrics_retention"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if err := s.settings.SetMetricsRetention(r.Context(), request.MetricsRetention); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.writeSettings(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request) {
+	retention, err := s.currentMetricsRetention(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metrics_retention":         store.FormatMetricsRetention(retention),
+		"metrics_retention_seconds": int64(retention.Seconds()),
+		"max_metrics_retention":     store.FormatMetricsRetention(store.MetricsRetentionMax),
+	})
+}
+
+func (s *Server) currentMetricsRetention(ctx context.Context) (time.Duration, error) {
+	if s.settings == nil {
+		return s.defaultMetricsRetention, nil
+	}
+	return s.settings.MetricsRetention(ctx, s.defaultMetricsRetention)
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +178,9 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}{Nodes: make([]NodeResponse, 0, len(nodes))}
 	for _, node := range nodes {
 		item := nodeResponse(node)
+		if s.terminalEnabled && s.terminalHub != nil {
+			item.TerminalEnabled = s.terminalHub.NodeTerminalEnabled(node.ID)
+		}
 		metric, ok, err := s.metrics.Latest(r.Context(), node.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -59,8 +202,55 @@ func (s *Server) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleNodeMetrics(w, r, parts[0])
 		return
 	}
-	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
-		s.handleNode(w, r, parts[0])
+	if len(parts) == 2 && parts[1] == "processes" {
+		s.handleNodeProcesses(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "docker" {
+		s.handleNodeDocker(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "files" {
+		s.handleNodeFiles(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "files" && parts[2] == "content" {
+		s.handleNodeFileContent(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "files" && parts[2] == "upload" {
+		s.handleNodeFileUpload(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "reboot" {
+		s.handleNodeReboot(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "terminal" && parts[2] == "session" {
+		s.handleNodeTerminalSession(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "terminal" && parts[2] == "ws" {
+		s.handleNodeTerminal(w, r, parts[0])
+		return
+	}
+	if len(parts) == 5 && parts[1] == "containers" && parts[3] == "exec" && parts[4] == "session" {
+		s.handleContainerExecSession(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 5 && parts[1] == "containers" && parts[3] == "exec" && parts[4] == "ws" {
+		s.handleContainerExec(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 1 && parts[0] != "" {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleNode(w, r, parts[0])
+		case http.MethodDelete:
+			s.handleDeleteNode(w, r, parts[0])
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 		return
 	}
 	http.NotFound(w, r)
@@ -72,7 +262,30 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusNotFound, "node not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, nodeResponse(node))
+	response := nodeResponse(node)
+	if s.terminalEnabled && s.terminalHub != nil {
+		response.TerminalEnabled = s.terminalHub.NodeTerminalEnabled(id)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request, id string) {
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := s.nodes.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "node not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.disconnecter != nil {
+		s.disconnecter.DisconnectNode(id)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, nodeID string) {
@@ -80,13 +293,29 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, nodeI
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
 	rangeValue := r.URL.Query().Get("range")
 	duration, ok := map[string]time.Duration{
-		"1h": time.Hour,
-		"6h": 6 * time.Hour,
+		"1h":  time.Hour,
+		"6h":  6 * time.Hour,
+		"24h": 24 * time.Hour,
+		"3d":  3 * 24 * time.Hour,
+		"7d":  7 * 24 * time.Hour,
 	}[rangeValue]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "range must be 1h or 6h")
+		writeError(w, http.StatusBadRequest, "range must be 1h, 6h, 24h, 3d, or 7d")
+		return
+	}
+	retention, err := s.currentMetricsRetention(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if duration > retention {
+		writeError(w, http.StatusBadRequest, "range exceeds metrics retention")
 		return
 	}
 	now := time.Now().UTC()
@@ -100,6 +329,433 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, nodeI
 	}{Metrics: make([]MetricResponse, 0, len(metrics))}
 	for _, metric := range metrics {
 		response.Metrics = append(response.Metrics, metricResponse(metric))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNodeProcesses(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	response := ProcessSnapshotResponse{NodeID: nodeID, Processes: []protocol.ProcessInfo{}}
+	if s.processes != nil {
+		snapshot, ok, err := s.processes.Get(r.Context(), nodeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
+			response.CollectedAt = snapshot.CollectedAt
+			response.Error = snapshot.Error
+			response.Processes = sanitizedProcessInfos(snapshot.Processes)
+			if response.Processes == nil {
+				response.Processes = []protocol.ProcessInfo{}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNodeFiles(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+	response, err := s.agentOps.FileList(r.Context(), nodeID, path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNodeFileContent(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			writeError(w, http.StatusBadRequest, "path is required")
+			return
+		}
+		response, err := s.agentOps.FileRead(r.Context(), nodeID, path)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, maxNodeOperationBodyBytes)
+		var request struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		if strings.TrimSpace(request.Path) == "" {
+			writeError(w, http.StatusBadRequest, "path is required")
+			return
+		}
+		response, err := s.agentOps.FileWrite(r.Context(), nodeID, request.Path, request.Content)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	case http.MethodDelete:
+		r.Body = http.MaxBytesReader(w, r.Body, maxNodeOperationBodyBytes)
+		var request struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		if strings.TrimSpace(request.Path) == "" {
+			writeError(w, http.StatusBadRequest, "path is required")
+			return
+		}
+		response, err := s.agentOps.FileDelete(r.Context(), nodeID, request.Path)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleNodeFileUpload(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxNodeOperationBodyBytes)
+	var request struct {
+		Path          string `json:"path"`
+		ContentBase64 string `json:"content_base64"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if strings.TrimSpace(request.Path) == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	response, err := s.agentOps.FileUpload(r.Context(), nodeID, request.Path, request.ContentBase64)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNodeReboot(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return
+	}
+	response, err := s.agentOps.Reboot(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func authorizeBrowserNodeOperation(r *http.Request) bool {
+	if r.Method == http.MethodGet {
+		return true
+	}
+	if !sameOrigin(r) {
+		return false
+	}
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reboot") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json")
+}
+
+func (s *Server) handleNodeTerminalSession(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if !s.terminalEnabled || s.terminalHub == nil {
+		writeError(w, http.StatusServiceUnavailable, "terminal is not available")
+		return
+	}
+	if !s.terminalHub.NodeTerminalEnabled(nodeID) {
+		writeError(w, http.StatusForbidden, "terminal is not enabled for this node")
+		return
+	}
+	token, err := s.createTerminalToken(terminalTokenKindNode, nodeID, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create terminal session")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+func (s *Server) handleNodeTerminal(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if !s.terminalEnabled || s.terminalHub == nil {
+		writeError(w, http.StatusServiceUnavailable, "terminal is not available")
+		return
+	}
+	if !s.consumeTerminalToken(terminalTokenKindNode, nodeID, "", r.URL.Query().Get("token")) {
+		writeError(w, http.StatusUnauthorized, "terminal session is invalid or expired")
+		return
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: sameOrigin}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxTerminalWebSocketBytes)
+	_ = s.terminalHub.AttachTerminal(r.Context(), nodeID, conn)
+}
+
+func (s *Server) handleContainerExecSession(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if containerID == "" {
+		writeError(w, http.StatusBadRequest, "container id is required")
+		return
+	}
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if !s.terminalEnabled || s.terminalHub == nil {
+		writeError(w, http.StatusServiceUnavailable, "container exec is not available")
+		return
+	}
+	if !s.terminalHub.NodeTerminalEnabled(nodeID) {
+		writeError(w, http.StatusForbidden, "terminal is not enabled for this node")
+		return
+	}
+	token, err := s.createTerminalToken(terminalTokenKindContainerExec, nodeID, containerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create container exec session")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+func (s *Server) handleContainerExec(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if !s.terminalEnabled || s.terminalHub == nil {
+		writeError(w, http.StatusServiceUnavailable, "container exec is not available")
+		return
+	}
+	if !s.consumeTerminalToken(terminalTokenKindContainerExec, nodeID, containerID, r.URL.Query().Get("token")) {
+		writeError(w, http.StatusUnauthorized, "container exec session is invalid or expired")
+		return
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: sameOrigin}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxTerminalWebSocketBytes)
+	_ = s.terminalHub.AttachContainerExec(r.Context(), nodeID, containerID, conn)
+}
+
+func (s *Server) createTerminalToken(kind string, nodeID string, containerID string) (string, error) {
+	var bytes [24]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(bytes[:])
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	now := time.Now()
+	s.pruneTerminalTokensLocked(now)
+	if len(s.terminalTokens) >= maxTerminalTokens {
+		return "", http.ErrHandlerTimeout
+	}
+	s.terminalTokens[token] = terminalToken{kind: kind, nodeID: nodeID, containerID: containerID, expiresAt: now.Add(terminalTokenTTL)}
+	return token, nil
+}
+
+func (s *Server) consumeTerminalToken(kind string, nodeID string, containerID string, token string) bool {
+	if token == "" {
+		return false
+	}
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	now := time.Now()
+	s.pruneTerminalTokensLocked(now)
+	entry, ok := s.terminalTokens[token]
+	if !ok || entry.kind != kind || entry.nodeID != nodeID || entry.containerID != containerID || now.After(entry.expiresAt) {
+		delete(s.terminalTokens, token)
+		return false
+	}
+	delete(s.terminalTokens, token)
+	return true
+}
+
+func (s *Server) pruneTerminalTokensLocked(now time.Time) {
+	for token, entry := range s.terminalTokens {
+		if now.After(entry.expiresAt) {
+			delete(s.terminalTokens, token)
+		}
+	}
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	expectedScheme := "http"
+	if r.TLS != nil {
+		expectedScheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, expectedScheme) && strings.EqualFold(parsed.Host, r.Host)
+}
+
+func sanitizedProcessInfos(processes []protocol.ProcessInfo) []protocol.ProcessInfo {
+	if processes == nil {
+		return nil
+	}
+	sanitized := make([]protocol.ProcessInfo, len(processes))
+	copy(sanitized, processes)
+	for index := range sanitized {
+		sanitized[index].Command = ""
+	}
+	return sanitized
+}
+
+func (s *Server) handleNodeDocker(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	response := DockerSnapshotResponse{NodeID: nodeID, Containers: []protocol.ContainerInfo{}}
+	if s.docker != nil {
+		snapshot, ok, err := s.docker.Get(r.Context(), nodeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
+			response.CollectedAt = snapshot.CollectedAt
+			response.Available = snapshot.Available
+			response.Version = snapshot.Version
+			response.Error = snapshot.Error
+			response.Containers = snapshot.Containers
+			if response.Containers == nil {
+				response.Containers = []protocol.ContainerInfo{}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

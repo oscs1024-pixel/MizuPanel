@@ -40,7 +40,20 @@ vi.mock('./api/client', () => ({
       }
     ]
   })),
-  getNodeMetrics: vi.fn(async () => ({ metrics: [] }))
+  getNodeMetrics: vi.fn(async () => ({ metrics: [] })),
+  getNodeProcesses: vi.fn(async () => ({ node_id: 'node-1', collected_at: 0, error: '', processes: [] })),
+  getNodeDocker: vi.fn(async () => ({ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] })),
+  getSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
+  updateSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
+  getNodeFiles: vi.fn(async () => ({ path: '/', entries: [] })),
+  readNodeFile: vi.fn(async () => ({ path: '/tmp/a', content: '', editable: true })),
+  writeNodeFile: vi.fn(async () => ({ path: '/tmp/a', saved: true })),
+  uploadNodeFile: vi.fn(async () => ({ path: '/tmp/upload.bin', uploaded: true })),
+  deleteNodePath: vi.fn(async () => ({ path: '/tmp/upload.bin', deleted: true })),
+  deleteNode: vi.fn(async () => undefined),
+  rebootNode: vi.fn(async () => ({ accepted: true })),
+  createTerminalSession: vi.fn(async () => ({ token: 'terminal-token' })),
+  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' }))
 }))
 
 describe('App', () => {

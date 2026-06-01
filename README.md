@@ -7,39 +7,43 @@
   <a href="https://react.dev/"><img alt="React" src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=0F172A"></a>
   <a href="https://vite.dev/"><img alt="Vite" src="https://img.shields.io/badge/Vite-build-646CFF?logo=vite&logoColor=white"></a>
   <a href="https://www.sqlite.org/"><img alt="SQLite" src="https://img.shields.io/badge/SQLite-storage-003B57?logo=sqlite&logoColor=white"></a>
+  <a href="https://www.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white"></a>
+  <a href="https://www.mysql.com/"><img alt="MySQL" src="https://img.shields.io/badge/MySQL-optional-4479A1?logo=mysql&logoColor=white"></a>
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-monitoring-14B8A6">
   <img alt="Status" src="https://img.shields.io/badge/status-v0.1_preview-F59E0B">
 </p>
 
 <p align="center">
-  <strong>Lightweight self-hosted server monitoring</strong>
+  <strong>轻量级自托管服务器监控面板</strong>
 </p>
 
 <p align="center">
-  English · <a href="README.zh-CN.md">中文</a>
+  <a href="README.en.md">English</a> · 中文
 </p>
 
 ---
 
-## Overview
+## 概览
 
-MizuPanel is a lightweight self-hosted server monitoring panel for personal servers and small fleets. It is composed of a Server, a Dashboard, and Agents. Agents actively connect to the Server over WebSocket and report CPU, memory, disk, network, and load metrics.
+MizuPanel 是一个面向个人服务器和小型服务器集群的轻量级自托管监控面板。它由 Server、Dashboard 和 Agent 组成。Agent 主动通过 WebSocket 连接 Server，并上报 CPU、内存、磁盘、网络和负载指标。
 
-> Note: the current preview temporarily has no login gate. `/api/install/command` can mint install tokens without authentication. Restore minimal admin authentication before exposing MizuPanel publicly.
+> 注意：当前预览版本暂时没有登录门禁。`/api/install/command` 可以在未认证情况下生成安装 token。公网暴露 MizuPanel 之前，请先恢复最小管理员认证。
 
-## Features
+## 功能特性
 
-- Multi-node server list and node details.
-- CPU, memory, disk, network, and load metrics.
-- Local SQLite persistence with 6-hour default retention.
-- React + Vite + Tailwind CSS v3 Dashboard.
-- Server-hosted web assets, installer script, and Agent downloads.
-- Agent actively connects to Server; target hosts do not expose Agent ports.
-- Dashboard-generated `curl -fsSL` install command.
-- One-time `install_token` for first registration and long-lived `node_token` for reconnects.
-- Linux amd64 / arm64 Agent binaries bundled in the release package.
+- 多节点服务器列表和节点详情。
+- CPU、内存、磁盘、网络和 Load 指标。
+- SQLite 本地持久化，默认指标保留 6 小时。
+- 可选 MySQL 存储，适合长期部署。
+- Docker Compose 部署，默认使用 SQLite。
+- React + Vite + Tailwind CSS v3 Dashboard。
+- Server 托管 Web 静态资源、安装脚本和 Agent 下载文件。
+- Agent 主动连接 Server；目标主机不需要暴露 Agent 端口。
+- Dashboard 生成 Linux 和 Windows Agent 安装命令。
+- 一次性 `install_token` 用于首次注册，长期 `node_token` 用于后续重连。
+- Release 包内置 Linux amd64 / arm64 和 Windows amd64 Agent 二进制。
 
-## Architecture
+## 架构
 
 ```text
 Browser Dashboard
@@ -48,78 +52,203 @@ Browser Dashboard
       v
 MizuPanel Server  <---------------- WebSocket ----------------  MizuPanel Agent
       |                                                        target host
-      | SQLite
+      | SQLite / MySQL
       v
 nodes / metrics / node tokens
 ```
 
-## Release layout
+## Docker 快速启动
 
-Run `make build` to create:
+Docker 是目前最简单的运行方式。默认 Compose 使用 SQLite，所以一条命令即可启动：
+
+```bash
+docker compose up -d
+```
+
+打开 Dashboard：
 
 ```text
-dist/mizupanel/
+http://127.0.0.1:8080
+```
+
+默认情况下 Compose 只绑定 `127.0.0.1`，避免在没有登录门禁时直接暴露到所有网卡。你自己在服务器或局域网使用时，可以显式开放：
+
+```bash
+MIZUPANEL_BIND_ADDR=0.0.0.0 docker compose up -d
+```
+
+然后打开：
+
+```text
+http://你的服务器IP:8080
+```
+
+SQLite 模式使用 `docker/server.sqlite.yaml`，镜像构建时会把它复制为容器内的 `/app/server.yaml`。运行数据会持久化到：
+
+```text
+./data/mizupanel.db
+```
+
+常用命令：
+
+```bash
+docker compose logs -f
+docker compose down
+```
+
+### Docker 使用 MySQL
+
+MySQL Compose 使用 `docker/server.mysql.yaml`，启动时会挂载到容器内的 `/app/server.yaml`。先通过环境变量设置数据库信息：
+
+```bash
+export MIZUPANEL_MYSQL_DATABASE=mizupanel
+export MIZUPANEL_MYSQL_USERNAME=mizupanel
+export MIZUPANEL_MYSQL_PASSWORD='换成你的数据库密码'
+export MIZUPANEL_MYSQL_ROOT_PASSWORD='换成你的Root密码'
+```
+
+启动 MySQL 版本：
+
+```bash
+docker compose -f docker-compose.mysql.yml up -d
+```
+
+如果需要让服务器 IP 或局域网访问，显式开放绑定地址：
+
+```bash
+MIZUPANEL_BIND_ADDR=0.0.0.0 docker compose -f docker-compose.mysql.yml up -d
+```
+
+MySQL 数据保存在 Docker volume：
+
+```text
+mizupanel_mizupanel-mysql-data
+```
+
+停止但保留数据：
+
+```bash
+docker compose -f docker-compose.mysql.yml down
+```
+
+停止并删除 MySQL 数据 volume：
+
+```bash
+docker compose -f docker-compose.mysql.yml down -v
+```
+
+## Release 包结构
+
+按 Server 所在机器架构选择对应的发布包目标：
+
+```bash
+make package-linux-amd64 # x86_64 / amd64 服务器
+make package-linux-arm64 # ARM64 / aarch64 服务器
+```
+
+`make build`、`make package` 和 `make build-x86` 会构建 amd64 包；`make build-arm` 会构建 arm64 包。
+
+选中的目标会生成对应 release 目录和压缩包：
+
+```text
+dist/
+├── mizupanel-linux-amd64/
+├── mizupanel-linux-amd64.tar.gz
+├── mizupanel-linux-arm64/
+└── mizupanel-linux-arm64.tar.gz
+```
+
+每个解压后的包都包含：
+
+```text
+mizupanel-linux-amd64/
 ├── mizupanel-server
 ├── server.example.yaml
+├── data/
 ├── scripts/
-│   └── install-agent.sh
+│   ├── install-agent.sh
+│   ├── install-agent.ps1
+│   ├── uninstall-agent.sh
+│   └── uninstall-agent.ps1
 ├── systemd/
 │   ├── mizupanel-server.service
 │   └── mizupanel-agent.service
 ├── downloads/
 │   ├── mizupanel-agent-linux-amd64
-│   └── mizupanel-agent-linux-arm64
+│   ├── mizupanel-agent-linux-arm64
+│   └── mizupanel-agent-windows-amd64.exe
 └── web/
     ├── index.html
     └── assets/
 ```
 
-## Server setup
+Server 使用 CGO SQLite，所以 arm64 Server 包需要 arm64 C 交叉编译器，例如 `aarch64-linux-gnu-gcc`。Debian/Ubuntu 可以通过 `sudo apt install gcc-aarch64-linux-gnu` 安装。
 
-### 1. Prepare the release directory
+## Server 设置
+
+### 1. 准备 release 目录
 
 ```bash
 make build
-cd dist/mizupanel
+tar -xzf dist/mizupanel-linux-amd64.tar.gz
+cd mizupanel-linux-amd64
 cp server.example.yaml server.yaml
 ```
 
-`server.example.yaml` is the versioned template. `server.yaml` is your local runtime config, so you can edit it without changing the template.
+arm64 服务器请执行 `make package-linux-arm64` 并改用 `mizupanel-linux-arm64.tar.gz`。`server.example.yaml` 是版本管理里的配置模板。`server.yaml` 是本机运行时配置，复制出来后可以按实际环境修改，不会影响模板文件。发布包已包含 `data/` 目录，默认数据库路径会写入 `./data/mizupanel.db`。
 
-### 2. Edit `server.yaml`
-
-```yaml
-listen: ":8080" # HTTP listen address for the MizuPanel Server.
-database_path: "./data/mizupanel.db" # SQLite database path for nodes, metrics, and persisted node tokens.
-metrics_retention: "6h" # How long historical metrics are kept before cleanup.
-cleanup_interval: "10m" # How often the retention cleanup job runs.
-public_url: "" # Public panel URL used to generate Agent install commands; leave empty to infer from the request host.
-# agent_token is optional and should only be set if you need a long-lived bootstrap token.
-# Prefer the Dashboard-generated one-time install token flow for adding hosts.
-# agent_token: "change-this-to-a-random-secret" # Optional long-lived Agent bootstrap token; avoid exposing it in browsers or public docs.
-```
-
-Set `public_url` if Agents will access the panel from another machine:
+### 2. 修改 `server.yaml`
 
 ```yaml
-public_url: "http://your-server-ip:8080"
+server:
+  listen: ":8080" # MizuPanel Server 的 HTTP 监听地址。
+  public_url: "" # 用于生成 Agent 安装命令的公网面板地址；留空时会从请求 Host 推断。
+  enable_terminal: true # 启用浏览器终端路由；Linux Agent 仍需 features.terminal: true。
+
+storage:
+  driver: "sqlite" # sqlite | mysql，默认使用 SQLite。
+  database_path: "./data/mizupanel.db" # 旧版 SQLite 路径配置，保留兼容。
+  sqlite:
+    path: "./data/mizupanel.db"
+  mysql:
+    host: "127.0.0.1"
+    port: 3306
+    username: "mizupanel"
+    password: ""
+    database: "mizupanel"
+
+metrics:
+  retention: "6h" # 历史指标保留时间。
+  cleanup_interval: "10m" # 按保留策略清理历史指标的执行间隔。
+
+security:
+  # agent_token 是可选配置，只在你需要长期 bootstrap token 时设置。
+  # 推荐优先使用 Dashboard 生成的一次性 install token 添加主机。
+  # agent_token: "change-this-to-a-random-secret" # 可选的长期 Agent bootstrap token；不要暴露在浏览器或公开文档里。
 ```
 
-### 3. Start Server directly
+如果 Agent 会从其他机器访问面板，建议设置 `public_url`：
+
+```yaml
+server:
+  public_url: "http://你的服务器IP:8080"
+```
+
+### 3. 直接启动 Server
 
 ```bash
 ./mizupanel-server -config server.yaml
 ```
 
-Open:
+打开：
 
 ```text
-http://your-server-ip:8080
+http://你的服务器IP:8080
 ```
 
-### 4. Optional: run Server with systemd
+### 4. 可选：使用 systemd 托管 Server
 
-The release package includes `systemd/mizupanel-server.service`. It assumes MizuPanel is installed at `/opt/mizupanel` and uses `/opt/mizupanel/server.yaml`.
+Release 包包含 `systemd/mizupanel-server.service`。它默认 MizuPanel 安装在 `/opt/mizupanel`，并使用 `/opt/mizupanel/server.yaml`。
 
 ```bash
 NOLOGIN=$(command -v nologin || printf '%s\n' /usr/sbin/nologin)
@@ -137,28 +266,41 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mizupanel-server
 ```
 
-Check logs:
+查看日志：
 
 ```bash
 journalctl -u mizupanel-server -f
 ```
 
-## Agent setup
+## Agent 设置
 
-Open the Dashboard, click **Add Host**, and run the generated command on the target host. It looks like:
+打开 Dashboard，点击 **添加主机**，选择 **Linux** 或 **Windows**，然后在目标主机上执行生成的命令。
+
+Linux 命令形态：
 
 ```bash
-curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-agent.sh \
+curl -fsSL 'http://你的面板地址:8080/scripts/install-agent.sh' -o install-agent.sh \
   && chmod +x install-agent.sh \
   && sudo ./install-agent.sh \
-    --binary-base-url 'http://your-panel-host:8080/downloads' \
-    --server-url 'ws://your-panel-host:8080/api/agent/ws' \
+    --binary-base-url 'http://你的面板地址:8080/downloads' \
+    --server-url 'ws://你的面板地址:8080/api/agent/ws' \
     --token 'one-time-install-token' \
     --node-id "$(hostname)" \
     --name "$(hostname)"
 ```
 
-The installer selects the correct file from `downloads/`, then installs the Agent as:
+Windows 命令需要在管理员 PowerShell 中执行，形态如下：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference='Stop'; `$script = Join-Path `$env:TEMP ('mizupanel-install-' + [guid]::NewGuid().ToString() + '.ps1'); Invoke-WebRequest -Uri 'http://你的面板地址:8080/scripts/install-agent.ps1' -UseBasicParsing -OutFile `$script -ErrorAction Stop; & `$script `
+    -BinaryBaseUrl 'http://你的面板地址:8080/downloads' `
+    -ServerUrl 'ws://你的面板地址:8080/api/agent/ws' `
+    -Token 'one-time-install-token' `
+    -NodeId `$env:COMPUTERNAME `
+    -Name `$env:COMPUTERNAME"
+```
+
+Linux 安装脚本会从 `downloads/` 中选择匹配系统架构的 Agent 文件，然后安装为：
 
 ```text
 /usr/local/mizupanel/mizupanel-agent
@@ -166,36 +308,74 @@ The installer selects the correct file from `downloads/`, then installs the Agen
 /etc/systemd/system/mizupanel-agent.service
 ```
 
-Check the Agent service:
+查看 Linux Agent 服务：
 
 ```bash
 systemctl status mizupanel-agent
 journalctl -u mizupanel-agent -f
 ```
 
-Agent install permissions:
+Linux Agent 安装权限：
 
-- `/usr/local/mizupanel` is managed by `root:root`.
-- `/usr/local/mizupanel/mizupanel-agent` is root-owned and executable.
-- `/usr/local/mizupanel/agent.yaml` is owned by `mizupanel-agent:mizupanel-agent` with `0600` permissions.
-- systemd `ReadWritePaths` is limited to `agent.yaml` so the Agent can persist the exchanged `node_token` without being able to replace its own binary.
+- `/usr/local/mizupanel` 由 `root:root` 管理。
+- `/usr/local/mizupanel/mizupanel-agent` 由 root 拥有并可执行。
+- `/usr/local/mizupanel/agent.yaml` 由 `mizupanel-agent:mizupanel-agent` 拥有，权限为 `0600`。
+- systemd `ReadWritePaths` 只允许写入 `agent.yaml`，Agent 可以持久化换发后的 `node_token`，但不能替换自己的二进制文件。
 
-## Token model
+Windows 安装脚本会下载 `mizupanel-agent-windows-amd64.exe`，安装为 `C:\Program Files\MizuPanel\mizupanel-agent.exe`，写入 `C:\Program Files\MizuPanel\agent.yaml`，并注册 `mizupanel-agent` Windows Service。
+
+卸载 Linux Agent：
+
+```bash
+curl -fsSL 'http://你的面板地址:8080/scripts/uninstall-agent.sh' -o uninstall-agent.sh \
+  && chmod +x uninstall-agent.sh \
+  && sudo ./uninstall-agent.sh
+```
+
+卸载 Windows Agent 需要在管理员 PowerShell 中执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference='Stop'; `$script = Join-Path `$env:TEMP ('mizupanel-uninstall-' + [guid]::NewGuid().ToString() + '.ps1'); Invoke-WebRequest -Uri 'http://你的面板地址:8080/scripts/uninstall-agent.ps1' -UseBasicParsing -OutFile `$script -ErrorAction Stop; & `$script"
+```
+
+卸载会停止并删除 Agent 服务，同时删除 Agent 安装目录；不会删除 Server 数据库里的节点记录或历史指标。
+
+生成的 Agent 配置使用分块 YAML：
+
+```yaml
+server:
+  url: "ws://你的面板地址:8080/api/agent/ws"
+  token: "one-time-install-token"
+
+node:
+  id: "oracle-sg-01"
+  name: "Oracle SG"
+
+runtime:
+  interval: "5s"
+  mode: "normal"
+
+features:
+  docker: false
+  terminal: false
+```
+
+## Token 模型
 
 ### `install_token`
 
-`install_token` is a one-time bootstrap token.
+`install_token` 是一次性 bootstrap token。
 
-- Generated when the Dashboard creates an add-host command.
-- Used only for the first Agent registration.
-- Exchanged by the Server for a long-lived `node_token`.
-- Not intended as a persistent credential.
+- Dashboard 创建添加主机命令时生成。
+- 只用于 Agent 首次注册。
+- Server 验证成功后会换发长期 `node_token`。
+- 不应作为持久凭据使用。
 
 ### `node_token`
 
-`node_token` is a long-lived per-node token.
+`node_token` 是每个节点自己的长期 token。
 
-- Generated after successful first registration.
-- Persisted by the Agent into `/usr/local/mizupanel/agent.yaml`.
-- Used for Agent restarts and reconnects.
-- Stored on the Server side as a hash, not plaintext.
+- 首次注册成功后生成。
+- Agent 会在 Linux 写入 `/usr/local/mizupanel/agent.yaml`，在 Windows 写入 `C:\Program Files\MizuPanel\agent.yaml`。
+- Agent 重启和断线重连时使用。
+- Server 端保存的是 token 哈希，不保存明文。

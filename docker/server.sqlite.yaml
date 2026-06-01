@@ -1,0 +1,17 @@
+server:
+  listen: ":8080"
+  public_url: ""
+  enable_terminal: true
+
+storage:
+  driver: "sqlite"
+  sqlite:
+    path: "/app/data/mizupanel.db"
+
+metrics:
+  retention: "6h"
+  cleanup_interval: "10m"
+
+security:
+  # Prefer Dashboard-generated one-time install tokens.
+  # agent_token: "change-this-to-a-random-secret"

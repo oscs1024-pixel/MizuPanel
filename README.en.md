@@ -1,7 +1,3 @@
-<p align="right">
-  <a href="README.md">中文</a> · English
-</p>
-
 <p align="center">
   <img src="assets/mizupanel-banner.svg" alt="MizuPanel banner" width="100%" />
 </p>
@@ -19,6 +15,10 @@
 
 <p align="center">
   <strong>Lightweight self-hosted server monitoring</strong>
+</p>
+
+<p align="center">
+  English · <a href="README.md">中文</a>
 </p>
 
 ---
@@ -181,7 +181,7 @@ mizupanel-linux-amd64/
 
 The Server uses CGO for SQLite, so the arm64 Server package requires an arm64 C cross compiler such as `aarch64-linux-gnu-gcc`. On Debian/Ubuntu, install it with `sudo apt install gcc-aarch64-linux-gnu`.
 
-## Server setup
+## Release package deployment
 
 ### 1. Prepare the release directory
 
@@ -243,31 +243,9 @@ Open:
 http://your-server-ip:8080
 ```
 
-### 4. Optional: run Server with systemd
+### 4. Optional: run with systemd
 
-The release package includes `systemd/mizupanel-server.service`. It assumes MizuPanel is installed at `/opt/mizupanel` and uses `/opt/mizupanel/server.yaml`.
-
-```bash
-NOLOGIN=$(command -v nologin || printf '%s\n' /usr/sbin/nologin)
-getent passwd mizupanel >/dev/null || sudo useradd --system --no-create-home --shell "$NOLOGIN" mizupanel
-sudo mkdir -p /opt/mizupanel
-sudo cp -R . /opt/mizupanel/
-sudo chown -R root:root /opt/mizupanel
-sudo chown root:mizupanel /opt/mizupanel/server.yaml
-sudo chmod 0640 /opt/mizupanel/server.yaml
-sudo mkdir -p /opt/mizupanel/data
-sudo chown mizupanel:mizupanel /opt/mizupanel/data
-sudo chmod 0750 /opt/mizupanel/data
-sudo cp /opt/mizupanel/systemd/mizupanel-server.service /etc/systemd/system/mizupanel-server.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now mizupanel-server
-```
-
-Check logs:
-
-```bash
-journalctl -u mizupanel-server -f
-```
+The release package includes `systemd/mizupanel-server.service` as an example for `/opt/mizupanel`; adjust the paths for your host and run `systemctl enable --now mizupanel-server`.
 
 ## Agent setup
 

@@ -1,7 +1,3 @@
-<p align="right">
-  <a href="README.en.md">English</a> · 中文
-</p>
-
 <p align="center">
   <img src="assets/mizupanel-banner.svg" alt="MizuPanel banner" width="100%" />
 </p>
@@ -19,6 +15,10 @@
 
 <p align="center">
   <strong>轻量级自托管服务器监控面板</strong>
+</p>
+
+<p align="center">
+  中文 · <a href="README.en.md">English</a>
 </p>
 
 ---
@@ -181,7 +181,7 @@ mizupanel-linux-amd64/
 
 Server 使用 CGO SQLite，所以 arm64 Server 包需要 arm64 C 交叉编译器，例如 `aarch64-linux-gnu-gcc`。Debian/Ubuntu 可以通过 `sudo apt install gcc-aarch64-linux-gnu` 安装。
 
-## Server 设置
+## 发布包部署
 
 ### 1. 准备 release 目录
 
@@ -243,31 +243,9 @@ server:
 http://你的服务器IP:8080
 ```
 
-### 4. 可选：使用 systemd 托管 Server
+### 4. 可选：使用 systemd 托管
 
-Release 包包含 `systemd/mizupanel-server.service`。它默认 MizuPanel 安装在 `/opt/mizupanel`，并使用 `/opt/mizupanel/server.yaml`。
-
-```bash
-NOLOGIN=$(command -v nologin || printf '%s\n' /usr/sbin/nologin)
-getent passwd mizupanel >/dev/null || sudo useradd --system --no-create-home --shell "$NOLOGIN" mizupanel
-sudo mkdir -p /opt/mizupanel
-sudo cp -R . /opt/mizupanel/
-sudo chown -R root:root /opt/mizupanel
-sudo chown root:mizupanel /opt/mizupanel/server.yaml
-sudo chmod 0640 /opt/mizupanel/server.yaml
-sudo mkdir -p /opt/mizupanel/data
-sudo chown mizupanel:mizupanel /opt/mizupanel/data
-sudo chmod 0750 /opt/mizupanel/data
-sudo cp /opt/mizupanel/systemd/mizupanel-server.service /etc/systemd/system/mizupanel-server.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now mizupanel-server
-```
-
-查看日志：
-
-```bash
-journalctl -u mizupanel-server -f
-```
+Release 包内置 `systemd/mizupanel-server.service` 示例，适合安装到 `/opt/mizupanel` 后托管运行；按实际路径调整 service 文件后执行 `systemctl enable --now mizupanel-server` 即可。
 
 ## Agent 设置
 

@@ -54,6 +54,20 @@ Stack and deployment:
   <img src="assets/mizupanel-architecture.svg" alt="MizuPanel architecture diagram" width="100%" />
 </p>
 
+## Screenshots
+
+| Dashboard | Metrics history |
+| --- | --- |
+| <img src="assets/screenshots/dashboard.png" alt="MizuPanel Dashboard" width="100%" /> | <img src="assets/screenshots/history.png" alt="Metrics history" width="100%" /> |
+
+| System settings | Add host |
+| --- | --- |
+| <img src="assets/screenshots/settings.png" alt="System settings" width="100%" /> | <img src="assets/screenshots/add-host.png" alt="Add host" width="100%" /> |
+
+| Web terminal |
+| --- |
+| <img src="assets/screenshots/terminal.png" alt="Web terminal" width="100%" /> |
+
 ## Docker quick start
 
 Docker is the simplest way to run MizuPanel. The default Compose file uses SQLite, so one command is enough:

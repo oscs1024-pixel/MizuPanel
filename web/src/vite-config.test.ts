@@ -9,5 +9,6 @@ test('api proxy preserves browser host for same-origin protected operations', ()
   expect(apiProxy).toMatchObject({
     target: 'http://localhost:8080',
     changeOrigin: false,
+    ws: true,
   })
 })

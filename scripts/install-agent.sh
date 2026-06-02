@@ -172,7 +172,7 @@ if [ -n "$BINARY_BASE_URL" ]; then
   BINARY_URL="${BINARY_BASE_URL%/}/$(binary_target)"
 fi
 if [ -z "$DEST_ROOT" ] && [ "$(id -u)" -ne 0 ]; then
-  printf 'Run as root or pass --dest-root for testing.\n' >&2
+  printf 'Please run this installer as root.\n' >&2
   exit 1
 fi
 

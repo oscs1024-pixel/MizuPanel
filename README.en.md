@@ -263,7 +263,9 @@ The release package includes `systemd/mizupanel-server.service` as an example fo
 
 ## Agent setup
 
-Open the Dashboard, click **Add Host**, choose **Linux** or **Windows**, and run the generated command on the target host.
+Open the Dashboard and click **Add Host**. For Linux hosts, choose **SSH automatic install** to let the Server use the one-time root SSH credentials you enter for this request only, or choose **manual command install** and run the generated command on the target host. SSH credentials are not stored in the database, echoed back, or written to logs.
+
+The first SSH install/uninstall version only supports Linux root users. It does not support sudo or Windows. Linux manual install/uninstall commands should also be run from a root shell.
 
 <details>
 <summary>Linux install command example</summary>
@@ -271,7 +273,7 @@ Open the Dashboard, click **Add Host**, choose **Linux** or **Windows**, and run
 ```bash
 curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-agent.sh \
   && chmod +x install-agent.sh \
-  && sudo ./install-agent.sh \
+  && ./install-agent.sh \
     --binary-base-url 'http://your-panel-host:8080/downloads' \
     --server-url 'ws://your-panel-host:8080/api/agent/ws' \
     --token 'one-time-install-token' \
@@ -324,7 +326,7 @@ To uninstall the Linux Agent:
 ```bash
 curl -fsSL 'http://your-panel-host:8080/scripts/uninstall-agent.sh' -o uninstall-agent.sh \
   && chmod +x uninstall-agent.sh \
-  && sudo ./uninstall-agent.sh
+  && ./uninstall-agent.sh
 ```
 
 To uninstall the Windows Agent, run from an elevated PowerShell session:

@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$DEST_ROOT" ] && [ "$(id -u)" -ne 0 ]; then
-  printf 'Run as root or pass --dest-root for testing.\n' >&2
+  printf 'Please run this uninstaller as root.\n' >&2
   exit 1
 fi
 

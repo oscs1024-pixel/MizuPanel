@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { NodeDetail } from './NodeDetail'
-import type { FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, Node, RebootResponse } from '../types'
+import type { FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, Node, RebootResponse, SSHUninstallRequest } from '../types'
 
 const node: Node = {
   id: 'node-1',
@@ -35,6 +35,20 @@ const etcList: FileListResponse = {
   ]
 }
 
+const eventSources: FakeEventSource[] = []
+
+class FakeEventSource extends EventTarget {
+  onmessage: ((event: MessageEvent) => void) | null = null
+  constructor(public url: string) {
+    super()
+    eventSources.push(this)
+  }
+  emit(data: unknown) {
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(data) }))
+  }
+  close() {}
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolver) => {
@@ -44,6 +58,11 @@ function deferred<T>() {
 }
 
 describe('NodeDetail file manager operations', () => {
+  beforeEach(() => {
+    eventSources.length = 0
+    vi.stubGlobal('EventSource', FakeEventSource)
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
@@ -123,6 +142,52 @@ describe('NodeDetail file manager operations', () => {
 
     expect(onDeleteNode).toHaveBeenCalledWith('node-1')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument())
+  })
+
+  test('groups SSH uninstall step logs and closes from the bottom after completion', async () => {
+    const onSSHUninstall = vi.fn(async (_nodeID: string, _request: SSHUninstallRequest) => ({ job_id: 'ssh-uninstall-1' }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onSSHUninstall={onSSHUninstall}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'SSH 卸载 Agent' }))
+    const dialog = screen.getByRole('dialog', { name: 'SSH 卸载 Agent' })
+    expect(within(dialog).getByDisplayValue('10.0.0.1')).toBeInTheDocument()
+    expect(within(dialog).getByDisplayValue('root')).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByLabelText('SSH 密码'), { target: { value: 'secret' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '开始 SSH 卸载' }))
+
+    await waitFor(() => expect(onSSHUninstall).toHaveBeenCalledWith('node-1', expect.objectContaining({
+      host: '10.0.0.1',
+      port: 22,
+      username: 'root',
+      auth_type: 'password',
+      password: 'secret',
+      remove_node_record: true
+    })))
+    expect(await within(dialog).findByText('SSH 卸载任务已创建：ssh-uninstall-1')).toBeInTheDocument()
+    expect(eventSources[0]?.url).toBe('/api/nodes/node-1/ssh-uninstall/ssh-uninstall-1/events')
+    act(() => {
+      eventSources[0].emit({ step: 'run_uninstall', label: '执行卸载', status: 'running', message: '正在执行 Agent 卸载脚本' })
+      eventSources[0].emit({ step: 'run_uninstall', label: '执行卸载', status: 'success', message: 'Agent 卸载脚本执行完成' })
+      eventSources[0].emit({ step: 'done', label: '完成', status: 'success', message: '任务已完成', done: true })
+    })
+    expect(await within(dialog).findByText('执行卸载')).toBeInTheDocument()
+    expect(within(dialog).getByText('Agent 卸载脚本执行完成')).toBeInTheDocument()
+    expect(within(dialog).getByText('正在执行 Agent 卸载脚本')).toBeInTheDocument()
+    expect(within(dialog).getAllByText('执行卸载')).toHaveLength(1)
+    expect(within(dialog).getAllByText('成功').length).toBeGreaterThan(0)
+    fireEvent.click(within(dialog).getByRole('button', { name: '完成并关闭' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'SSH 卸载 Agent' })).not.toBeInTheDocument())
   })
 
   test('keeps node records when the in-panel remove dialog is cancelled', () => {

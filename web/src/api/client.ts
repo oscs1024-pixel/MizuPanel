@@ -1,4 +1,4 @@
-import type { DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate } from '../types'
+import type { DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
 
 export type SessionTokenResponse = {
   token: string
@@ -61,6 +61,22 @@ export function createInstallCommand(platform: InstallPlatform = 'linux', option
     params.set('mode', options.mode)
   }
   return request<InstallCommandResponse>(`/api/install/command?${params.toString()}`, { method: 'POST' })
+}
+
+export function startSSHInstall(requestBody: SSHInstallRequest): Promise<SSHJobResponse> {
+  return request<SSHJobResponse>('/api/install/ssh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  })
+}
+
+export function startSSHUninstall(nodeID: string, requestBody: SSHUninstallRequest): Promise<SSHJobResponse> {
+  return request<SSHJobResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/ssh-uninstall`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  })
 }
 
 export function getNodeProcesses(nodeID: string): Promise<ProcessSnapshotResponse> {

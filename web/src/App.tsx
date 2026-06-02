@@ -1,13 +1,13 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { createInstallCommand, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
+import { createInstallCommand, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
 import { HistoryPage } from './pages/HistoryPage'
 import { NodeDetail } from './pages/NodeDetail'
 import { NodeList } from './pages/NodeList'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { TerminalPage } from './pages/TerminalPage'
-import type { AgentMode, DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse } from './types'
+import type { AgentMode, DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse, SSHAuthType, SSHProgressEvent } from './types'
 
 function decodeRouteNodeID(value?: string) {
   if (!value) return undefined
@@ -56,6 +56,22 @@ const rangeSeconds: Record<RangeOption, number> = {
 
 const orderedRanges: RangeOption[] = ['1h', '6h', '24h', '3d', '7d']
 
+type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
+
+function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProgressEvent): SSHProgressEventLog[] {
+  const index = current.findIndex((event) => event.step === progress.step)
+  if (index === -1) {
+    return [...current, { ...progress, logs: progress.message ? [progress.message] : [] }]
+  }
+  const next = [...current]
+  const existing = next[index]
+  const logs = progress.message && existing.logs[existing.logs.length - 1] !== progress.message
+    ? [...existing.logs, progress.message]
+    : existing.logs
+  next[index] = { ...existing, ...progress, logs }
+  return next
+}
+
 function largestAllowedRange(seconds: number): RangeOption {
   const allowed = orderedRanges.filter((option) => rangeSeconds[option] <= seconds)
   return allowed.length > 0 ? allowed[allowed.length - 1] : '1h'
@@ -82,8 +98,22 @@ export default function App() {
   const [installCommandWarning, setInstallCommandWarning] = useState<string>()
   const [installCommandError, setInstallCommandError] = useState<string>()
   const [installCommandCopied, setInstallCommandCopied] = useState(false)
+  const [installToken, setInstallToken] = useState<string>()
   const [installCommandLoading, setInstallCommandLoading] = useState(false)
   const [installCommandOpen, setInstallCommandOpen] = useState(false)
+  const [installMethod, setInstallMethod] = useState<'ssh' | 'manual'>('ssh')
+  const [sshHost, setSSHHost] = useState('')
+  const [sshPort, setSSHPort] = useState(22)
+  const [sshAuthType, setSSHAuthType] = useState<SSHAuthType>('password')
+  const [sshPassword, setSSHPassword] = useState('')
+  const [sshPrivateKey, setSSHPrivateKey] = useState('')
+  const [sshPassphrase, setSSHPassphrase] = useState('')
+  const [sshNodeID, setSSHNodeID] = useState('')
+  const [sshNodeName, setSSHNodeName] = useState('')
+  const [sshInstallLoading, setSSHInstallLoading] = useState(false)
+  const [sshInstallMessage, setSSHInstallMessage] = useState<string>()
+  const [sshInstallError, setSSHInstallError] = useState<string>()
+  const [sshInstallEvents, setSSHInstallEvents] = useState<SSHProgressEventLog[]>([])
   const [settings, setSettings] = useState<SettingsResponse>()
   const [settingsRetention, setSettingsRetention] = useState<RangeOption>('6h')
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -123,7 +153,9 @@ export default function App() {
   }, [loadNodes])
 
   useEffect(() => {
-    if (page === 'hosts' && selectedNodeID && window.location.pathname !== nodePath(selectedNodeID)) {
+    if (page !== 'hosts' || !selectedNodeID) return
+    if (window.location.pathname === '/history' || window.location.pathname === '/settings') return
+    if (window.location.pathname !== nodePath(selectedNodeID)) {
       window.history.replaceState({}, '', nodePath(selectedNodeID))
     }
   }, [page, selectedNodeID])
@@ -248,6 +280,7 @@ export default function App() {
     const requestID = installCommandRequestID.current + 1
     installCommandRequestID.current = requestID
     setInstallCommand(undefined)
+    setInstallToken(undefined)
     setInstallCommandWarning(undefined)
     setInstallCommandError(undefined)
     setInstallCommandCopied(false)
@@ -263,6 +296,7 @@ export default function App() {
       .then((response) => {
         if (requestID === installCommandRequestID.current) {
           setInstallCommand(response.command)
+          setInstallToken(response.install_token)
         }
       })
       .catch((err: unknown) => {
@@ -315,10 +349,23 @@ export default function App() {
   const closeInstallCommand = () => {
     installCommandRequestID.current += 1
     setInstallCommand(undefined)
+    setInstallToken(undefined)
     setInstallCommandWarning(undefined)
     setInstallCommandError(undefined)
     setInstallCommandCopied(false)
     setInstallCommandLoading(false)
+    setSSHHost('')
+    setSSHPort(22)
+    setSSHAuthType('password')
+    setSSHPassword('')
+    setSSHPrivateKey('')
+    setSSHPassphrase('')
+    setSSHNodeID('')
+    setSSHNodeName('')
+    setSSHInstallLoading(false)
+    setSSHInstallMessage(undefined)
+    setSSHInstallError(undefined)
+    setSSHInstallEvents([])
     setInstallCommandOpen(false)
     addHostButtonRef.current?.focus()
   }
@@ -355,9 +402,15 @@ export default function App() {
 
   const showInstallCommand = () => {
     setInstallCommandOpen(true)
-    if (installCommand) return
-    setInstallPlatform('linux')
-    requestInstallCommand('linux')
+    setInstallMethod('ssh')
+  }
+
+  const selectInstallMethod = (method: 'ssh' | 'manual') => {
+    setInstallMethod(method)
+    if (method === 'manual' && !installCommand) {
+      setInstallPlatform('linux')
+      requestInstallCommand('linux')
+    }
   }
 
   const selectInstallPlatform = (platform: InstallPlatform) => {
@@ -368,28 +421,67 @@ export default function App() {
 
   const toggleInstallDocker = (enabled: boolean) => {
     setInstallDockerEnabled(enabled)
-    if (installPlatform === 'linux') {
+    if (installMethod === 'manual' && installPlatform === 'linux') {
       requestInstallCommand('linux', enabled, installTerminalEnabled, installMode)
     }
   }
 
   const toggleInstallTerminal = (enabled: boolean) => {
     setInstallTerminalEnabled(enabled)
-    if (installPlatform === 'linux') {
+    if (installMethod === 'manual' && installPlatform === 'linux') {
       requestInstallCommand('linux', installDockerEnabled, enabled, installMode)
     }
   }
 
   const selectInstallMode = (mode: AgentMode) => {
     setInstallMode(mode)
-    if (installPlatform === 'linux') {
+    if (installMethod === 'manual' && installPlatform === 'linux') {
       requestInstallCommand('linux', installDockerEnabled, installTerminalEnabled, mode)
     }
   }
 
+  const subscribeSSHInstallProgress = (jobID: string) => {
+    const source = new EventSource(`/api/install/ssh/${encodeURIComponent(jobID)}/events`)
+    source.onmessage = (event) => {
+      const progress = JSON.parse(event.data) as SSHProgressEvent
+      setSSHInstallEvents((current) => mergeSSHProgressEvent(current, progress))
+      if (progress.done) source.close()
+    }
+    source.onerror = () => source.close()
+  }
+
+  const startSSHInstallJob = () => {
+    setSSHInstallLoading(true)
+    setSSHInstallMessage(undefined)
+    setSSHInstallError(undefined)
+    setSSHInstallEvents([])
+    startSSHInstall({
+      host: sshHost.trim(),
+      port: sshPort || 22,
+      username: 'root',
+      auth_type: sshAuthType,
+      ...(sshAuthType === 'password' ? { password: sshPassword } : { private_key: sshPrivateKey, ...(sshPassphrase ? { passphrase: sshPassphrase } : {}) }),
+      node_id: sshNodeID.trim(),
+      name: sshNodeName.trim(),
+      enable_terminal: installTerminalEnabled,
+      enable_docker: installDockerEnabled,
+      mode: installMode
+    })
+      .then((response) => {
+        setSSHInstallMessage(`SSH 安装任务已创建：${response.job_id}`)
+        subscribeSSHInstallProgress(response.job_id)
+      })
+      .catch((err: unknown) => setSSHInstallError(err instanceof Error ? err.message : 'SSH 安装任务创建失败'))
+      .finally(() => setSSHInstallLoading(false))
+  }
+
   const openPage = (nextPage: AppPage) => {
     setPage(nextPage)
-    const path = nextPage === 'history' ? '/history' : nextPage === 'settings' ? '/settings' : selectedNodeID ? nodePath(selectedNodeID) : '/'
+    const path = nextPage === 'history'
+      ? '/history'
+      : nextPage === 'settings'
+        ? '/settings'
+        : selectedNodeID ? nodePath(selectedNodeID) : '/'
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path)
     }
@@ -412,7 +504,7 @@ export default function App() {
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#f2f4f7] px-4 text-slate-950">
-        <div className="rounded-[28px] border border-white/80 bg-white px-6 py-5 text-sm font-black text-slate-500 shadow-glass">正在加载节点...</div>
+        <div className="rounded-[28px] border border-slate-200 bg-white px-6 py-5 text-sm font-black text-slate-500 shadow-glass">正在加载节点...</div>
       </main>
     )
   }
@@ -426,130 +518,332 @@ export default function App() {
   }
 
   const installCommandDialog = installCommandOpen ? (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-3 py-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-3 py-6">
       <section
         id="agent-install-command"
         ref={installCommandDialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Agent 安装命令"
+        aria-label="添加主机"
         aria-live="polite"
         tabIndex={-1}
         onKeyDown={handleInstallCommandKeyDown}
-        className="max-h-[calc(100vh-3rem)] w-full max-w-4xl overflow-x-hidden overflow-y-auto rounded-[28px] border border-white/80 bg-white text-left shadow-2xl outline-none"
+        className="max-h-[calc(100vh-3rem)] w-full max-w-4xl overflow-x-hidden overflow-y-auto rounded-[28px] border border-slate-200 bg-white text-left shadow-2xl outline-none"
       >
       <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-black text-slate-950">Agent 安装命令</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">选择目标系统后复制命令执行；install_token 会自动生成。</p>
-          <div className="mt-3 flex w-fit rounded-2xl border border-slate-200 bg-white p-1 shadow-inner shadow-slate-100" aria-label="选择 Agent 安装系统">
-            {(['linux', 'windows'] as const).map((platform) => (
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-black text-slate-950">添加主机</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">通过 SSH 自动安装，或复制手动命令到目标机器执行；SSH 凭据只本次使用，不会保存。</p>
+            </div>
+            <button
+              type="button"
+              aria-label="关闭添加主机"
+              onClick={closeInstallCommand}
+              className="min-h-10 shrink-0 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-500 transition hover:border-emerald-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-emerald-100"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="mt-3 flex w-fit rounded-2xl border border-slate-200 bg-white p-1 shadow-inner" aria-label="选择添加主机方式">
+            {([
+              ['ssh', 'SSH 自动安装'],
+              ['manual', '手动命令安装']
+            ] as const).map(([method, label]) => (
               <button
-                key={platform}
+                key={method}
                 type="button"
-                aria-pressed={installPlatform === platform}
-                onClick={() => selectInstallPlatform(platform)}
-                className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${installPlatform === platform ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
+                aria-pressed={installMethod === method}
+                onClick={() => selectInstallMethod(method)}
+                className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${installMethod === method ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
               >
-                {platform === 'linux' ? 'Linux' : 'Windows'}
+                {label}
               </button>
             ))}
           </div>
-          <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-inner shadow-slate-100">
-            {installPlatform === 'linux' ? (
-              <div className="space-y-3">
-                <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-600">
-                  <input
-                    type="checkbox"
-                    aria-label="启用 Docker 容器监控"
-                    checked={installDockerEnabled}
-                    onChange={(event) => toggleInstallDocker(event.target.checked)}
-                    className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-100"
-                  />
-                  <span>
-                    <span className="block font-black text-slate-950">启用 Docker 容器监控</span>
-                    <span className="block text-slate-500">启用后会授予 Agent 访问 Docker socket 的权限，docker 组权限接近 root。</span>
-                  </span>
+          {installMethod === 'ssh' ? (
+            <div className="mt-3 grid gap-3 rounded-[24px] border border-slate-200 bg-white p-3 lg:grid-cols-2">
+              <label className="text-xs font-black text-slate-950">
+                SSH Host
+                <input aria-label="SSH Host" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="192.168.1.10" className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+              </label>
+              <label className="text-xs font-black text-slate-950">
+                SSH 端口
+                <input aria-label="SSH 端口" type="number" value={sshPort} onChange={(event) => setSSHPort(Number(event.target.value) || 22)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+              </label>
+              <label className="text-xs font-black text-slate-950">
+                SSH 用户
+                <input aria-label="SSH 用户" value="root" readOnly className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 text-sm font-black text-slate-500" />
+              </label>
+              <label className="text-xs font-black text-slate-950">
+                认证方式
+                <select aria-label="SSH 认证方式" value={sshAuthType} onChange={(event) => setSSHAuthType(event.target.value as SSHAuthType)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100">
+                  <option value="password">密码</option>
+                  <option value="private_key">私钥</option>
+                </select>
+              </label>
+              {sshAuthType === 'password' ? (
+                <label className="text-xs font-black text-slate-950 lg:col-span-2">
+                  SSH 密码
+                  <input aria-label="SSH 密码" type="password" value={sshPassword} onChange={(event) => setSSHPassword(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-600">
-                  <input
-                    type="checkbox"
-                    aria-label="启用节点终端"
-                    checked={installTerminalEnabled}
-                    onChange={(event) => toggleInstallTerminal(event.target.checked)}
-                    className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-100"
-                  />
-                  <span>
-                    <span className="block font-black text-slate-950">启用节点终端</span>
-                    <span className="block text-slate-500">启用后可在节点详情打开浏览器终端，命令以 Agent 当前运行用户权限运行。</span>
-                  </span>
-                </label>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                  <p className="mb-2 text-xs font-black text-slate-950">Agent 运行模式</p>
-                  <div className="flex flex-wrap gap-2">
-                    {([
-                      ['normal', '普通模式', '以 mizupanel-agent 用户运行'],
-                      ['ops', '运维模式', '以 root 用户运行']
-                    ] as const).map(([mode, label, description]) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        aria-pressed={installMode === mode}
-                        onClick={() => selectInstallMode(mode)}
-                        className={`min-h-10 cursor-pointer rounded-2xl px-3 text-left text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${installMode === mode ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 hover:text-slate-950'}`}
-                      >
-                        <span className="block">{label}</span>
-                        <span className="block font-semibold opacity-75">{description}</span>
-                      </button>
-                    ))}
+              ) : (
+                <>
+                  <label className="text-xs font-black text-slate-950 lg:col-span-2">
+                    SSH 私钥
+                    <textarea aria-label="SSH 私钥" value={sshPrivateKey} onChange={(event) => setSSHPrivateKey(event.target.value)} rows={4} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+                  </label>
+                  <label className="text-xs font-black text-slate-950 lg:col-span-2">
+                    私钥 Passphrase（可选）
+                    <input aria-label="私钥 Passphrase" type="password" value={sshPassphrase} onChange={(event) => setSSHPassphrase(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+                  </label>
+                </>
+              )}
+              <label className="text-xs font-black text-slate-950">
+                节点 ID
+                <input aria-label="节点 ID" value={sshNodeID} onChange={(event) => setSSHNodeID(event.target.value)} placeholder="node-1" className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+              </label>
+              <label className="text-xs font-black text-slate-950">
+                节点名称
+                <input aria-label="节点名称" value={sshNodeName} onChange={(event) => setSSHNodeName(event.target.value)} placeholder="Oracle SG" className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
+              </label>
+              <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-inner">
+                <div className="space-y-3">
+                  <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-500">
+                    <input
+                      type="checkbox"
+                      aria-label="启用节点终端"
+                      checked={installTerminalEnabled}
+                      onChange={(event) => toggleInstallTerminal(event.target.checked)}
+                      className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-200 text-emerald-600 focus:ring-emerald-100"
+                    />
+                    <span>
+                      <span className="block font-black text-slate-950">启用节点终端</span>
+                      <span className="block text-slate-500">默认开启；启用后可在节点详情打开浏览器终端。</span>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-500">
+                    <input
+                      type="checkbox"
+                      aria-label="启用 Docker 容器监控"
+                      checked={installDockerEnabled}
+                      onChange={(event) => toggleInstallDocker(event.target.checked)}
+                      className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-200 text-emerald-600 focus:ring-emerald-100"
+                    />
+                    <span>
+                      <span className="block font-black text-slate-950">启用 Docker 容器监控</span>
+                      <span className="block text-slate-500">默认关闭；启用后会授予 Agent 访问 Docker socket 的权限。</span>
+                    </span>
+                  </label>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                    <p className="mb-2 text-xs font-black text-slate-950">Agent 运行模式</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ['normal', '普通模式', '以 mizupanel-agent 用户运行'],
+                        ['ops', '运维模式', '以 root 用户运行']
+                      ] as const).map(([mode, label, description]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={installMode === mode}
+                          onClick={() => selectInstallMode(mode)}
+                          className={`min-h-10 cursor-pointer rounded-2xl px-3 text-left text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${installMode === mode ? 'bg-slate-950 text-white' : 'bg-white text-slate-500 hover:text-slate-950'}`}
+                        >
+                          <span className="block">{label}</span>
+                          <span className="block font-semibold opacity-75">{description}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {installMode === 'ops' ? <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">运维模式会以 root 用户运行 Agent，可执行终端、文件编辑和重启等高权限操作。</p> : null}
                   </div>
-                  {installMode === 'ops' ? <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">运维模式会以 root 用户运行 Agent，可执行终端、文件编辑和重启等高权限操作。</p> : null}
                 </div>
               </div>
-            ) : (
-              <p className="text-xs font-bold leading-5 text-slate-500">Windows 暂不支持 Docker 监控和节点终端安装配置。</p>
-            )}
-          </div>
+              <div className="lg:col-span-2">
+                <button type="button" onClick={startSSHInstallJob} disabled={sshInstallLoading} className="min-h-11 cursor-pointer rounded-2xl bg-emerald-500 px-4 text-xs font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-50">
+                  {sshInstallLoading ? '正在创建 SSH 安装任务...' : '开始 SSH 安装'}
+                </button>
+                {sshInstallMessage ? <p className="mt-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">{sshInstallMessage}</p> : null}
+                {sshInstallError ? <p className="mt-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">{sshInstallError}</p> : null}
+              </div>
+              {sshInstallEvents.length > 0 ? (
+                <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-inner">
+                  <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">安装进度</p>
+                  <ol className="space-y-2">
+                    {sshInstallEvents.map((event) => (
+                      <li key={event.step} className="flex items-start gap-3 rounded-2xl bg-slate-50 px-3 py-2">
+                        <span className={`mt-0.5 h-3 w-3 rounded-full ${event.status === 'success' ? 'bg-emerald-500' : event.status === 'failed' ? 'bg-red-600' : event.status === 'running' ? 'bg-sky-500' : 'bg-slate-400'}`} />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-black text-slate-950">{event.label}</span>
+                          <span className="block text-xs font-black text-slate-500">{event.status === 'success' ? '成功' : event.status === 'failed' ? '失败' : event.status === 'running' ? '进行中' : '待执行'}</span>
+                          {event.logs.length > 0 ? (
+                            <span className="mt-1 block space-y-1">
+                              {event.logs.map((log, index) => <span key={`${event.step}-${index}`} className="block break-words text-xs font-semibold leading-5 text-slate-500">{log}</span>)}
+                            </span>
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                  {sshInstallEvents.some((event) => event.done) ? (
+                    <button type="button" onClick={closeInstallCommand} className="mt-3 min-h-10 cursor-pointer rounded-2xl bg-emerald-500 px-4 text-xs font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-emerald-100">
+                      {sshInstallEvents.some((event) => event.done && event.status === 'success') ? '完成并关闭' : '关闭'}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {installMethod === 'manual' ? (
+            <>
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-600">简化状态</p>
+                <ol className="mt-3 space-y-2">
+                  <li className="flex items-start gap-3 rounded-2xl bg-white px-3 py-2">
+                    <span className="mt-0.5 h-3 w-3 rounded-full bg-emerald-500" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-black text-slate-950">已生成一次性 install_token</span>
+                      <span className="block text-xs font-bold text-slate-500">{installToken || '等待生成'}</span>
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-3 rounded-2xl bg-white px-3 py-2">
+                    <span className="mt-0.5 h-3 w-3 rounded-full bg-sky-500" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-black text-slate-950">等待在目标机器执行命令</span>
+                      <span className="block text-xs font-bold text-slate-500">复制命令到目标 Linux 机器后执行即可。</span>
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-3 rounded-2xl bg-white px-3 py-2">
+                    <span className="mt-0.5 h-3 w-3 rounded-full bg-slate-400" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-black text-slate-950">等待 Agent 首次注册</span>
+                      <span className="block text-xs font-bold text-slate-500">安装完成后，Agent 会自动连接到 MizuPanel。</span>
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-3 rounded-2xl bg-white px-3 py-2">
+                    <span className="mt-0.5 h-3 w-3 rounded-full bg-slate-950" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-black text-slate-950">Agent 已连接，安装成功</span>
+                      <span className="block text-xs font-bold text-slate-500">上线后就可以在主机列表看到节点。</span>
+                    </span>
+                  </li>
+                </ol>
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">超时未连接时，请检查 server_url、防火墙或 Agent 日志。</p>
+              </div>
+
+              <div className="mt-3 flex w-fit rounded-2xl border border-slate-200 bg-white p-1 shadow-inner" aria-label="选择 Agent 安装系统">
+                {(['linux', 'windows'] as const).map((platform) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    aria-pressed={installPlatform === platform}
+                    onClick={() => selectInstallPlatform(platform)}
+                    className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${installPlatform === platform ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
+                  >
+                    {platform === 'linux' ? 'Linux' : 'Windows'}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-inner">
+                {installPlatform === 'linux' ? (
+                  <div className="space-y-3">
+                    <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-500">
+                      <input
+                        type="checkbox"
+                        aria-label="启用 Docker 容器监控"
+                        checked={installDockerEnabled}
+                        onChange={(event) => toggleInstallDocker(event.target.checked)}
+                        className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-200 text-emerald-600 focus:ring-emerald-100"
+                      />
+                      <span>
+                        <span className="block font-black text-slate-950">启用 Docker 容器监控</span>
+                        <span className="block text-slate-500">启用后会授予 Agent 访问 Docker socket 的权限，docker 组权限接近 root。</span>
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-3 text-xs font-bold leading-5 text-slate-500">
+                      <input
+                        type="checkbox"
+                        aria-label="启用节点终端"
+                        checked={installTerminalEnabled}
+                        onChange={(event) => toggleInstallTerminal(event.target.checked)}
+                        className="mt-1 h-4 w-4 cursor-pointer rounded border-slate-200 text-emerald-600 focus:ring-emerald-100"
+                      />
+                      <span>
+                        <span className="block font-black text-slate-950">启用节点终端</span>
+                        <span className="block text-slate-500">启用后可在节点详情打开浏览器终端，命令以 Agent 当前运行用户权限运行。</span>
+                      </span>
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                      <p className="mb-2 text-xs font-black text-slate-950">Agent 运行模式</p>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          ['normal', '普通模式', '以 mizupanel-agent 用户运行'],
+                          ['ops', '运维模式', '以 root 用户运行']
+                        ] as const).map(([mode, label, description]) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            aria-pressed={installMode === mode}
+                            onClick={() => selectInstallMode(mode)}
+                            className={`min-h-10 cursor-pointer rounded-2xl px-3 text-left text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${installMode === mode ? 'bg-slate-950 text-white' : 'bg-white text-slate-500 hover:text-slate-950'}`}
+                          >
+                            <span className="block">{label}</span>
+                            <span className="block font-semibold opacity-75">{description}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {installMode === 'ops' ? <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold leading-5 text-red-700">运维模式会以 root 用户运行 Agent，可执行终端、文件编辑和重启等高权限操作。</p> : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs font-bold leading-5 text-slate-500">Windows 暂不支持 Docker 监控和节点终端安装配置。</p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  aria-label={installCommandCopied ? '已复制' : '复制安装命令'}
+                  onClick={copyInstallCommand}
+                  disabled={!installCommand}
+                  className="min-h-10 cursor-pointer rounded-2xl bg-emerald-500 px-4 text-xs font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+                >
+                  {installCommandCopied ? '已复制' : '复制'}
+                </button>
+                <button
+                  type="button"
+                  aria-label="关闭安装命令"
+                  onClick={closeInstallCommand}
+                  className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-500 transition hover:border-emerald-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-emerald-100"
+                >
+                  关闭
+                </button>
+              </div>
+
+              {installCommandLoading ? (
+                <div className="bg-slate-950 px-4 py-4 text-xs font-bold leading-6 text-slate-100">正在生成安装命令...</div>
+              ) : installCommand ? (
+                <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code ref={installCommandCodeRef}>{installCommand}</code></pre>
+              ) : (
+                <div className="border-t border-red-200 bg-red-50 px-4 py-4 text-xs font-bold leading-5 text-red-700">{installCommandError || '安装命令暂不可用，请重试。'}</div>
+              )}
+              {installCommandWarning ? (
+                <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
+                  {installCommandWarning}
+                </div>
+              ) : null}
+              {installPlatform === 'windows' ? (
+                <div className="border-t border-sky-200 bg-sky-50 px-4 py-3 text-xs font-bold leading-5 text-sky-700">
+                  Windows 命令需要在管理员 PowerShell 中执行。
+                </div>
+              ) : null}
+              <div className="border-t border-slate-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
+                token 来源：点击添加主机时，Server 会自动生成一次性 install_token。
+              </div>
+            </>
+          ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-label={installCommandCopied ? '已复制' : '复制安装命令'}
-            onClick={copyInstallCommand}
-            disabled={!installCommand}
-            className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-xs font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-          >
-            {installCommandCopied ? '已复制' : '复制'}
-          </button>
-          <button
-            type="button"
-            aria-label="关闭安装命令"
-            onClick={closeInstallCommand}
-            className="min-h-10 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-blue-100"
-          >
-            关闭
-          </button>
-        </div>
-      </div>
-      {installCommandLoading ? (
-        <div className="bg-slate-950 px-4 py-4 text-xs font-bold leading-6 text-slate-300">正在生成安装命令...</div>
-      ) : installCommand ? (
-        <pre className="overflow-x-auto bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100"><code ref={installCommandCodeRef}>{installCommand}</code></pre>
-      ) : (
-        <div className="border-t border-red-200 bg-red-50 px-4 py-4 text-xs font-bold leading-5 text-red-700">{installCommandError || '安装命令暂不可用，请重试。'}</div>
-      )}
-      {installCommandWarning ? (
-        <div className="border-t border-orange-200 bg-orange-50 px-4 py-3 text-xs font-bold leading-5 text-orange-800">
-          {installCommandWarning}
-        </div>
-      ) : null}
-      {installPlatform === 'windows' ? (
-        <div className="border-t border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-5 text-blue-800">
-          Windows 命令需要在管理员 PowerShell 中执行。
-        </div>
-      ) : null}
-      <div className="border-t border-slate-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-800">
-        token 来源：点击添加主机时，Server 会自动生成一次性 install_token。
       </div>
       </section>
     </div>
@@ -603,93 +897,92 @@ export default function App() {
           <SystemSettingsPage settings={settings} selectedRetention={settingsRetention} saving={settingsSaving} message={settingsMessage} error={settingsError} onSelectRetention={setSettingsRetention} onSave={saveSettings} />
         ) : (
           <>
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="节点总数" value={String(nodes.length)} detail="已注册 Agent" />
-          <MetricCard label="在线节点" value={String(onlineNodes)} tone="green" detail={`${nodes.length - onlineNodes} 个离线`} />
-          <MetricCard label="平均 CPU" value={`${averages.cpu.toFixed(1)}%`} tone="amber" detail="最新采样" />
-          <MetricCard label="平均内存" value={`${averages.memory.toFixed(1)}%`} tone="slate" detail="最新采样" />
-        </section>
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="节点总数" value={String(nodes.length)} detail="已注册 Agent" />
+              <MetricCard label="在线节点" value={String(onlineNodes)} tone="green" detail={`${nodes.length - onlineNodes} 个离线`} />
+              <MetricCard label="平均 CPU" value={`${averages.cpu.toFixed(1)}%`} tone="amber" detail="最新采样" />
+              <MetricCard label="平均内存" value={`${averages.memory.toFixed(1)}%`} tone="slate" detail="最新采样" />
+            </section>
 
-        {nodes.length === 0 ? (
-          <section className="rounded-[30px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center shadow-glass">
-            <p className="font-display text-3xl font-black text-slate-950">暂无节点接入</p>
-            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-500">在目标服务器执行 Agent 安装命令后，节点会自动出现在这里。</p>
-            <button
-              ref={addHostButtonRef}
-              type="button"
-              onClick={showInstallCommand}
-              aria-expanded={installCommandOpen}
-              aria-controls="agent-install-command"
-              className="mt-6 min-h-11 cursor-pointer rounded-2xl bg-slate-950 px-5 text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-blue-100"
-            >
-              安装目标主机 Agent 进行采集
-            </button>
-          </section>
-        ) : (
-          <section className="rounded-[32px] border border-white/80 bg-white/85 p-3 shadow-glass backdrop-blur-xl">
-            <div className="mb-3 flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="主机筛选与操作">
-                <button
-                  type="button"
-                  aria-pressed={hostFilter === 'all'}
-                  onClick={() => setHostFilter('all')}
-                  className={hostFilterButtonClass('all', 'bg-slate-950 text-white shadow-lg shadow-slate-300/70 focus:ring-blue-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
-                >
-                  全部 {nodes.length}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={hostFilter === 'online'}
-                  onClick={() => setHostFilter('online')}
-                  className={hostFilterButtonClass('online', 'border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-100/70 focus:ring-emerald-100', 'border border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 focus:ring-emerald-100')}
-                >
-                  在线 {onlineNodes}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={hostFilter === 'offline'}
-                  onClick={() => setHostFilter('offline')}
-                  className={hostFilterButtonClass('offline', 'border border-slate-300 bg-slate-200 text-slate-800 shadow-lg shadow-slate-200/70 focus:ring-slate-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
-                >
-                  离线 {nodes.length - onlineNodes}
-                </button>
+            {nodes.length === 0 ? (
+              <section className="rounded-[30px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center shadow-glass">
+                <p className="font-display text-3xl font-black text-slate-950">暂无节点接入</p>
+                <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-500">在目标服务器执行 Agent 安装命令后，节点会自动出现在这里。</p>
                 <button
                   ref={addHostButtonRef}
                   type="button"
                   onClick={showInstallCommand}
                   aria-expanded={installCommandOpen}
                   aria-controls="agent-install-command"
-                  className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200"
+                  className="mt-6 min-h-11 cursor-pointer rounded-2xl bg-slate-950 px-5 text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-blue-100"
                 >
-                  添加主机
+                  安装目标主机 Agent 进行采集
                 </button>
-              </div>
-              <div className="relative w-full lg:max-w-sm">
-                <label htmlFor="host-search" className="sr-only">搜索主机</label>
-                <input
-                  id="host-search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="搜索主机..."
-                  className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </div>
-            </div>
+              </section>
+            ) : (
+              <section className="rounded-[32px] border border-white/80 bg-white/85 p-3 shadow-glass backdrop-blur-xl">
+                <div className="mb-3 flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="主机筛选与操作">
+                    <button
+                      type="button"
+                      aria-pressed={hostFilter === 'all'}
+                      onClick={() => setHostFilter('all')}
+                      className={hostFilterButtonClass('all', 'bg-slate-950 text-white shadow-lg shadow-slate-300/70 focus:ring-blue-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
+                    >
+                      全部 {nodes.length}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={hostFilter === 'online'}
+                      onClick={() => setHostFilter('online')}
+                      className={hostFilterButtonClass('online', 'border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-100/70 focus:ring-emerald-100', 'border border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 focus:ring-emerald-100')}
+                    >
+                      在线 {onlineNodes}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={hostFilter === 'offline'}
+                      onClick={() => setHostFilter('offline')}
+                      className={hostFilterButtonClass('offline', 'border border-slate-300 bg-slate-200 text-slate-800 shadow-lg shadow-slate-200/70 focus:ring-slate-200', 'border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-950 focus:ring-slate-200')}
+                    >
+                      离线 {nodes.length - onlineNodes}
+                    </button>
+                    <button
+                      ref={addHostButtonRef}
+                      type="button"
+                      onClick={showInstallCommand}
+                      aria-expanded={installCommandOpen}
+                      aria-controls="agent-install-command"
+                      className="min-h-10 cursor-pointer rounded-2xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200"
+                    >
+                      添加主机
+                    </button>
+                  </div>
+                  <div className="relative w-full lg:max-w-sm">
+                    <label htmlFor="host-search" className="sr-only">搜索主机</label>
+                    <input
+                      id="host-search"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="搜索主机..."
+                      className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
 
-
-            <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
-              {filteredNodes.length > 0 ? (
-                <NodeList nodes={filteredNodes} selectedNodeID={selectedNodeID} onSelectNode={(node) => setSelectedNodeID(node.id)} />
-              ) : (
-                <section className="rounded-[26px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
-                  <p className="font-display text-2xl font-black text-slate-950">未找到匹配主机</p>
-                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">请调整在线状态筛选或搜索关键词。</p>
-                </section>
-              )}
-              <NodeDetail node={visibleSelectedNode} metrics={metrics} processSnapshot={processSnapshot} dockerSnapshot={dockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onDeleteNode={removeNodeRecord} />
-            </div>
-          </section>
-        )}
+                <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
+                  {filteredNodes.length > 0 ? (
+                    <NodeList nodes={filteredNodes} selectedNodeID={selectedNodeID} onSelectNode={(node) => setSelectedNodeID(node.id)} />
+                  ) : (
+                    <section className="rounded-[26px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+                      <p className="font-display text-2xl font-black text-slate-950">未找到匹配主机</p>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">请调整在线状态筛选或搜索关键词。</p>
+                    </section>
+                  )}
+                  <NodeDetail node={visibleSelectedNode} metrics={metrics} processSnapshot={processSnapshot} dockerSnapshot={dockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onDeleteNode={removeNodeRecord} onSSHUninstall={startSSHUninstall} />
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

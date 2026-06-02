@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -10,14 +11,71 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/mizupanel/mizupanel/internal/protocol"
 	serverdb "github.com/mizupanel/mizupanel/internal/server/db"
+	"github.com/mizupanel/mizupanel/internal/server/sshops"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
+
+type fakeSSHRunner struct {
+	install               sshops.InstallRequest
+	uninstall             sshops.UninstallRequest
+	resolvedInstallNodeID string
+}
+
+func (f *fakeSSHRunner) Install(ctx context.Context, request sshops.InstallRequest, emit sshops.EmitFunc) (string, error) {
+	f.install = request
+	emit(sshops.ProgressEvent{Step: "connect_ssh", Label: "连接 SSH", Status: sshops.ProgressSuccess, Message: "connected with secret"})
+	if f.resolvedInstallNodeID != "" {
+		return f.resolvedInstallNodeID, nil
+	}
+	return request.NodeID, nil
+}
+
+func (f *fakeSSHRunner) Uninstall(ctx context.Context, request sshops.UninstallRequest, emit sshops.EmitFunc) error {
+	f.uninstall = request
+	emit(sshops.ProgressEvent{Step: "run_uninstall", Label: "执行卸载", Status: sshops.ProgressSuccess, Message: "uninstalled"})
+	return nil
+}
+
+type blockingSSHInstallRunner struct {
+	started chan context.Context
+	release chan struct{}
+}
+
+type hangingSSHInstallRunner struct {
+	started chan context.Context
+}
+
+func (f *blockingSSHInstallRunner) Install(ctx context.Context, request sshops.InstallRequest, emit sshops.EmitFunc) (string, error) {
+	f.started <- ctx
+	select {
+	case <-f.release:
+		emit(sshops.ProgressEvent{Step: "run_install", Label: "执行安装", Status: sshops.ProgressSuccess, Message: "installed"})
+		return request.NodeID, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (f *blockingSSHInstallRunner) Uninstall(ctx context.Context, request sshops.UninstallRequest, emit sshops.EmitFunc) error {
+	return nil
+}
+
+func (f *hangingSSHInstallRunner) Install(ctx context.Context, request sshops.InstallRequest, emit sshops.EmitFunc) (string, error) {
+	f.started <- ctx
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func (f *hangingSSHInstallRunner) Uninstall(ctx context.Context, request sshops.UninstallRequest, emit sshops.EmitFunc) error {
+	return nil
+}
 
 func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 	database, err := sql.Open("sqlite3", ":memory:")
@@ -43,23 +101,374 @@ func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, "curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh'") {
+	var response struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	command := response.Command
+	if !strings.Contains(command, "curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh'") {
 		t.Fatalf("install command missing script URL: %s", body)
 	}
-	if !strings.Contains(body, "--binary-base-url 'http://panel.example:8080/downloads'") {
+	if !strings.Contains(command, "--binary-base-url 'http://panel.example:8080/downloads'") {
 		t.Fatalf("install command missing binary base URL: %s", body)
 	}
-	if strings.Contains(body, "<install_token>") || strings.Contains(body, "agent_token") {
+	if strings.Contains(command, "<install_token>") || strings.Contains(command, "agent_token") {
 		t.Fatalf("install command exposed placeholder or global token language: %s", body)
 	}
-	if !strings.Contains(body, "--mode 'normal'") {
+	if !strings.Contains(command, "--mode 'normal'") {
 		t.Fatalf("default install command missing normal mode: %s", body)
 	}
-	if strings.Contains(body, "--enable-docker") {
+	if strings.Contains(command, "sudo ./install-agent.sh") {
+		t.Fatalf("linux install command should be root-only and not use sudo: %s", body)
+	}
+	if !strings.Contains(command, "&& ./install-agent.sh") {
+		t.Fatalf("linux install command should execute installer directly as root: %s", body)
+	}
+	if strings.Contains(command, "--enable-docker") {
 		t.Fatalf("default install command contains Docker opt-in flag: %s", body)
 	}
-	if strings.Contains(body, "--enable-terminal") {
+	if strings.Contains(command, "--enable-terminal") {
 		t.Fatalf("default install command contains terminal opt-in flag: %s", body)
+	}
+}
+
+func TestNewHandlerRejectsSSHInstallForNonRootUser(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:   store.NewNodeStore(database),
+		Metrics: store.NewMetricStore(database),
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"ubuntu","auth_type":"password","password":"secret"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "root") {
+		t.Fatalf("response should explain root-only constraint: %s", recorder.Body.String())
+	}
+}
+
+func TestNewHandlerSSHInstallJobUsesIndependentTimeout(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	jobs := sshops.NewManager()
+	runner := &hangingSSHInstallRunner{started: make(chan context.Context, 1)}
+	handler := NewHandler(Dependencies{
+		Nodes:                  store.NewNodeStore(database),
+		Metrics:                store.NewMetricStore(database),
+		SSHJobs:                jobs,
+		SSHRunner:              runner,
+		SSHJobTimeout:          20 * time.Millisecond,
+		SSHInstallWaitTimeout:  100 * time.Millisecond,
+		SSHInstallPollInterval: time.Millisecond,
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	<-runner.started
+	job := jobs.Wait(response.JobID)
+	if job == nil || job.Status != sshops.ProgressFailed {
+		t.Fatalf("job = %#v, want timeout failure", job)
+	}
+}
+
+func TestNewHandlerSSHInstallJobOutlivesRequestContext(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	nodes := store.NewNodeStore(database)
+	jobs := sshops.NewManager()
+	runner := &blockingSSHInstallRunner{started: make(chan context.Context, 1), release: make(chan struct{})}
+	handler := NewHandler(Dependencies{
+		Nodes:                  nodes,
+		Metrics:                store.NewMetricStore(database),
+		SSHJobs:                jobs,
+		SSHRunner:              runner,
+		SSHInstallWaitTimeout:  100 * time.Millisecond,
+		SSHInstallPollInterval: time.Millisecond,
+	})
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body).WithContext(requestCtx)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	jobCtx := <-runner.started
+	cancelRequest()
+	select {
+	case <-jobCtx.Done():
+		t.Fatalf("ssh job context was canceled when request context was canceled")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := nodes.Upsert(context.Background(), store.Node{ID: "node-1", Name: "Node 1", Status: "online"}); err != nil {
+		t.Fatalf("upsert connected node: %v", err)
+	}
+	close(runner.release)
+	job := jobs.Wait(response.JobID)
+	if job == nil || job.Status != sshops.ProgressSuccess {
+		t.Fatalf("job = %#v, want success", job)
+	}
+}
+
+func TestNewHandlerSSHInstallJobFailsWhenAgentDoesNotReconnect(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	jobs := sshops.NewManager()
+	runner := &fakeSSHRunner{}
+	handler := NewHandler(Dependencies{
+		Nodes:                  store.NewNodeStore(database),
+		Metrics:                store.NewMetricStore(database),
+		SSHJobs:                jobs,
+		SSHRunner:              runner,
+		SSHInstallWaitTimeout:  20 * time.Millisecond,
+		SSHInstallPollInterval: time.Millisecond,
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	job := jobs.Wait(response.JobID)
+	if job == nil || job.Status != sshops.ProgressFailed {
+		t.Fatalf("job = %#v, want failed when Agent does not reconnect", job)
+	}
+	events := jobs.Events(response.JobID)
+	last := events[len(events)-1]
+	if !strings.Contains(last.Message, "未连回") {
+		t.Fatalf("last event = %#v, want reconnect timeout message", last)
+	}
+}
+
+func TestNewHandlerSSHInstallUsesResolvedNodeIDWhenRequestNodeIDIsEmpty(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	nodes := store.NewNodeStore(database)
+	jobs := sshops.NewManager()
+	runner := &fakeSSHRunner{resolvedInstallNodeID: "remote-host"}
+	handler := NewHandler(Dependencies{
+		Nodes:                  nodes,
+		Metrics:                store.NewMetricStore(database),
+		SSHJobs:                jobs,
+		SSHRunner:              runner,
+		SSHInstallWaitTimeout:  100 * time.Millisecond,
+		SSHInstallPollInterval: time.Millisecond,
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","enable_terminal":true}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if err := nodes.Upsert(context.Background(), store.Node{ID: "remote-host", Name: "remote-host", Status: "online"}); err != nil {
+		t.Fatalf("upsert resolved node: %v", err)
+	}
+	job := jobs.Wait(response.JobID)
+	if job == nil || job.Status != sshops.ProgressSuccess {
+		t.Fatalf("job = %#v, want success after resolved node reconnects", job)
+	}
+}
+
+func TestNewHandlerStartsSSHInstallJob(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	nodes := store.NewNodeStore(database)
+	jobs := sshops.NewManager()
+	runner := &fakeSSHRunner{}
+	handler := NewHandler(Dependencies{
+		Nodes:                  nodes,
+		Metrics:                store.NewMetricStore(database),
+		SSHJobs:                jobs,
+		SSHRunner:              runner,
+		SSHInstallWaitTimeout:  100 * time.Millisecond,
+		SSHInstallPollInterval: time.Millisecond,
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1","enable_terminal":true}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.JobID == "" {
+		t.Fatalf("missing job_id")
+	}
+	if err := nodes.Upsert(context.Background(), store.Node{ID: "node-1", Name: "Node 1", Status: "online"}); err != nil {
+		t.Fatalf("upsert connected node: %v", err)
+	}
+	job := jobs.Wait(response.JobID)
+	if job == nil || job.Status != sshops.ProgressSuccess {
+		t.Fatalf("job = %#v, want success", job)
+	}
+	if runner.install.Host != "192.168.1.10" || runner.install.Username != "root" || !runner.install.EnableTerminal {
+		t.Fatalf("runner install request = %#v", runner.install)
+	}
+	events := jobs.Events(response.JobID)
+	for _, event := range events {
+		if strings.Contains(event.Message, "secret") || strings.Contains(event.Message, runner.install.Token) {
+			t.Fatalf("progress event leaked secret: %#v", event)
+		}
+	}
+}
+
+func TestNewHandlerStartsSSHUninstallJobAndRemovesNodeRecord(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	nodes := store.NewNodeStore(database)
+	if err := nodes.Upsert(t.Context(), store.Node{ID: "node-1", Name: "Node 1", Status: "online"}); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	jobs := sshops.NewManager()
+	runner := &fakeSSHRunner{}
+	handler := NewHandler(Dependencies{
+		Nodes:     nodes,
+		Metrics:   store.NewMetricStore(database),
+		SSHJobs:   jobs,
+		SSHRunner: runner,
+	})
+
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","remove_node_record":true}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/nodes/node-1/ssh-uninstall", body)
+	request.Host = "panel.example"
+	request.Header.Set("Origin", "http://panel.example")
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	jobs.Wait(response.JobID)
+	if runner.uninstall.Host != "192.168.1.10" || !runner.uninstall.RemoveNodeRecord {
+		t.Fatalf("runner uninstall request = %#v", runner.uninstall)
+	}
+	if _, err := nodes.Get(t.Context(), "node-1"); err == nil {
+		t.Fatalf("node still exists after uninstall with remove_node_record")
 	}
 }
 

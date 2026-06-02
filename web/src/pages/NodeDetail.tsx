@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 
-import type { DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse } from '../types'
+import type { DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
 import { formatBytes, formatPercent, formatSpeed } from '../lib/format'
 import { MetricCard } from '../components/MetricCard'
 import { MetricsChart } from '../components/MetricsChart'
@@ -20,13 +20,29 @@ type NodeDetailProps = {
   onDeletePath?: (nodeID: string, path: string) => Promise<FileDeleteResponse>
   onRebootNode?: (nodeID: string) => Promise<RebootResponse>
   onDeleteNode?: (nodeID: string) => Promise<void>
+  onSSHUninstall?: (nodeID: string, request: SSHUninstallRequest) => Promise<SSHJobResponse>
 }
 
 type DetailSection = 'overview' | 'processes' | 'containers' | 'files'
 type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name'
 type DockerFilter = 'all' | 'running' | 'stopped' | 'abnormal'
+type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
 
-export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onDeleteNode }: NodeDetailProps) {
+function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProgressEvent): SSHProgressEventLog[] {
+  const index = current.findIndex((event) => event.step === progress.step)
+  if (index === -1) {
+    return [...current, { ...progress, logs: progress.message ? [progress.message] : [] }]
+  }
+  const next = [...current]
+  const existing = next[index]
+  const logs = progress.message && existing.logs[existing.logs.length - 1] !== progress.message
+    ? [...existing.logs, progress.message]
+    : existing.logs
+  next[index] = { ...existing, ...progress, logs }
+  return next
+}
+
+export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onDeleteNode, onSSHUninstall }: NodeDetailProps) {
   const [activeSection, setActiveSection] = useState<DetailSection>('overview')
   const [processSort, setProcessSort] = useState<ProcessSort>('cpu')
   const [processSearch, setProcessSearch] = useState('')
@@ -43,6 +59,18 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
   const [fileLoading, setFileLoading] = useState(false)
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
   const [removeLoading, setRemoveLoading] = useState(false)
+  const [sshUninstallOpen, setSSHUninstallOpen] = useState(false)
+  const [sshAuthType, setSSHAuthType] = useState<SSHAuthType>('password')
+  const [sshHost, setSSHHost] = useState('')
+  const [sshPort, setSSHPort] = useState(22)
+  const [sshPassword, setSSHPassword] = useState('')
+  const [sshPrivateKey, setSSHPrivateKey] = useState('')
+  const [sshPassphrase, setSSHPassphrase] = useState('')
+  const [sshRemoveRecord, setSSHRemoveRecord] = useState(true)
+  const [sshUninstallLoading, setSSHUninstallLoading] = useState(false)
+  const [sshUninstallMessage, setSSHUninstallMessage] = useState<string>()
+  const [sshUninstallError, setSSHUninstallError] = useState<string>()
+  const [sshUninstallEvents, setSSHUninstallEvents] = useState<SSHProgressEventLog[]>([])
 
   const filteredProcesses = useMemo(() => {
     const keyword = processSearch.trim().toLowerCase()
@@ -282,12 +310,57 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       .finally(() => setRemoveLoading(false))
   }
 
+  const openSSHUninstallDialog = () => {
+    setSSHHost(node.ip || '')
+    setSSHPort(22)
+    setSSHAuthType('password')
+    setSSHPassword('')
+    setSSHPrivateKey('')
+    setSSHPassphrase('')
+    setSSHRemoveRecord(true)
+    setSSHUninstallMessage(undefined)
+    setSSHUninstallError(undefined)
+    setSSHUninstallEvents([])
+    setSSHUninstallOpen(true)
+  }
+
+  const subscribeSSHUninstallProgress = (jobID: string) => {
+    const source = new EventSource(`/api/nodes/${encodeURIComponent(node.id)}/ssh-uninstall/${encodeURIComponent(jobID)}/events`)
+    source.onmessage = (event) => {
+      const progress = JSON.parse(event.data) as SSHProgressEvent
+      setSSHUninstallEvents((current) => mergeSSHProgressEvent(current, progress))
+      if (progress.done) source.close()
+    }
+    source.onerror = () => source.close()
+  }
+
+  const startSSHUninstall = () => {
+    if (!onSSHUninstall || sshUninstallLoading) return
+    setSSHUninstallLoading(true)
+    setSSHUninstallMessage(undefined)
+    setSSHUninstallError(undefined)
+    onSSHUninstall(node.id, {
+      host: sshHost.trim(),
+      port: sshPort || 22,
+      username: 'root',
+      auth_type: sshAuthType,
+      ...(sshAuthType === 'password' ? { password: sshPassword } : { private_key: sshPrivateKey, ...(sshPassphrase ? { passphrase: sshPassphrase } : {}) }),
+      remove_node_record: sshRemoveRecord
+    })
+      .then((response) => {
+        setSSHUninstallMessage(`SSH 卸载任务已创建：${response.job_id}`)
+        subscribeSSHUninstallProgress(response.job_id)
+      })
+      .catch((err: unknown) => setSSHUninstallError(err instanceof Error ? err.message : 'SSH 卸载任务创建失败'))
+      .finally(() => setSSHUninstallLoading(false))
+  }
+
   return (
     <section className="min-w-0 space-y-3">
       <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-blue-500">节点详情</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-600">节点详情</p>
             <div className="mt-1 flex min-w-0 items-center gap-2">
               <h2 className="truncate font-display text-3xl font-black tracking-tight text-slate-950">{displayName}</h2>
               <button
@@ -296,7 +369,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 title={node.terminal_enabled ? '打开终端' : '该节点未启用终端'}
                 disabled={!node.terminal_enabled}
                 onClick={() => openTerminalPage(node.id)}
-                className="group inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-slate-950 text-emerald-300 shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 hover:border-slate-900 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:hover:translate-y-0"
+                className="group inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-500 text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:shadow-none disabled:hover:translate-y-0"
               >
                 <TerminalIcon />
               </button>
@@ -306,7 +379,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 title="文件管理"
                 disabled={!online}
                 onClick={() => loadFiles(fileList?.path || '/')}
-                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white text-blue-600 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:hover:translate-y-0"
+                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white text-emerald-600 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-50 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:hover:translate-y-0"
               >
                 <FileIcon />
               </button>
@@ -316,7 +389,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 title="重启节点"
                 disabled={!online}
                 onClick={reboot}
-                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-red-100 bg-red-50 text-red-600 shadow-sm transition hover:-translate-y-0.5 hover:bg-red-100 focus:outline-none focus:ring-4 focus:ring-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:hover:translate-y-0"
+                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-red-200 bg-red-50 text-red-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-red-100 focus:outline-none focus:ring-4 focus:ring-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:hover:translate-y-0"
               >
                 <PowerIcon />
               </button>
@@ -325,15 +398,24 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 aria-label="移除节点记录"
                 title="从面板移除节点记录"
                 onClick={() => setRemoveDialogOpen(true)}
-                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-red-200 bg-white text-red-600 shadow-sm transition hover:-translate-y-0.5 hover:border-red-300 hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100"
+                className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-red-200 bg-white text-red-700 shadow-sm transition hover:-translate-y-0.5 hover:border-red-300 hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100"
               >
                 <TrashIcon />
+              </button>
+              <button
+                type="button"
+                aria-label="SSH 卸载 Agent"
+                title="通过 SSH 卸载远端 Agent"
+                onClick={openSSHUninstallDialog}
+                className="min-h-11 shrink-0 cursor-pointer rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-red-100 focus:outline-none focus:ring-4 focus:ring-red-100"
+              >
+                SSH 卸载 Agent
               </button>
             </div>
             <p className="mt-2 text-sm font-semibold text-slate-500">
               {node.hostname || '未知主机'} · {node.ip || '未知 IP'} · {node.os}/{node.arch} · 内核 {node.kernel || '未知'}
             </p>
-            <p className="mt-1 text-xs font-black text-slate-400">{agentModeLabel} · {agentUserLabel}</p>
+            <p className="mt-1 text-xs font-black text-slate-500">{agentModeLabel} · {agentUserLabel}</p>
           </div>
           <div className="flex w-fit rounded-2xl border border-slate-200 bg-slate-50 p-1">
             {(['1h', '6h'] as RangeOption[]).map((option) => (
@@ -341,8 +423,8 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 key={option}
                 type="button"
                 onClick={() => onRangeChange(option)}
-                className={`min-h-10 cursor-pointer rounded-xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${
-                  range === option ? 'bg-slate-950 text-white shadow-md shadow-slate-200' : 'text-slate-500 hover:bg-white hover:text-slate-950'
+                className={`min-h-10 cursor-pointer rounded-xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${
+                  range === option ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-950'
                 }`}
               >
                 {option === '1h' ? '1 小时' : '6 小时'}
@@ -352,7 +434,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         </div>
       </div>
 
-      {operationMessage && activeSection !== 'files' ? <p className="rounded-[28px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-700">{operationMessage}</p> : null}
+      {operationMessage && activeSection !== 'files' ? <p className="rounded-[28px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800">{operationMessage}</p> : null}
 
       <div className="flex flex-wrap gap-2 rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm" role="group" aria-label="节点详情视图">
         {([
@@ -366,7 +448,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
             type="button"
             aria-pressed={activeSection === section}
             onClick={() => section === 'files' ? loadFiles(fileList?.path || '/') : setActiveSection(section)}
-            className={`min-h-11 cursor-pointer rounded-2xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${activeSection === section ? 'bg-slate-950 text-white shadow-md shadow-slate-200' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
+            className={`min-h-11 cursor-pointer rounded-2xl px-4 text-sm font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${activeSection === section ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
           >
             {label}
           </button>
@@ -378,7 +460,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">概览</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">概览</p>
                 <h3 className="mt-1 text-lg font-black text-slate-950">硬件概览</h3>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">最新采样</span>
@@ -392,24 +474,24 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           </section>
 
           <div className="grid gap-3 xl:grid-cols-2">
-            <MetricsChart metrics={metrics} dataKey="cpu_usage" title="负载趋势" color="#2563eb" />
-            <MetricsChart metrics={metrics} dataKey="memory_usage" title="内存曲线" color="#059669" />
-            <MetricsChart metrics={metrics} dataKey="disk_usage" title="磁盘曲线" color="#d97706" />
-            <MetricsChart metrics={metrics} dataKey="rx_speed" title="网络速率" color="#0284c7" unitLabel="bytes/s" domain={[0, 'auto']} />
+            <MetricsChart metrics={metrics} dataKey="cpu_usage" title="负载趋势" color="rgb(var(--chart-cpu))" />
+            <MetricsChart metrics={metrics} dataKey="memory_usage" title="内存曲线" color="rgb(var(--chart-memory))" />
+            <MetricsChart metrics={metrics} dataKey="disk_usage" title="磁盘曲线" color="rgb(var(--chart-disk))" />
+            <MetricsChart metrics={metrics} dataKey="rx_speed" title="网络速率" color="rgb(var(--chart-network-in))" unitLabel="bytes/s" domain={[0, 'auto']} />
           </div>
         </>
       ) : null}
 
       {activeSection === 'processes' ? (
         <section aria-label="进程 Top" className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-blue-500">Process Snapshot</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-600">Process Snapshot</p>
               <h3 className="mt-1 text-lg font-black text-slate-950">进程 Top</h3>
               <p className="mt-1 text-xs font-bold text-slate-500">采样时间：{formatUnixTime(processSnapshot?.collected_at)}</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex rounded-2xl border border-slate-200 bg-white p-1 shadow-inner shadow-slate-100">
+              <div className="flex rounded-2xl border border-slate-200 bg-white p-1 shadow-inner">
                 {([
                   ['cpu', '按 CPU 排序'],
                   ['memory', '按内存排序'],
@@ -421,7 +503,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                     type="button"
                     aria-pressed={processSort === sort}
                     onClick={() => setProcessSort(sort)}
-                    className={`min-h-9 cursor-pointer rounded-xl px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${processSort === sort ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
+                    className={`min-h-9 cursor-pointer rounded-xl px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-emerald-100 ${processSort === sort ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'}`}
                   >
                     {label}
                   </button>
@@ -432,7 +514,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 value={processSearch}
                 onChange={(event) => setProcessSearch(event.target.value)}
                 placeholder="搜索进程名、PID 或用户"
-                className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-500 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
               />
             </div>
           </div>
@@ -443,7 +525,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
 
       {activeSection === 'containers' ? (
         <section aria-label="Docker 容器" className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-500">Docker Snapshot</p>
               <h3 className="mt-1 text-lg font-black text-slate-950">Docker 容器</h3>
@@ -452,7 +534,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex rounded-2xl border border-slate-200 bg-white p-1 shadow-inner shadow-slate-100">
+              <div className="flex rounded-2xl border border-slate-200 bg-white p-1 shadow-inner">
                 {([
                   ['all', '全部'],
                   ['running', '运行中'],
@@ -475,12 +557,12 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 value={dockerSearch}
                 onChange={(event) => setDockerSearch(event.target.value)}
                 placeholder="搜索容器名、镜像或 ID"
-                className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+                className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-500 focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
               />
             </div>
           </div>
           {!dockerSnapshot?.available ? (
-            <div className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+            <div className="m-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">
               {formatDockerUnavailableMessage(dockerSnapshot?.error, monitoringLoading)}
             </div>
           ) : null}
@@ -491,9 +573,9 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
 
       {activeSection === 'files' ? (
         <section role="region" aria-label="文件管理" className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-blue-500">File Manager</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-600">File Manager</p>
               <h3 className="mt-1 text-lg font-black text-slate-950">文件管理</h3>
               <p className="mt-1 text-xs font-bold text-slate-500">当前路径：{fileList?.path || '/'}</p>
             </div>
@@ -505,9 +587,9 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') openPath()
                 }}
-                className="min-h-10 w-48 rounded-2xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="min-h-10 w-48 rounded-2xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-950 outline-none placeholder:text-slate-500 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
               />
-              <button type="button" onClick={openPath} className="min-h-10 rounded-2xl bg-blue-600 px-4 text-xs font-black text-white transition hover:bg-blue-500">打开路径</button>
+              <button type="button" onClick={openPath} className="min-h-10 rounded-2xl bg-emerald-500 px-4 text-xs font-black text-white transition hover:brightness-95">打开路径</button>
               <input
                 ref={uploadInputRef}
                 type="file"
@@ -518,42 +600,42 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 }}
                 className="sr-only"
               />
-              <button type="button" onClick={() => uploadInputRef.current?.click()} className="min-h-10 rounded-2xl border border-blue-200 bg-white px-4 text-xs font-black text-blue-600 transition hover:bg-blue-50">上传文件</button>
-              <button type="button" onClick={() => loadFiles(parentPath(fileList?.path || '/'))} className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600 transition hover:text-slate-950">返回上级</button>
-              <button type="button" onClick={() => loadFiles(fileList?.path || '/')} className="min-h-10 rounded-2xl bg-slate-950 px-4 text-xs font-black text-white transition hover:bg-slate-800">刷新</button>
+              <button type="button" onClick={() => uploadInputRef.current?.click()} className="min-h-10 rounded-2xl border border-emerald-200 bg-white px-4 text-xs font-black text-emerald-600 transition hover:bg-emerald-50">上传文件</button>
+              <button type="button" onClick={() => loadFiles(parentPath(fileList?.path || '/'))} className="min-h-10 rounded-2xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-500 transition hover:text-slate-950">返回上级</button>
+              <button type="button" onClick={() => loadFiles(fileList?.path || '/')} className="min-h-10 rounded-2xl bg-emerald-500 px-4 text-xs font-black text-white transition hover:brightness-95">刷新</button>
             </div>
           </div>
-          {operationMessage && !editorOpen ? <p className="m-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-700">{operationMessage}</p> : null}
-          {fileLoading ? <p className="m-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-black text-blue-700">正在加载目录...</p> : null}
+          {operationMessage && !editorOpen ? <p className="m-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800">{operationMessage}</p> : null}
+          {fileLoading ? <p className="m-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-black text-sky-700">正在加载目录...</p> : null}
           <div className="min-w-0">
-            {(fileList?.entries ?? []).length === 0 && !fileLoading ? <p className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">目录为空或暂无文件列表。</p> : null}
+            {(fileList?.entries ?? []).length === 0 && !fileLoading ? <p className="m-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">目录为空或暂无文件列表。</p> : null}
             <ul className="divide-y divide-slate-100">
               {(fileList?.entries ?? []).map((entry) => (
                 <li key={entry.path || entry.name} className="flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-slate-50">
                   <div className="min-w-0">
-                    <p className="truncate font-black text-slate-900" title={entry.path}>{entry.name}</p>
-                    <p className="mt-1 text-xs font-bold text-slate-400">{entry.type}{entry.size ? ` · ${formatBytes(entry.size)}` : ''}</p>
+                    <p className="truncate font-black text-slate-950" title={entry.path}>{entry.name}</p>
+                    <p className="mt-1 text-xs font-bold text-slate-500">{entry.type}{entry.size ? ` · ${formatBytes(entry.size)}` : ''}</p>
                   </div>
                   <div className="flex shrink-0 flex-wrap justify-end gap-2">
                     {entry.type === 'directory' ? (
-                      <button type="button" aria-label={`进入目录 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-black text-white">进入</button>
+                      <button type="button" aria-label={`进入目录 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-emerald-500 px-3 py-2 text-xs font-black text-white">进入</button>
                     ) : entry.type === 'binary' ? (
                       <span className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-500">二进制文件不可编辑</span>
                     ) : (
-                      <button type="button" aria-label={`编辑文件 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white">编辑</button>
+                      <button type="button" aria-label={`编辑文件 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-emerald-500 px-3 py-2 text-xs font-black text-white">编辑</button>
                     )}
-                    <button type="button" aria-label={`删除 ${entry.name}`} onClick={() => deleteEntry(entry)} className="rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-black text-red-600 transition hover:bg-red-100">删除</button>
+                    <button type="button" aria-label={`删除 ${entry.name}`} onClick={() => deleteEntry(entry)} className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100">删除</button>
                   </div>
                 </li>
               ))}
             </ul>
-            {fileList?.truncated ? <p className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">目录过大，仅显示前部分结果。</p> : null}
+            {fileList?.truncated ? <p className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">目录过大，仅显示前部分结果。</p> : null}
           </div>
         </section>
       ) : null}
 
       {removeDialogOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
           <section
             role="dialog"
             aria-modal="true"
@@ -562,22 +644,22 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !removeLoading) setRemoveDialogOpen(false)
             }}
-            className="w-full max-w-xl overflow-hidden rounded-[30px] border border-red-100 bg-white shadow-2xl shadow-red-950/20 outline-none"
+            className="w-full max-w-xl overflow-hidden rounded-[30px] border border-red-200 bg-white shadow-2xl outline-none"
           >
-            <div className="border-b border-red-100 bg-red-50 px-5 py-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-red-500">Danger Zone</p>
+            <div className="border-b border-red-200 bg-red-50 px-5 py-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-red-700">Danger Zone</p>
               <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-slate-950">移除节点记录</h3>
               <p className="mt-2 text-sm font-bold leading-6 text-red-700">确认从 MizuPanel 面板中移除 {displayName}？</p>
             </div>
-            <div className="space-y-3 px-5 py-4 text-sm font-bold leading-6 text-slate-600">
+            <div className="space-y-3 px-5 py-4 text-sm font-bold leading-6 text-slate-500">
               <p>这只会删除 MizuPanel 里的节点记录和历史指标，不会停止目标机器上的 Agent。</p>
               <p>这也不会卸载目标机器上的 Agent。如果 Agent 仍在运行，可能会重新连接并再次出现。</p>
               <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">建议先按 README 中的卸载命令卸载 Agent，再移除面板记录。</p>
               {operationMessage ? <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">{operationMessage}</p> : null}
             </div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
-              <button type="button" onClick={() => setRemoveDialogOpen(false)} disabled={removeLoading} className="min-h-11 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-600 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60">取消</button>
-              <button type="button" onClick={deleteNodeRecord} disabled={removeLoading} className="min-h-11 cursor-pointer rounded-2xl bg-red-600 px-4 text-sm font-black text-white shadow-lg shadow-red-100 transition hover:bg-red-500 focus:outline-none focus:ring-4 focus:ring-red-100 disabled:cursor-not-allowed disabled:bg-red-300">
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+              <button type="button" onClick={() => setRemoveDialogOpen(false)} disabled={removeLoading} className="min-h-11 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-500 transition hover:border-emerald-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">取消</button>
+              <button type="button" onClick={deleteNodeRecord} disabled={removeLoading} className="min-h-11 cursor-pointer rounded-2xl bg-red-600 px-4 text-sm font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-red-100 disabled:cursor-not-allowed disabled:opacity-50">
                 {removeLoading ? '正在移除...' : '确认移除'}
               </button>
             </div>
@@ -585,21 +667,83 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         </div>
       ) : null}
 
-      {editorOpen && fileRead?.editable ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-          <div role="dialog" aria-modal="true" aria-label="编辑文件" className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-[28px] border border-slate-200 bg-white p-4 shadow-2xl shadow-slate-950/20">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="min-w-0">
-                <p className="text-xs font-black text-slate-400">正在编辑</p>
-                <p className="mt-1 break-all text-sm font-black text-slate-900">{fileRead.path}</p>
-              </div>
-              <button type="button" aria-label="关闭" onClick={() => setEditorOpen(false)} className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 transition hover:text-slate-950">关闭</button>
+      {sshUninstallOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
+          <section role="dialog" aria-modal="true" aria-label="SSH 卸载 Agent" className="w-full max-w-2xl overflow-hidden rounded-[30px] border border-red-200 bg-white shadow-2xl outline-none">
+            <div className="border-b border-red-200 bg-red-50 px-5 py-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-red-700">Root-only SSH</p>
+              <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-slate-950">SSH 卸载 Agent</h3>
+              <p className="mt-2 text-sm font-bold leading-6 text-red-700">通过 SSH 登录 root，停止并删除目标机器上的 MizuPanel Agent。</p>
             </div>
-            {operationMessage ? <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-700">{operationMessage}</p> : null}
-            <textarea autoFocus aria-label="文件内容" value={fileContent} onChange={(event) => setFileContent(event.target.value)} className="mt-3 min-h-[56vh] w-full resize-y rounded-2xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+            <div className="grid gap-3 px-5 py-4 sm:grid-cols-2">
+              <label className="text-xs font-black text-slate-950">SSH Host<input aria-label="SSH Host" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" /></label>
+              <label className="text-xs font-black text-slate-950">SSH 端口<input aria-label="SSH 端口" type="number" value={sshPort} onChange={(event) => setSSHPort(Number(event.target.value) || 22)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" /></label>
+              <label className="text-xs font-black text-slate-950">SSH 用户<input aria-label="SSH 用户" value="root" readOnly className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 text-sm font-black text-slate-500" /></label>
+              <label className="text-xs font-black text-slate-950">认证方式<select aria-label="SSH 认证方式" value={sshAuthType} onChange={(event) => setSSHAuthType(event.target.value as SSHAuthType)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100"><option value="password">密码</option><option value="private_key">私钥</option></select></label>
+              {sshAuthType === 'password' ? (
+                <label className="text-xs font-black text-slate-950 sm:col-span-2">SSH 密码<input aria-label="SSH 密码" type="password" value={sshPassword} onChange={(event) => setSSHPassword(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" /></label>
+              ) : (
+                <>
+                  <label className="text-xs font-black text-slate-950 sm:col-span-2">SSH 私钥<textarea aria-label="SSH 私钥" value={sshPrivateKey} onChange={(event) => setSSHPrivateKey(event.target.value)} rows={4} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" /></label>
+                  <label className="text-xs font-black text-slate-950 sm:col-span-2">私钥 Passphrase（可选）<input aria-label="私钥 Passphrase" type="password" value={sshPassphrase} onChange={(event) => setSSHPassphrase(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" /></label>
+                </>
+              )}
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800 sm:col-span-2"><input type="checkbox" checked={sshRemoveRecord} onChange={(event) => setSSHRemoveRecord(event.target.checked)} className="mt-1 h-4 w-4" />卸载后同时移除面板节点记录和历史数据</label>
+              {sshUninstallMessage ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 sm:col-span-2">{sshUninstallMessage}</p> : null}
+              {sshUninstallError ? <p className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 sm:col-span-2">{sshUninstallError}</p> : null}
+              {sshUninstallEvents.length > 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-inner sm:col-span-2">
+                  <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500">卸载进度</p>
+                  <ol className="space-y-2">
+                    {sshUninstallEvents.map((event) => (
+                      <li key={event.step} className="flex items-start gap-3 rounded-2xl bg-slate-50 px-3 py-2">
+                        <span className={`mt-0.5 h-3 w-3 rounded-full ${event.status === 'success' ? 'bg-emerald-500' : event.status === 'failed' ? 'bg-red-600' : event.status === 'running' ? 'bg-sky-500' : 'bg-slate-400'}`} />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-black text-slate-950">{event.label}</span>
+                          <span className="block text-xs font-black text-slate-500">{event.status === 'success' ? '成功' : event.status === 'failed' ? '失败' : event.status === 'running' ? '进行中' : '待执行'}</span>
+                          {event.logs.length > 0 ? (
+                            <span className="mt-1 block space-y-1">
+                              {event.logs.map((log, index) => <span key={`${event.step}-${index}`} className="block break-words text-xs font-semibold leading-5 text-slate-500">{log}</span>)}
+                            </span>
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+              {sshUninstallEvents.some((event) => event.done) ? (
+                <button type="button" onClick={() => setSSHUninstallOpen(false)} className="min-h-11 cursor-pointer rounded-2xl bg-white px-4 text-sm font-black text-slate-950 shadow-sm transition hover:bg-slate-100 focus:outline-none focus:ring-4 focus:ring-emerald-100">
+                  {sshUninstallEvents.some((event) => event.done && event.status === 'success') ? '完成并关闭' : '关闭'}
+                </button>
+              ) : (
+                <>
+                  <button type="button" onClick={() => setSSHUninstallOpen(false)} disabled={sshUninstallLoading} className="min-h-11 cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-500 transition hover:border-emerald-300 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">取消</button>
+                  <button type="button" onClick={startSSHUninstall} disabled={sshUninstallLoading} className="min-h-11 cursor-pointer rounded-2xl bg-red-600 px-4 text-sm font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-red-100 disabled:cursor-not-allowed disabled:opacity-50">{sshUninstallLoading ? '正在创建卸载任务...' : '开始 SSH 卸载'}</button>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {editorOpen && fileRead?.editable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
+          <div role="dialog" aria-modal="true" aria-label="编辑文件" className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-[28px] border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+              <div className="min-w-0">
+                <p className="text-xs font-black text-slate-500">正在编辑</p>
+                <p className="mt-1 break-all text-sm font-black text-slate-950">{fileRead.path}</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setEditorOpen(false)} className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-500 transition hover:text-slate-950">关闭</button>
+            </div>
+            {operationMessage ? <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800">{operationMessage}</p> : null}
+            <textarea autoFocus aria-label="文件内容" value={fileContent} onChange={(event) => setFileContent(event.target.value)} className="mt-3 min-h-[56vh] w-full resize-y rounded-2xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
             <div className="mt-3 flex flex-wrap justify-end gap-2">
-              <button type="button" onClick={saveFile} className="min-h-11 rounded-2xl bg-blue-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-blue-500">保存文件</button>
-              <button type="button" onClick={() => setEditorOpen(false)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-600 transition hover:text-slate-950">关闭编辑器</button>
+              <button type="button" onClick={saveFile} className="min-h-11 rounded-2xl bg-emerald-500 px-4 text-sm font-black text-white shadow-sm transition hover:brightness-95">保存文件</button>
+              <button type="button" onClick={() => setEditorOpen(false)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-500 transition hover:text-slate-950">关闭编辑器</button>
             </div>
           </div>
         </div>
@@ -701,13 +845,13 @@ function formatDockerUnavailableMessage(error: string | undefined, loading: bool
 
 function MonitoringState({ loading, error, empty, emptyText }: { loading: boolean, error?: string, empty: boolean, emptyText: string }) {
   if (loading) {
-    return <div className="m-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-black text-blue-700">正在加载进程 / Docker 快照...</div>
+    return <div className="m-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-black text-sky-700">正在加载进程 / Docker 快照...</div>
   }
   if (error) {
-    return <div className="m-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-700">采集提示：{error}</div>
+    return <div className="m-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800">采集提示：{error}</div>
   }
   if (empty) {
-    return <div className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">{emptyText}</div>
+    return <div className="m-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">{emptyText}</div>
   }
   return null
 }
@@ -716,7 +860,7 @@ function ProcessTable({ processes }: { processes: ProcessInfo[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-        <thead className="bg-white text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
+        <thead className="bg-white text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
           <tr>
             <th className="px-4 py-3">PID</th>
             <th className="px-4 py-3">名称</th>
@@ -729,12 +873,12 @@ function ProcessTable({ processes }: { processes: ProcessInfo[] }) {
         <tbody className="divide-y divide-slate-100 bg-white">
           {processes.map((process) => (
             <tr key={`${process.pid}-${process.name}`} className="align-top hover:bg-slate-50">
-              <td className="px-4 py-3 font-mono text-xs font-black text-slate-700">{process.pid}</td>
+              <td className="px-4 py-3 font-mono text-xs font-black text-slate-950">{process.pid}</td>
               <td className="px-4 py-3 font-black text-slate-950">{process.name || 'unknown'}</td>
               <td className="px-4 py-3 font-semibold text-slate-500">{process.user || '—'}</td>
               <td className="px-4 py-3"><StatusPill value={process.status} /></td>
-              <td className="px-4 py-3 font-black text-blue-600">{formatPercent(process.cpu_usage)}</td>
-              <td className="px-4 py-3 font-semibold text-slate-700">{formatBytes(process.memory_rss)} <span className="text-slate-400">({formatPercent(process.memory_usage)})</span></td>
+              <td className="px-4 py-3 font-black text-emerald-600">{formatPercent(process.cpu_usage)}</td>
+              <td className="px-4 py-3 font-semibold text-slate-950">{formatBytes(process.memory_rss)} <span className="text-slate-500">({formatPercent(process.memory_usage)})</span></td>
             </tr>
           ))}
         </tbody>
@@ -747,7 +891,7 @@ function DockerTable({ nodeID, containers }: { nodeID: string, containers: Docke
   return (
     <div data-testid="docker-table-scroll" className="min-w-0 max-w-full overflow-x-auto">
       <table className="w-full min-w-0 table-fixed divide-y divide-slate-200 text-left text-sm">
-        <thead className="bg-white text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">
+        <thead className="bg-white text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
           <tr>
             <th className="w-[22%] px-4 py-3">容器</th>
             <th className="w-[22%] px-4 py-3">镜像</th>
@@ -765,12 +909,12 @@ function DockerTable({ nodeID, containers }: { nodeID: string, containers: Docke
             const execID = container.full_id || container.id
             return (
               <tr key={container.id} className="align-top hover:bg-slate-50">
-                <td className="min-w-0 px-4 py-3"><p className="truncate font-black text-slate-950" title={container.name || container.id}>{container.name || container.id}</p><p className="break-all font-mono text-xs font-bold text-slate-400" title={container.full_id || container.id}>{container.id}</p></td>
-                <td className="min-w-0 px-4 py-3 font-semibold text-slate-600"><p className="line-clamp-2 break-all" title={container.image || '—'}>{container.image || '—'}</p></td>
+                <td className="min-w-0 px-4 py-3"><p className="truncate font-black text-slate-950" title={container.name || container.id}>{container.name || container.id}</p><p className="break-all font-mono text-xs font-bold text-slate-500" title={container.full_id || container.id}>{container.id}</p></td>
+                <td className="min-w-0 px-4 py-3 font-semibold text-slate-500"><p className="line-clamp-2 break-all" title={container.image || '—'}>{container.image || '—'}</p></td>
                 <td className="min-w-0 px-4 py-3"><StatusPill value={container.state || 'unknown'} detail={container.status} /></td>
                 <td className="px-4 py-3 font-black text-cyan-600">{formatPercent(container.cpu_usage ?? 0)}</td>
-                <td className="min-w-0 px-4 py-3 font-semibold text-slate-700"><p className="line-clamp-2 break-words" title={`${formatBytes(container.memory_usage ?? 0)}${container.memory_limit ? ` / ${formatBytes(container.memory_limit)} (${formatPercent(container.memory_percent ?? 0)})` : ''}`}>{formatBytes(container.memory_usage ?? 0)}{container.memory_limit ? <span className="text-slate-400"> / {formatBytes(container.memory_limit)} ({formatPercent(container.memory_percent ?? 0)})</span> : null}</p></td>
-                <td className="hidden min-w-0 px-4 py-3 font-semibold text-slate-600 2xl:table-cell"><p className="truncate">↓ {formatBytes(container.network_rx ?? 0)} · ↑ {formatBytes(container.network_tx ?? 0)}</p></td>
+                <td className="min-w-0 px-4 py-3 font-semibold text-slate-950"><p className="line-clamp-2 break-words" title={`${formatBytes(container.memory_usage ?? 0)}${container.memory_limit ? ` / ${formatBytes(container.memory_limit)} (${formatPercent(container.memory_percent ?? 0)})` : ''}`}>{formatBytes(container.memory_usage ?? 0)}{container.memory_limit ? <span className="text-slate-500"> / {formatBytes(container.memory_limit)} ({formatPercent(container.memory_percent ?? 0)})</span> : null}</p></td>
+                <td className="hidden min-w-0 px-4 py-3 font-semibold text-slate-500 2xl:table-cell"><p className="truncate">↓ {formatBytes(container.network_rx ?? 0)} · ↑ {formatBytes(container.network_tx ?? 0)}</p></td>
                 <td className="hidden px-4 py-3 font-semibold text-slate-500 2xl:table-cell">{formatUnixTime(container.created_at)}</td>
                 <td className="px-4 py-3">
                   <button
@@ -779,7 +923,7 @@ function DockerTable({ nodeID, containers }: { nodeID: string, containers: Docke
                     title={running ? '进入容器 exec' : '容器未运行，不能 exec'}
                     disabled={!running}
                     onClick={() => openContainerExecPage(nodeID, execID)}
-                    className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-slate-950 text-cyan-300 transition hover:-translate-y-0.5 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:hover:translate-y-0"
+                    className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-emerald-500 text-white transition hover:-translate-y-0.5 hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:hover:translate-y-0"
                   >
                     <TerminalIcon />
                   </button>
@@ -796,12 +940,12 @@ function DockerTable({ nodeID, containers }: { nodeID: string, containers: Docke
 function StatusPill({ value, detail }: { value: string, detail?: string }) {
   const normalized = value.toLowerCase()
   const className = normalized.includes('run')
-    ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+    ? 'bg-emerald-50 text-emerald-700 ring-success/20'
     : normalized.includes('exit') || normalized.includes('stop')
-      ? 'bg-slate-100 text-slate-600 ring-slate-200'
+      ? 'bg-slate-100 text-slate-500 ring-slate-200'
       : normalized.includes('restart') || normalized.includes('zombie')
-        ? 'bg-amber-50 text-amber-700 ring-amber-100'
-        : 'bg-blue-50 text-blue-700 ring-blue-100'
+        ? 'bg-amber-50 text-amber-800 ring-warning/20'
+        : 'bg-sky-50 text-sky-700 ring-info/20'
   return (
     <span className={`inline-flex max-w-[220px] flex-col rounded-2xl px-3 py-1 text-xs font-black ring-1 ${className}`}>
       <span>{value || 'unknown'}</span>

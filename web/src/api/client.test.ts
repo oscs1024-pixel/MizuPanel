@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, updateSettings, uploadNodeFile, writeNodeFile } from './client'
+import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
 
 describe('api client', () => {
   afterEach(() => {
@@ -161,6 +161,68 @@ describe('api client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/nodes/node%201/reboot', { method: 'POST' })
     expect(result.accepted).toBe(true)
+  })
+
+  test('starts SSH install jobs', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ job_id: 'ssh-install-1' }), { status: 202 }))
+
+    const result = await startSSHInstall({
+      host: '192.168.1.10',
+      port: 22,
+      username: 'root',
+      auth_type: 'password',
+      password: 'secret',
+      node_id: 'node-1',
+      name: 'Node 1',
+      enable_terminal: true,
+      enable_docker: false,
+      mode: 'normal'
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/install/ssh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        host: '192.168.1.10',
+        port: 22,
+        username: 'root',
+        auth_type: 'password',
+        password: 'secret',
+        node_id: 'node-1',
+        name: 'Node 1',
+        enable_terminal: true,
+        enable_docker: false,
+        mode: 'normal'
+      })
+    })
+    expect(result.job_id).toBe('ssh-install-1')
+  })
+
+  test('starts SSH uninstall jobs', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ job_id: 'ssh-uninstall-1' }), { status: 202 }))
+
+    const result = await startSSHUninstall('node 1', {
+      host: '192.168.1.10',
+      port: 22,
+      username: 'root',
+      auth_type: 'private_key',
+      private_key: 'key',
+      remove_node_record: true
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/nodes/node%201/ssh-uninstall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        host: '192.168.1.10',
+        port: 22,
+        username: 'root',
+        auth_type: 'private_key',
+        private_key: 'key',
+        remove_node_record: true
+      })
+    })
+    expect(result.job_id).toBe('ssh-uninstall-1')
   })
 
   test('creates terminal session tokens', async () => {

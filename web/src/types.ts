@@ -70,6 +70,48 @@ export type InstallCommandResponse = {
   install_token: string
 }
 
+export type SSHAuthType = 'password' | 'private_key'
+
+export type SSHInstallRequest = {
+  host: string
+  port: number
+  username: 'root'
+  auth_type: SSHAuthType
+  password?: string
+  private_key?: string
+  passphrase?: string
+  node_id: string
+  name: string
+  enable_terminal: boolean
+  enable_docker: boolean
+  mode: AgentMode
+}
+
+export type SSHUninstallRequest = {
+  host: string
+  port: number
+  username: 'root'
+  auth_type: SSHAuthType
+  password?: string
+  private_key?: string
+  passphrase?: string
+  remove_node_record: boolean
+}
+
+export type SSHJobResponse = {
+  job_id: string
+}
+
+export type SSHProgressStatus = 'pending' | 'running' | 'success' | 'failed'
+
+export type SSHProgressEvent = {
+  step: string
+  label: string
+  status: SSHProgressStatus
+  message: string
+  done?: boolean
+}
+
 export type ProcessInfo = {
   pid: number
   ppid: number

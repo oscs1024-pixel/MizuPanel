@@ -263,7 +263,9 @@ Release 包内置 `systemd/mizupanel-server.service` 示例，适合安装到 `/
 
 ## Agent 设置
 
-打开 Dashboard，点击 **添加主机**，选择 **Linux** 或 **Windows**，然后在目标主机上执行生成的命令。
+打开 Dashboard，点击 **添加主机**。Linux 主机可以选择 **SSH 自动安装**，由 Server 一次性使用你输入的 root SSH 凭据完成安装；也可以选择 **手动命令安装**，复制命令到目标机器执行。SSH 凭据不会保存到数据库、不会回显，也不会写入日志。
+
+第一版 SSH 自动安装/卸载只支持 Linux root 用户，不支持 sudo 和 Windows。Linux 手动安装/卸载命令也要求在 root shell 中执行。
 
 <details>
 <summary>Linux 安装命令示例</summary>
@@ -271,7 +273,7 @@ Release 包内置 `systemd/mizupanel-server.service` 示例，适合安装到 `/
 ```bash
 curl -fsSL 'http://你的面板地址:8080/scripts/install-agent.sh' -o install-agent.sh \
   && chmod +x install-agent.sh \
-  && sudo ./install-agent.sh \
+  && ./install-agent.sh \
     --binary-base-url 'http://你的面板地址:8080/downloads' \
     --server-url 'ws://你的面板地址:8080/api/agent/ws' \
     --token 'one-time-install-token' \
@@ -324,7 +326,7 @@ Windows 安装脚本会下载 `mizupanel-agent-windows-amd64.exe`，安装为 `C
 ```bash
 curl -fsSL 'http://你的面板地址:8080/scripts/uninstall-agent.sh' -o uninstall-agent.sh \
   && chmod +x uninstall-agent.sh \
-  && sudo ./uninstall-agent.sh
+  && ./uninstall-agent.sh
 ```
 
 卸载 Windows Agent 需要在管理员 PowerShell 中执行：

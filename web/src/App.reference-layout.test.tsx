@@ -17,7 +17,7 @@ const { createInstallCommandMock } = vi.hoisted(() => ({
       : [
         `curl -fsSL 'http://localhost:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
         `  && chmod +x install-agent.sh \\`,
-        `  && sudo ./install-agent.sh \\`,
+        `  && ./install-agent.sh \\`,
         `    --binary-base-url 'http://localhost:8080/downloads' \\`,
         `    --server-url 'ws://localhost:8080/api/agent/ws' \\`,
         `    --token 'generated-install-token' \\`,
@@ -92,10 +92,13 @@ vi.mock('./api/client', () => ({
   deleteNode: vi.fn(async () => undefined),
   rebootNode: vi.fn(async () => ({ accepted: true })),
   createTerminalSession: vi.fn(async () => ({ token: 'terminal-token' })),
-  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' }))
+  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' })),
+  startSSHInstall: vi.fn(async () => ({ job_id: 'ssh-install-1' })),
+  startSSHUninstall: vi.fn(async () => ({ job_id: 'ssh-uninstall-1' }))
 }))
 
 beforeEach(() => {
+  window.localStorage.clear()
   createInstallCommandMock.mockReset()
   createInstallCommandMock.mockImplementation(async (platform = 'linux') => ({
     command: platform === 'windows'
@@ -110,7 +113,7 @@ beforeEach(() => {
       : [
         `curl -fsSL 'http://localhost:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
         `  && chmod +x install-agent.sh \\`,
-        `  && sudo ./install-agent.sh \\`,
+        `  && ./install-agent.sh \\`,
         `    --binary-base-url 'http://localhost:8080/downloads' \\`,
         `    --server-url 'ws://localhost:8080/api/agent/ws' \\`,
         `    --token 'generated-install-token' \\`,
@@ -132,8 +135,13 @@ describe('reference-style dashboard layout', () => {
     const mainNavigation = await screen.findByRole('navigation', { name: '主导航' })
     expect(within(mainNavigation).getByRole('button', { name: '主机列表' })).toBeInTheDocument()
     expect(within(mainNavigation).getByRole('button', { name: '历史记录' })).toBeInTheDocument()
+    expect(within(mainNavigation).getByRole('button', { name: '系统设置' })).toBeInTheDocument()
+    expect(within(mainNavigation).queryByRole('button', { name: '概览' })).not.toBeInTheDocument()
+    expect(within(mainNavigation).queryByRole('button', { name: '日志' })).not.toBeInTheDocument()
     expect(within(mainNavigation).queryByRole('button', { name: 'Docker' })).not.toBeInTheDocument()
+    expect(within(mainNavigation).queryByRole('button', { name: '文件管理' })).not.toBeInTheDocument()
     expect(within(mainNavigation).queryByRole('button', { name: '终端' })).not.toBeInTheDocument()
+    expect(within(mainNavigation).queryByRole('button', { name: '告警' })).not.toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '打开终端' })).toBeEnabled()
     expect(screen.getByPlaceholderText('搜索主机...')).toBeInTheDocument()
     expect(screen.getByText('全部 2')).toBeInTheDocument()
@@ -143,6 +151,21 @@ describe('reference-style dashboard layout', () => {
     expect(screen.getByText('网络速率')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
+  })
+
+  test('keeps host search state while navigating the old top navigation', async () => {
+    render(<App />)
+
+    await screen.findByText('全部 2')
+    fireEvent.change(screen.getByPlaceholderText('搜索主机...'), { target: { value: 'oracle' } })
+    fireEvent.click(screen.getByRole('button', { name: '历史记录' }))
+    expect(await screen.findByRole('heading', { name: '指标历史记录' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '主机列表' }))
+
+    expect(screen.getByPlaceholderText('搜索主机...')).toHaveValue('oracle')
+    expect(screen.getByRole('button', { name: /Oracle SG/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Tokyo Backup/ })).not.toBeInTheDocument()
   })
 
   test('filters hosts by status and search keyword', async () => {
@@ -188,11 +211,12 @@ describe('reference-style dashboard layout', () => {
 
     const filterToolbar = screen.getByRole('toolbar', { name: '主机筛选与操作' })
     const addHostButton = within(filterToolbar).getByRole('button', { name: '添加主机' })
-    expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
 
     fireEvent.click(addHostButton)
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
-    const installRegion = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableTerminal: true, mode: 'normal' })
     expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
     expect(installRegion).toHaveTextContent("curl -fsSL 'http://localhost:8080/scripts/install-agent.sh'")
@@ -203,7 +227,7 @@ describe('reference-style dashboard layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
 
-    expect(await screen.findByText(/generated-windows-token/)).toBeInTheDocument()
+    expect(await screen.findAllByText(/generated-windows-token/)).not.toHaveLength(0)
     expect(createInstallCommandMock).toHaveBeenCalledWith('windows')
     expect(screen.getByRole('button', { name: 'Windows' })).toHaveAttribute('aria-pressed', 'true')
     expect(installRegion).toHaveTextContent("install-agent.ps1")
@@ -216,7 +240,7 @@ describe('reference-style dashboard layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '关闭安装命令' }))
 
-    expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
     expect(addHostButton).toHaveFocus()
   })
 
@@ -227,8 +251,9 @@ describe('reference-style dashboard layout', () => {
     const filterToolbar = screen.getByRole('toolbar', { name: '主机筛选与操作' })
     const addHostButton = within(filterToolbar).getByRole('button', { name: '添加主机' })
     fireEvent.click(addHostButton)
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
-    const installDialog = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     const closeButton = within(installDialog).getByRole('button', { name: '关闭安装命令' })
     await waitFor(() => expect(installDialog).toHaveFocus())
     fireEvent.keyDown(installDialog, { key: 'Tab', shiftKey: true })
@@ -236,11 +261,11 @@ describe('reference-style dashboard layout', () => {
 
     fireEvent.keyDown(installDialog, { key: 'Tab' })
 
-    expect(within(installDialog).getByRole('button', { name: 'Linux' })).toHaveFocus()
+    expect(installDialog).toContainElement(document.activeElement as HTMLElement | null)
 
     fireEvent.keyDown(installDialog, { key: 'Escape' })
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument())
     expect(addHostButton).toHaveFocus()
   })
 
@@ -251,8 +276,9 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
-    const installDialog = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     expect(await within(installDialog).findByText('安装命令生成失败')).toBeInTheDocument()
     expect(within(installDialog).getByRole('button', { name: '复制安装命令' })).toBeDisabled()
   })
@@ -267,8 +293,9 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.({ command: 'linux initial command', install_token: 'linux-initial-token' })
-    const installRegion = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(installRegion).toHaveTextContent('linux initial command')
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
@@ -297,8 +324,9 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.resolve({ command: 'linux initial command', install_token: 'linux-initial-token' })
-    const installRegion = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(installRegion).toHaveTextContent('linux initial command')
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
@@ -326,17 +354,18 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.({ command: 'linux initial command', install_token: 'linux-initial-token' })
     expect(await screen.findByText('linux initial command')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
     fireEvent.click(screen.getByRole('button', { name: '关闭安装命令' }))
-    expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
 
     pending.windows.shift()?.({ command: 'windows late command', install_token: 'windows-late-token' })
 
     await waitFor(() => expect(screen.queryByText('windows late command')).not.toBeInTheDocument())
-    expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
   })
 
   test('copies with the selected text fallback when clipboard is unavailable', async () => {
@@ -349,7 +378,9 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    await screen.findByRole('dialog', { name: '添加主机' })
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '复制安装命令' })).not.toBeDisabled())
 
     fireEvent.click(screen.getByRole('button', { name: '复制安装命令' }))
 
@@ -367,7 +398,9 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    await screen.findByRole('dialog', { name: '添加主机' })
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '复制安装命令' })).not.toBeDisabled())
 
     fireEvent.click(screen.getByRole('button', { name: '复制安装命令' }))
 

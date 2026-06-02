@@ -14,6 +14,14 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: false,
         ws: true
+      },
+      '/scripts': {
+        target: 'http://localhost:8080',
+        changeOrigin: false
+      },
+      '/downloads': {
+        target: 'http://localhost:8080',
+        changeOrigin: false
       }
     }
   }

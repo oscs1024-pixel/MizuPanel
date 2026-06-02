@@ -27,6 +27,7 @@ web/dist/
 .vscode/
 .idea/
 
-
+#docks
+docs
 skills-lock.json
 CHANGELOG.md

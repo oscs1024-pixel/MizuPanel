@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/mizupanel/mizupanel/internal/server/agenthub"
 	"github.com/mizupanel/mizupanel/internal/server/api"
+	"github.com/mizupanel/mizupanel/internal/server/sshops"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
@@ -31,19 +33,24 @@ var agentUninstallScript []byte
 var windowsAgentUninstallScript []byte
 
 type Dependencies struct {
-	Nodes            *store.NodeStore
-	Metrics          *store.MetricStore
-	ProcessSnapshots *store.ProcessSnapshotStore
-	DockerSnapshots  *store.DockerSnapshotStore
-	AgentTokens      *store.AgentTokenStore
-	Settings         *store.SettingsStore
-	AgentToken       string
-	PublicURL        string
-	Interval         int
-	StaticDir        string
-	DownloadDir      string
-	EnableTerminal   bool
-	MetricsRetention time.Duration
+	Nodes                  *store.NodeStore
+	Metrics                *store.MetricStore
+	ProcessSnapshots       *store.ProcessSnapshotStore
+	DockerSnapshots        *store.DockerSnapshotStore
+	AgentTokens            *store.AgentTokenStore
+	Settings               *store.SettingsStore
+	AgentToken             string
+	PublicURL              string
+	Interval               int
+	StaticDir              string
+	DownloadDir            string
+	EnableTerminal         bool
+	MetricsRetention       time.Duration
+	SSHJobs                *sshops.Manager
+	SSHRunner              sshops.Runner
+	SSHJobTimeout          time.Duration
+	SSHInstallWaitTimeout  time.Duration
+	SSHInstallPollInterval time.Duration
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -58,11 +65,30 @@ func NewHandler(deps Dependencies) http.Handler {
 		Interval:         deps.Interval,
 	})
 	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention})
+	sshJobs := deps.SSHJobs
+	if sshJobs == nil {
+		sshJobs = sshops.NewManager()
+	}
+	sshRunner := deps.SSHRunner
+	if sshRunner == nil {
+		sshRunner = sshops.NewCommandRunner()
+	}
 	mux.Handle("/api/settings", apiRouter)
 	mux.Handle("/api/nodes", apiRouter)
-	mux.Handle("/api/nodes/", apiRouter)
+	mux.HandleFunc("/api/nodes/", func(w http.ResponseWriter, r *http.Request) {
+		if handleSSHUninstallRoute(w, r, deps.Nodes, hub, sshJobs, sshRunner, deps.PublicURL, deps.SSHJobTimeout) {
+			return
+		}
+		apiRouter.ServeHTTP(w, r)
+	})
 	mux.HandleFunc("/api/install/command", func(w http.ResponseWriter, r *http.Request) {
 		handleInstallCommand(w, r, deps.PublicURL, installAuth)
+	})
+	mux.HandleFunc("/api/install/ssh", func(w http.ResponseWriter, r *http.Request) {
+		handleSSHInstall(w, r, deps.Nodes, sshJobs, sshRunner, deps.PublicURL, installAuth, deps.SSHJobTimeout, deps.SSHInstallWaitTimeout, deps.SSHInstallPollInterval)
+	})
+	mux.HandleFunc("/api/install/ssh/", func(w http.ResponseWriter, r *http.Request) {
+		handleSSHInstallEvents(w, r, sshJobs)
 	})
 	mux.Handle("/api/agent/ws", hub)
 	mux.HandleFunc("/scripts/install-agent.sh", agentInstallScriptHandler)
@@ -163,6 +189,237 @@ func parseInstallMode(value string) (installMode, bool) {
 	}
 }
 
+type sshInstallRequest struct {
+	sshops.SSHRequest
+	NodeID         string `json:"node_id"`
+	Name           string `json:"name"`
+	EnableTerminal bool   `json:"enable_terminal"`
+	EnableDocker   bool   `json:"enable_docker"`
+	Mode           string `json:"mode"`
+}
+
+func handleSSHInstall(w http.ResponseWriter, r *http.Request, nodes *store.NodeStore, jobs *sshops.Manager, runner sshops.Runner, publicURL string, installAuth *agenthub.InstallAuthStore, jobTimeout, waitTimeout, pollInterval time.Duration) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !sameOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var request sshInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := sshops.ValidateSSHRequest(&request.SSHRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode, ok := parseInstallMode(request.Mode)
+	if !ok {
+		http.Error(w, "unsupported install mode", http.StatusBadRequest)
+		return
+	}
+	installToken, err := randomToken()
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !installAuth.CreateInstallToken(installToken) {
+		http.Error(w, "too many install tokens", http.StatusTooManyRequests)
+		return
+	}
+	baseURL, wsURL := installURLs(publicURL, r)
+	installRequest := sshops.InstallRequest{
+		SSHRequest:     request.SSHRequest,
+		BaseURL:        baseURL,
+		ServerURL:      wsURL,
+		Token:          installToken,
+		NodeID:         request.NodeID,
+		Name:           request.Name,
+		EnableTerminal: request.EnableTerminal,
+		EnableDocker:   request.EnableDocker,
+		Mode:           string(mode),
+	}
+	secrets := []string{request.Password, request.PrivateKey, request.Passphrase, installToken}
+	if waitTimeout == 0 {
+		waitTimeout = 60 * time.Second
+	}
+	if pollInterval == 0 {
+		pollInterval = time.Second
+	}
+	jobCtx, cancelJob := sshJobContext(r.Context(), jobTimeout)
+	jobID := jobs.Start(jobCtx, secrets, func(ctx context.Context, emit sshops.EmitFunc) error {
+		defer cancelJob()
+		emit(sshops.ProgressEvent{Step: "create_token", Label: "创建 install_token", Status: sshops.ProgressSuccess, Message: "一次性安装 token 已创建"})
+		resolvedNodeID, err := runner.Install(ctx, installRequest, emit)
+		if err != nil {
+			return err
+		}
+		waitNodeID := installRequest.NodeID
+		if strings.TrimSpace(waitNodeID) == "" {
+			waitNodeID = resolvedNodeID
+		}
+		return waitForInstalledNode(ctx, nodes, waitNodeID, waitTimeout, pollInterval, emit)
+	})
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+}
+
+func sshJobContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), timeout)
+}
+
+func waitForInstalledNode(ctx context.Context, nodes *store.NodeStore, nodeID string, timeout, pollInterval time.Duration, emit sshops.EmitFunc) error {
+	if nodes == nil || strings.TrimSpace(nodeID) == "" {
+		return fmt.Errorf("Agent 安装完成但缺少节点 ID，无法确认是否连回")
+	}
+	emit(sshops.ProgressEvent{Step: "wait_agent", Label: "等待 Agent 上线", Status: sshops.ProgressRunning, Message: "正在等待 Agent 首次连回 MizuPanel"})
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		node, err := nodes.Get(waitCtx, nodeID)
+		if err == nil && node.Status == "online" {
+			emit(sshops.ProgressEvent{Step: "wait_agent", Label: "等待 Agent 上线", Status: sshops.ProgressSuccess, Message: "Agent 已连接，安装成功"})
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("Agent 安装完成但超时未连回 MizuPanel，请检查 server_url、防火墙或 Agent 日志")
+		case <-ticker.C:
+		}
+	}
+}
+
+func handleSSHInstallEvents(w http.ResponseWriter, r *http.Request, jobs *sshops.Manager) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/install/ssh/"), "/"), "/")
+	if len(parts) != 2 || parts[1] != "events" {
+		http.NotFound(w, r)
+		return
+	}
+	handleSSHJobEvents(w, r, jobs, parts[0])
+}
+
+func handleSSHJobEvents(w http.ResponseWriter, r *http.Request, jobs *sshops.Manager, jobID string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	history, updates, ok := jobs.Subscribe(jobID)
+	if !ok {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+	writeEvent := func(event sshops.ProgressEvent) {
+		data, _ := json.Marshal(event)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	for _, event := range history {
+		writeEvent(event)
+	}
+	for {
+		select {
+		case event, ok := <-updates:
+			if !ok {
+				return
+			}
+			writeEvent(event)
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+type sshUninstallRequest struct {
+	sshops.SSHRequest
+	RemoveNodeRecord bool `json:"remove_node_record"`
+}
+
+func handleSSHUninstallRoute(w http.ResponseWriter, r *http.Request, nodes *store.NodeStore, disconnecter agenthubDisconnecter, jobs *sshops.Manager, runner sshops.Runner, publicURL string, jobTimeout time.Duration) bool {
+	path := strings.TrimPrefix(r.URL.Path, "/api/nodes/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 || parts[1] != "ssh-uninstall" {
+		return false
+	}
+	nodeID := parts[0]
+	if len(parts) == 4 && parts[2] != "" && parts[3] == "events" {
+		handleSSHJobEvents(w, r, jobs, parts[2])
+		return true
+	}
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return true
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return true
+	}
+	if !sameOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return true
+	}
+	if _, err := nodes.Get(r.Context(), nodeID); err != nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return true
+	}
+	var request sshUninstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return true
+	}
+	if err := sshops.ValidateSSHRequest(&request.SSHRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return true
+	}
+	baseURL, _ := installURLs(publicURL, r)
+	uninstallRequest := sshops.UninstallRequest{SSHRequest: request.SSHRequest, BaseURL: baseURL, NodeID: nodeID, RemoveNodeRecord: request.RemoveNodeRecord}
+	secrets := []string{request.Password, request.PrivateKey, request.Passphrase}
+	jobCtx, cancelJob := sshJobContext(r.Context(), jobTimeout)
+	jobID := jobs.Start(jobCtx, secrets, func(ctx context.Context, emit sshops.EmitFunc) error {
+		defer cancelJob()
+		if err := runner.Uninstall(ctx, uninstallRequest, emit); err != nil {
+			return err
+		}
+		if request.RemoveNodeRecord {
+			emit(sshops.ProgressEvent{Step: "remove_record", Label: "移除面板记录", Status: sshops.ProgressRunning, Message: "正在移除面板节点记录"})
+			if err := nodes.Delete(ctx, nodeID); err != nil {
+				return err
+			}
+			if disconnecter != nil {
+				disconnecter.DisconnectNode(nodeID)
+			}
+			emit(sshops.ProgressEvent{Step: "remove_record", Label: "移除面板记录", Status: sshops.ProgressSuccess, Message: "面板节点记录已移除"})
+		}
+		return nil
+	})
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+	return true
+}
+
+type agenthubDisconnecter interface {
+	DisconnectNode(nodeID string)
+}
+
 func handleInstallCommand(w http.ResponseWriter, r *http.Request, publicURL string, installAuth *agenthub.InstallAuthStore) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -202,7 +459,7 @@ func linuxInstallCommand(baseURL, wsURL, installToken string, enableDocker bool,
 	lines := []string{
 		fmt.Sprintf("curl -fsSL %s -o install-agent.sh \\", shellQuote(baseURL+"/scripts/install-agent.sh")),
 		"  && chmod +x install-agent.sh \\",
-		"  && sudo ./install-agent.sh \\",
+		"  && ./install-agent.sh \\",
 		fmt.Sprintf("    --binary-base-url %s \\", shellQuote(baseURL+"/downloads")),
 		fmt.Sprintf("    --server-url %s \\", shellQuote(wsURL)),
 		fmt.Sprintf("    --token %s \\", shellQuote(installToken)),
@@ -267,6 +524,22 @@ func installURLs(publicURL string, r *http.Request) (string, string) {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return baseURL, parsed.String()
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	expectedScheme := "http"
+	if r.TLS != nil {
+		expectedScheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, expectedScheme) && strings.EqualFold(parsed.Host, r.Host)
 }
 
 func randomToken() (string, error) {

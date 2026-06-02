@@ -8,7 +8,7 @@ const linuxInstallResponse = {
   command: [
     `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
     `  && chmod +x install-agent.sh \\`,
-    `  && sudo ./install-agent.sh \\`,
+    `  && ./install-agent.sh \\`,
     `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
     `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
     `    --token 'generated-install-token' \\`,
@@ -22,7 +22,7 @@ const linuxDockerInstallResponse = {
   command: [
     `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
     `  && chmod +x install-agent.sh \\`,
-    `  && sudo ./install-agent.sh \\`,
+    `  && ./install-agent.sh \\`,
     `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
     `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
     `    --token 'generated-install-token' \\`,
@@ -37,7 +37,7 @@ const linuxTerminalInstallResponse = {
   command: [
     `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
     `  && chmod +x install-agent.sh \\`,
-    `  && sudo ./install-agent.sh \\`,
+    `  && ./install-agent.sh \\`,
     `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
     `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
     `    --token 'generated-install-token' \\`,
@@ -52,7 +52,7 @@ const linuxDockerTerminalInstallResponse = {
   command: [
     `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
     `  && chmod +x install-agent.sh \\`,
-    `  && sudo ./install-agent.sh \\`,
+    `  && ./install-agent.sh \\`,
     `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
     `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
     `    --token 'generated-install-token' \\`,
@@ -92,7 +92,9 @@ vi.mock('./api/client', () => ({
   deleteNode: vi.fn(async () => undefined),
   rebootNode: vi.fn(async () => ({ accepted: true })),
   createTerminalSession: vi.fn(async () => ({ token: 'terminal-token' })),
-  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' }))
+  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' })),
+  startSSHInstall: vi.fn(async () => ({ job_id: 'ssh-install-1' })),
+  startSSHUninstall: vi.fn(async () => ({ job_id: 'ssh-uninstall-1' }))
 }))
 
 const createInstallCommandMock = vi.mocked(createInstallCommand)
@@ -131,18 +133,19 @@ describe('App empty state', () => {
     expect(installButton).toHaveAttribute('aria-expanded', 'false')
 
     fireEvent.click(installButton)
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     expect(await screen.findByText(/ws:\/\/panel\.example:8080\/api\/agent\/ws/)).toBeInTheDocument()
     expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableTerminal: true, mode: 'normal' })
     expect(installButton).toHaveAttribute('aria-expanded', 'true')
-    const installRegion = screen.getByRole('dialog', { name: 'Agent 安装命令' })
+    const installRegion = screen.getByRole('dialog', { name: '添加主机' })
     expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Windows' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByLabelText('启用 Docker 容器监控')).not.toBeChecked()
     expect(screen.getByLabelText('启用节点终端')).toBeChecked()
     expect(screen.getByText('启用后会授予 Agent 访问 Docker socket 的权限，docker 组权限接近 root。')).toBeInTheDocument()
     expect(screen.getByText('启用后可在节点详情打开浏览器终端，命令以 Agent 当前运行用户权限运行。')).toBeInTheDocument()
-    expect(installRegion).toHaveTextContent(/curl -fsSL 'http:\/\/panel\.example:8080\/scripts\/install-agent\.sh' -o install-agent\.sh \\\s+&& chmod \+x install-agent\.sh \\\s+&& sudo \.\/install-agent\.sh \\\s+--binary-base-url 'http:\/\/panel\.example:8080\/downloads' \\\s+--server-url 'ws:\/\/panel\.example:8080\/api\/agent\/ws' \\\s+--token 'generated-install-token'/)
+    expect(installRegion).toHaveTextContent(/curl -fsSL 'http:\/\/panel\.example:8080\/scripts\/install-agent\.sh' -o install-agent\.sh \\\s+&& chmod \+x install-agent\.sh \\\s+&& \.\/install-agent\.sh \\\s+--binary-base-url 'http:\/\/panel\.example:8080\/downloads' \\\s+--server-url 'ws:\/\/panel\.example:8080\/api\/agent\/ws' \\\s+--token 'generated-install-token'/)
     expect(installRegion).not.toHaveTextContent('--enable-docker')
     expect(installRegion).toHaveTextContent('--enable-terminal')
 
@@ -174,7 +177,7 @@ describe('App empty state', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '关闭安装命令' }))
 
-    expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
     expect(installButton).toHaveFocus()
   })
 
@@ -185,11 +188,11 @@ describe('App empty state', () => {
     const installButton = screen.getByRole('button', { name: '安装目标主机 Agent 进行采集' })
     fireEvent.click(installButton)
 
-    const installDialog = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     await waitFor(() => expect(installDialog).toHaveFocus())
     fireEvent.keyDown(installDialog, { key: 'Escape' })
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Agent 安装命令' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument())
     expect(installButton).toHaveFocus()
   })
 
@@ -200,8 +203,9 @@ describe('App empty state', () => {
 
     expect(await screen.findByText('暂无节点接入')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '安装目标主机 Agent 进行采集' }))
+    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
-    const installDialog = await screen.findByRole('dialog', { name: 'Agent 安装命令' })
+    const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     expect(await within(installDialog).findByText('安装命令生成失败')).toBeInTheDocument()
     expect(within(installDialog).getByRole('button', { name: '复制安装命令' })).toBeDisabled()
   })

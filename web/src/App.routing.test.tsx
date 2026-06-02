@@ -33,7 +33,9 @@ vi.mock('./api/client', () => ({
   deleteNode: vi.fn(async () => undefined),
   rebootNode: vi.fn(async () => ({ accepted: true })),
   createTerminalSession: vi.fn(async () => ({ token: 'terminal-token' })),
-  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' }))
+  createContainerExecSession: vi.fn(async () => ({ token: 'exec-token' })),
+  startSSHInstall: vi.fn(async () => ({ job_id: 'ssh-install-1' })),
+  startSSHUninstall: vi.fn(async () => ({ job_id: 'ssh-uninstall-1' }))
 }))
 
 describe('App routing', () => {

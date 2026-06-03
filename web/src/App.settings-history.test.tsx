@@ -60,6 +60,9 @@ const metrics: Metric[] = [
     load1: 0.1,
     load5: 0.2,
     load15: 0.3,
+    uptime: 90061,
+    disk_read_speed: 4096,
+    disk_write_speed: 8192,
     created_at: '2026-05-24T10:00:00Z'
   }
 ]
@@ -84,10 +87,15 @@ describe('App history and system settings', () => {
   test('opens the history page and switches metric ranges', async () => {
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '历史记录' }))
+    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
 
     expect(await screen.findByRole('heading', { name: '指标历史记录' })).toBeInTheDocument()
     expect(screen.getAllByText('Oracle SG').length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('region', { name: 'CPU 历史' })).getByText('42.0%')).toBeInTheDocument()
+    const loadChart = screen.getByRole('region', { name: 'Load 走势' })
+    expect(within(loadChart).getByText('0.10')).toBeInTheDocument()
+    expect(within(loadChart).queryByText('0.10%')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: '最近 24 小时' })).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button', { name: '最近 24 小时' }))
     await waitFor(() => expect(getNodeMetrics).toHaveBeenCalledWith('node-1', '24h'))
@@ -98,7 +106,8 @@ describe('App history and system settings', () => {
     vi.mocked(getSettings).mockResolvedValue({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '历史记录' }))
+    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
 
     const longRange = await screen.findByRole('button', { name: '最近 24 小时' })
     expect(longRange).toBeDisabled()
@@ -109,7 +118,8 @@ describe('App history and system settings', () => {
   test('opens system settings and saves metrics retention without restarting', async () => {
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '系统设置' }))
+    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '系统设置' }))
 
     const panel = await screen.findByRole('region', { name: '系统设置' })
     expect(within(panel).getByText('指标保留时间')).toBeInTheDocument()

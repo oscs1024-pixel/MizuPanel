@@ -42,6 +42,11 @@ const messageTypes = {
   }
 } as const
 
+function cssVar(name: string, fallback: string) {
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value ? `rgb(${value})` : fallback
+}
+
 export function TerminalPage({ kind, node, nodeID, container, containerID }: TerminalPageProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState('正在连接...')
@@ -60,7 +65,11 @@ export function TerminalPage({ kind, node, nodeID, container, containerID }: Ter
       convertEol: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#020617', foreground: '#d1fae5', cursor: '#34d399' }
+      theme: {
+        background: cssVar('--terminal-background', '#020617'),
+        foreground: cssVar('--terminal-foreground', '#d1fae5'),
+        cursor: cssVar('--terminal-cursor', '#34d399')
+      }
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
@@ -167,30 +176,30 @@ export function TerminalPage({ kind, node, nodeID, container, containerID }: Ter
     : `${container?.image || '未知镜像'} · 节点 ${node?.name || nodeID}`
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="flex min-h-screen flex-col p-3 sm:p-5">
-        <header className="mb-3 rounded-[28px] border border-slate-800 bg-slate-900/95 px-4 py-3 shadow-2xl shadow-black/30">
+        <header className="mb-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-glass">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-300">{kind === 'node' ? 'Node Terminal' : 'Docker Exec'}</p>
-              <h1 className="mt-1 truncate font-display text-2xl font-black tracking-tight text-white">{title}</h1>
-              <p className="mt-1 truncate text-xs font-bold text-slate-400">{subtitle}</p>
-              <p className="mt-2 text-xs font-bold leading-5 text-amber-200">终端运行在 Agent 服务用户权限下；MizuPanel 不保存 root、sudo、SSH 或 Docker 凭据，也不会绕过系统权限。</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-primary">{kind === 'node' ? 'Node Terminal' : 'Docker Exec'}</p>
+              <h1 className="mt-1 truncate font-display text-2xl font-black tracking-tight text-foreground">{title}</h1>
+              <p className="mt-1 truncate text-xs font-bold text-muted-foreground">{subtitle}</p>
+              <p className="mt-2 text-xs font-bold leading-5 text-warning">终端运行在 Agent 服务用户权限下；MizuPanel 不保存 root、sudo、SSH 或 Docker 凭据，也不会绕过系统权限。</p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-black text-emerald-200">{status}</span>
+              <span className="rounded-xl border border-success/30 bg-success/10 px-3 py-2 text-xs font-black text-success">{status}</span>
               <button
                 type="button"
                 onClick={() => window.close()}
-                className="min-h-10 cursor-pointer rounded-2xl border border-slate-700 bg-slate-800 px-4 text-xs font-black text-slate-100 transition hover:bg-slate-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/20"
+                className="min-h-10 cursor-pointer rounded-xl border border-border bg-card px-4 text-xs font-black text-foreground transition hover:bg-muted focus:outline-none focus:ring-4 focus:ring-primary/20"
               >
                 {closed ? '关闭页面' : '断开/关闭'}
               </button>
             </div>
           </div>
         </header>
-        <section className="min-h-0 flex-1 overflow-hidden rounded-[28px] border border-slate-800 bg-slate-950 shadow-2xl shadow-black/30" aria-label={kind === 'node' ? '节点终端' : '容器终端'}>
-          <div ref={containerRef} className="h-full min-h-[70vh] bg-slate-950 p-3" />
+        <section className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-terminal shadow-glass" aria-label={kind === 'node' ? '节点终端' : '容器终端'}>
+          <div ref={containerRef} className="h-full min-h-[70vh] bg-terminal p-3" />
         </section>
       </div>
     </main>

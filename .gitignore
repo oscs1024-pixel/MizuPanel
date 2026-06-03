@@ -1,4 +1,6 @@
 .claude
+.codex
+AGENTS.md
 
 # Local config
 server.yaml

@@ -5,7 +5,95 @@
 :root {
   color-scheme: light;
   font-family: 'Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', 'WenQuanYi Micro Hei', sans-serif;
-  background: #f2f4f7;
+  --background: 244 247 250;
+  --foreground: 15 23 42;
+  --surface: 248 250 252;
+  --surface-elevated: 255 255 255;
+  --card: 255 255 255;
+  --card-foreground: 15 23 42;
+  --border: 226 232 240;
+  --muted: 241 245 249;
+  --muted-foreground: 100 116 139;
+  --primary: 22 163 74;
+  --primary-foreground: 255 255 255;
+  --secondary: 37 99 235;
+  --secondary-foreground: 255 255 255;
+  --accent: 20 184 166;
+  --success: 5 150 105;
+  --warning: 217 119 6;
+  --danger: 220 38 38;
+  --info: 2 132 199;
+  --sidebar-background: 255 255 255;
+  --sidebar-foreground: 71 85 105;
+  --sidebar-border: 226 232 240;
+  --sidebar-active: 220 252 231;
+  --sidebar-active-foreground: 21 128 61;
+  --header-background: 255 255 255;
+  --header-border: 226 232 240;
+  --panel-background: 255 255 255;
+  --input-background: 255 255 255;
+  --popover-background: 255 255 255;
+  --terminal-background: 10 15 28;
+  --terminal-foreground: 226 232 240;
+  --terminal-cursor: 52 211 153;
+  --code-background: 15 23 42;
+  --code-foreground: 226 232 240;
+  --chart-grid: 226 232 240;
+  --chart-tooltip: 255 255 255;
+  --chart-cpu: 37 99 235;
+  --chart-memory: 5 150 105;
+  --chart-disk: 217 119 6;
+  --chart-network-in: 2 132 199;
+  --chart-network-out: 220 38 38;
+  --chart-load: 124 58 237;
+  --chart-swap: 20 184 166;
+  background: rgb(var(--background));
+}
+
+:root.dark {
+  color-scheme: dark;
+  --background: 8 13 22;
+  --foreground: 226 232 240;
+  --surface: 13 20 32;
+  --surface-elevated: 18 27 42;
+  --card: 15 23 42;
+  --card-foreground: 226 232 240;
+  --border: 45 59 78;
+  --muted: 24 36 54;
+  --muted-foreground: 148 163 184;
+  --primary: 52 211 153;
+  --primary-foreground: 5 46 22;
+  --secondary: 96 165 250;
+  --secondary-foreground: 15 23 42;
+  --accent: 45 212 191;
+  --success: 52 211 153;
+  --warning: 251 191 36;
+  --danger: 248 113 113;
+  --info: 56 189 248;
+  --sidebar-background: 10 15 28;
+  --sidebar-foreground: 148 163 184;
+  --sidebar-border: 31 41 55;
+  --sidebar-active: 6 78 59;
+  --sidebar-active-foreground: 167 243 208;
+  --header-background: 13 20 32;
+  --header-border: 31 41 55;
+  --panel-background: 15 23 42;
+  --input-background: 15 23 42;
+  --popover-background: 15 23 42;
+  --terminal-background: 3 7 18;
+  --terminal-foreground: 226 232 240;
+  --terminal-cursor: 52 211 153;
+  --code-background: 3 7 18;
+  --code-foreground: 226 232 240;
+  --chart-grid: 51 65 85;
+  --chart-tooltip: 15 23 42;
+  --chart-cpu: 96 165 250;
+  --chart-memory: 52 211 153;
+  --chart-disk: 251 191 36;
+  --chart-network-in: 56 189 248;
+  --chart-network-out: 248 113 113;
+  --chart-load: 167 139 250;
+  --chart-swap: 45 212 191;
 }
 
 * {
@@ -15,7 +103,58 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: #f2f4f7;
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+.dark .bg-white,
+.dark .bg-white\/85,
+.dark .bg-white\/90 {
+  background-color: rgb(var(--card) / var(--tw-bg-opacity, 1));
+}
+
+.dark .bg-slate-50,
+.dark .bg-slate-50\/90,
+.dark .bg-slate-100 {
+  background-color: rgb(var(--muted) / var(--tw-bg-opacity, 1));
+}
+
+.dark .bg-slate-950 {
+  background-color: rgb(var(--code-background) / var(--tw-bg-opacity, 1));
+}
+
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800 {
+  color: rgb(var(--foreground) / var(--tw-text-opacity, 1));
+}
+
+.dark .text-slate-700,
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400 {
+  color: rgb(var(--muted-foreground) / var(--tw-text-opacity, 1));
+}
+
+.dark .border-white\/80,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300 {
+  border-color: rgb(var(--border) / var(--tw-border-opacity, 1));
+}
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(var(--border) / var(--tw-divide-opacity, 1));
+}
+
+.dark .shadow-glass,
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark .shadow-xl,
+.dark .shadow-2xl {
+  --tw-shadow-color: rgb(0 0 0 / 0.35);
+  --tw-shadow: 0 18px 50px var(--tw-shadow-color);
 }
 
 @media (prefers-reduced-motion: reduce) {

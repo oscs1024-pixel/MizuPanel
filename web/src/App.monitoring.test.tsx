@@ -38,7 +38,30 @@ const nodesResponse: NodesResponse = {
       kernel: '6.6',
       agent_version: '0.1.0',
       status: 'online',
-      last_seen_at: '2026-05-24T10:00:00Z'
+      last_seen_at: '2026-05-24T10:00:00Z',
+      latest_metric: {
+        id: 1,
+        node_id: 'node-1',
+        cpu_usage: 42,
+        cpu_cores: 4,
+        memory_total: 1024,
+        memory_used: 512,
+        memory_usage: 50,
+        disk_total: 2048,
+        disk_used: 1024,
+        disk_usage: 50,
+        rx_speed: 100,
+        tx_speed: 200,
+        rx_total: 1000,
+        tx_total: 2000,
+        load1: 0.1,
+        load5: 0.2,
+        load15: 0.3,
+        uptime: 90061,
+        disk_read_speed: 4096,
+        disk_write_speed: 8192,
+        created_at: '2026-05-24T10:00:00Z'
+      }
     },
     {
       id: 'node-2',
@@ -97,8 +120,36 @@ describe('node monitoring detail', () => {
     expect(await screen.findByRole('heading', { name: 'Oracle SG' })).toBeInTheDocument()
     await waitFor(() => expect(getNodeProcesses).toHaveBeenCalledWith('node-1'))
     expect(getNodeDocker).toHaveBeenCalledWith('node-1')
-    expect(screen.getByRole('button', { name: '机器基本信息' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('硬件概览')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '监控概览' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('基础信息')).toBeInTheDocument()
+    expect(screen.getByText('操作系统')).toBeInTheDocument()
+    expect(screen.getByText('内核版本')).toBeInTheDocument()
+    expect(screen.getByText('架构')).toBeInTheDocument()
+    expect(screen.getByText('启动时间')).toBeInTheDocument()
+    expect(screen.getByText('运行时间')).toBeInTheDocument()
+    expect(screen.getAllByText('系统负载').length).toBe(2)
+    expect(screen.getByText('1 天 1 小时')).toBeInTheDocument()
+    expect(screen.getByText('1m 0.10 · 5m 0.20 · 15m 0.30')).toBeInTheDocument()
+    expect(screen.queryByText('在线用户')).not.toBeInTheDocument()
+    expect(screen.queryByText('SSH 连接')).not.toBeInTheDocument()
+    const loadChart = screen.getByRole('region', { name: '系统负载' })
+    expect(within(loadChart).getByText('1m')).toBeInTheDocument()
+    expect(within(loadChart).getByText('5m')).toBeInTheDocument()
+    expect(within(loadChart).getByText('15m')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'CPU 使用率' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '内存使用率' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '磁盘使用率' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '网络 I/O' })).toBeInTheDocument()
+    const diskIOChart = screen.getByRole('region', { name: '磁盘 I/O' })
+    expect(within(diskIOChart).getByText('读')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('4.0 KB/s')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('写')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('8.0 KB/s')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '系统负载' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'CPU 使用率' })).getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(within(screen.getByRole('region', { name: 'CPU 使用率' })).getByRole('button', { name: '6h' }))
+    expect(within(screen.getByRole('region', { name: 'CPU 使用率' })).getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(screen.getByRole('region', { name: '内存使用率' })).getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('region', { name: '进程 Top' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Docker 容器' })).not.toBeInTheDocument()
 
@@ -113,6 +164,44 @@ describe('node monitoring detail', () => {
     expect(screen.getByRole('region', { name: 'Docker 容器' })).toHaveTextContent('Docker 24.0.0')
     expect(screen.getByRole('region', { name: 'Docker 容器' })).toHaveTextContent('nginx:latest')
     expect(screen.queryByRole('region', { name: '进程 Top' })).not.toBeInTheDocument()
+  })
+
+  test('uses placeholders for missing disk I/O fields and derives boot time from uptime', async () => {
+    const legacyNodesResponse = {
+      nodes: [{
+        ...nodesResponse.nodes[0],
+        latest_metric: {
+          ...nodesResponse.nodes[0].latest_metric,
+          uptime: 3661,
+          disk_read_speed: undefined,
+          disk_write_speed: undefined,
+          created_at: '2026-05-24T10:00:00Z'
+        }
+      }]
+    } as unknown as NodesResponse
+    vi.mocked(getNodes).mockResolvedValueOnce(legacyNodesResponse)
+    vi.mocked(getNodeMetrics).mockResolvedValueOnce({
+      metrics: [{
+        ...nodesResponse.nodes[0].latest_metric,
+        uptime: 0,
+        disk_read_speed: undefined,
+        disk_write_speed: undefined,
+        created_at: '2026-05-24T10:00:05Z'
+      }]
+    } as unknown as MetricsResponse)
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Oracle SG' })
+    const basicInfo = screen.getByRole('region', { name: '基础信息' })
+    const expectedBootTime = new Date(new Date('2026-05-24T10:00:00Z').getTime() - 3661 * 1000).toLocaleString('zh-CN', { hour12: false })
+    expect(within(basicInfo).getByText('启动时间').closest('div')).toHaveTextContent(expectedBootTime)
+    expect(within(basicInfo).getByText('运行时间').closest('div')).toHaveTextContent('1 小时 1 分钟')
+    const diskIOChart = screen.getByRole('region', { name: '磁盘 I/O' })
+    expect(within(diskIOChart).getByText('读').closest('div')).toHaveTextContent('—')
+    expect(within(diskIOChart).getByText('写').closest('div')).toHaveTextContent('—')
+    expect(diskIOChart).not.toHaveTextContent('NaN')
+    expect(diskIOChart).not.toHaveTextContent('undefined/s')
   })
 
   test('filters and sorts process rows locally', async () => {
@@ -183,7 +272,7 @@ describe('node monitoring detail', () => {
     const dockerRegion = await screen.findByRole('region', { name: 'Docker 容器' })
     await waitFor(() => expect(dockerRegion).toHaveTextContent('Agent 当前用户没有权限访问 Docker'))
 
-    vi.mocked(getNodeDocker).mockResolvedValue(dockerSnapshot)
+    vi.mocked(getNodeDocker).mockResolvedValue({ ...dockerSnapshot, node_id: 'node-2' })
     fireEvent.click(screen.getByRole('button', { name: /Tokyo JP/ }))
     await waitFor(() => expect(getNodeDocker).toHaveBeenCalledWith('node-2'))
     const refreshedDockerRegion = screen.getByRole('region', { name: 'Docker 容器' })

@@ -214,7 +214,7 @@ Use `make package-linux-arm64` and `mizupanel-linux-arm64.tar.gz` instead on arm
 server:
   listen: ":8080" # HTTP listen address for the MizuPanel Server.
   public_url: "" # Public panel URL used to generate Agent install commands; leave empty to infer from the request host.
-  enable_terminal: true # Enables browser terminal routes; Linux Agents must also opt in with features.terminal: true.
+  enable_terminal: true # Enables browser terminal routes; generated Linux Agent configs enable features.terminal by default.
 
 storage:
   driver: "sqlite" # sqlite | mysql. SQLite is the default.
@@ -265,7 +265,7 @@ The release package includes `systemd/mizupanel-server.service` as an example fo
 
 Open the Dashboard and click **Add Host**. For Linux hosts, choose **SSH automatic install** to let the Server use the one-time root SSH credentials you enter for this request only, or choose **manual command install** and run the generated command on the target host. SSH credentials are not stored in the database, echoed back, or written to logs.
 
-The first SSH install/uninstall version only supports Linux root users. It does not support sudo or Windows. Linux manual install/uninstall commands should also be run from a root shell.
+Linux installs default to self-use root ops mode and automatically enable node terminal access and Docker container monitoring. The first SSH install/uninstall version only supports Linux root users. It does not support sudo or Windows. Linux manual install/uninstall commands should also be run from a root shell.
 
 <details>
 <summary>Linux install command example</summary>
@@ -277,8 +277,11 @@ curl -fsSL 'http://your-panel-host:8080/scripts/install-agent.sh' -o install-age
     --binary-base-url 'http://your-panel-host:8080/downloads' \
     --server-url 'ws://your-panel-host:8080/api/agent/ws' \
     --token 'one-time-install-token' \
+    --mode 'ops' \
     --node-id "$(hostname)" \
-    --name "$(hostname)"
+    --name "$(hostname)" \
+    --enable-docker \
+    --enable-terminal
 ```
 
 </details>
@@ -350,11 +353,11 @@ node:
 
 runtime:
   interval: "5s"
-  mode: "normal"
+  mode: "ops"
 
 features:
-  docker: false
-  terminal: false
+  docker: true
+  terminal: true
 ```
 
 ## Token model

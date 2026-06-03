@@ -162,7 +162,7 @@ func TestMetricsMessageJSON(t *testing.T) {
 		},
 		CPU:     CPUInfo{Cores: 4, Usage: 17.6},
 		Memory:  MemoryInfo{Total: 1000, Used: 250, Usage: 25},
-		Disk:    DiskInfo{Total: 2000, Used: 1000, Usage: 50},
+		Disk:    DiskInfo{Total: 2000, Used: 1000, Usage: 50, ReadSpeed: 4096, WriteSpeed: 8192},
 		Network: NetworkInfo{RXSpeed: 10, TXSpeed: 20, RXTotal: 100, TXTotal: 200},
 		Load:    LoadInfo{Load1: 0.2, Load5: 0.1, Load15: 0.05},
 		ProcessSnapshot: &ProcessSnapshot{
@@ -186,7 +186,7 @@ func TestMetricsMessageJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Type != MessageTypeMetrics || got.NodeID != "node-1" || got.CPU.Usage != 17.6 || got.Network.TXTotal != 200 {
+	if got.Type != MessageTypeMetrics || got.NodeID != "node-1" || got.CPU.Usage != 17.6 || got.Network.TXTotal != 200 || got.Disk.ReadSpeed != 4096 || got.Disk.WriteSpeed != 8192 {
 		t.Fatalf("unexpected metrics message: %#v", got)
 	}
 	if got.ProcessSnapshot == nil || len(got.ProcessSnapshot.Processes) != 1 || got.ProcessSnapshot.Processes[0].Command != "nginx -g daemon off" {

@@ -50,6 +50,9 @@ vi.mock('./api/client', () => ({
           load1: 0.1,
           load5: 0.2,
           load15: 0.3,
+          uptime: 90061,
+          disk_read_speed: 4096,
+          disk_write_speed: 8192,
           created_at: '2026-05-24T10:00:00Z'
         }
       }
@@ -85,13 +88,17 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByText('MizuPanel')).toBeInTheDocument()
-    expect(screen.getByText('轻量级自托管服务器监控面板')).toBeInTheDocument()
+    expect(screen.queryByText('MizuPanel Console')).not.toBeInTheDocument()
+    expect(screen.queryByText('轻量级自托管服务器监控面板')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Light' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dark' })).toBeInTheDocument()
     expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
-    expect(screen.getByText('在线节点')).toBeInTheDocument()
+    expect(screen.getByText('平均磁盘')).toBeInTheDocument()
+    expect(screen.getByText('异常节点')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
   })
 
-  test('keeps manual command controls out of the SSH install tab while showing SSH install options', async () => {
+  test('keeps manual command controls out of the SSH install tab and hides fixed install options', async () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
@@ -99,9 +106,12 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'SSH 自动安装' }))
 
     expect(screen.getByLabelText('SSH Host')).toBeInTheDocument()
-    expect(screen.getByLabelText('启用节点终端')).toBeChecked()
-    expect(screen.getByLabelText('启用 Docker 容器监控')).not.toBeChecked()
-    expect(screen.getByRole('button', { name: /普通模式/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
+    expect(screen.queryByText('Agent 运行模式')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /普通模式/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /运维模式/ })).not.toBeInTheDocument()
+    expect(screen.getByText('默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。')).toBeInTheDocument()
     expect(screen.queryByLabelText('选择 Agent 安装系统')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '复制安装命令' })).not.toBeInTheDocument()
     expect(screen.queryByText('token 来源：点击添加主机时，Server 会自动生成一次性 install_token。')).not.toBeInTheDocument()
@@ -115,10 +125,9 @@ describe('App', () => {
     expect(await screen.findByRole('dialog', { name: '添加主机' })).toBeInTheDocument()
     await waitFor(() => expect(createInstallCommand).not.toHaveBeenCalled())
 
-    fireEvent.click(screen.getByLabelText('启用 Docker 容器监控'))
-    fireEvent.click(screen.getByLabelText('启用节点终端'))
-    fireEvent.click(screen.getByRole('button', { name: /运维模式/ }))
-
+    expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /运维模式/ })).not.toBeInTheDocument()
     expect(createInstallCommand).not.toHaveBeenCalled()
   })
 
@@ -199,8 +208,8 @@ describe('App', () => {
       node_id: 'node-ssh',
       name: 'SSH Node',
       enable_terminal: true,
-      enable_docker: false,
-      mode: 'normal'
+      enable_docker: true,
+      mode: 'ops'
     })))
     expect(await screen.findByText('SSH 安装任务已创建：ssh-install-1')).toBeInTheDocument()
     expect(eventSources[0]?.url).toBe('/api/install/ssh/ssh-install-1/events')

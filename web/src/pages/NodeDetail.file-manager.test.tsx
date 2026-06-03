@@ -117,9 +117,7 @@ describe('NodeDetail file manager operations', () => {
     expect(await screen.findByText('重启命令已发送，节点可能会暂时离线，请稍后等待 Agent 重新连接。')).toBeInTheDocument()
   })
 
-  test('removes node records from an in-panel danger dialog', async () => {
-    const onDeleteNode = vi.fn(async () => undefined)
-
+  test('keeps node actions on the detail header right without a separate remove-node action', () => {
     render(
       <NodeDetail
         node={node}
@@ -128,20 +126,15 @@ describe('NodeDetail file manager operations', () => {
         dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
         range="1h"
         onRangeChange={vi.fn()}
-        onDeleteNode={onDeleteNode}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
-    const dialog = screen.getByRole('dialog', { name: '移除节点记录' })
-    expect(within(dialog).getByText(/不会停止目标机器上的 Agent/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/不会卸载目标机器上的 Agent/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/建议先按 README 中的卸载命令卸载 Agent/)).toBeInTheDocument()
-
-    fireEvent.click(within(dialog).getByRole('button', { name: '确认移除' }))
-
-    expect(onDeleteNode).toHaveBeenCalledWith('node-1')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument())
+    const actions = screen.getByRole('toolbar', { name: '节点操作' })
+    expect(within(actions).getByRole('button', { name: '打开终端' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: '文件' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: '重启' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: '卸载 Agent' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '移除节点记录' })).not.toBeInTheDocument()
   })
 
   test('groups SSH uninstall step logs and closes from the bottom after completion', async () => {
@@ -159,8 +152,8 @@ describe('NodeDetail file manager operations', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'SSH 卸载 Agent' }))
-    const dialog = screen.getByRole('dialog', { name: 'SSH 卸载 Agent' })
+    fireEvent.click(screen.getByRole('button', { name: '卸载 Agent' }))
+    const dialog = screen.getByRole('dialog', { name: '卸载 Agent' })
     expect(within(dialog).getByDisplayValue('10.0.0.1')).toBeInTheDocument()
     expect(within(dialog).getByDisplayValue('root')).toBeInTheDocument()
     fireEvent.change(within(dialog).getByLabelText('SSH 密码'), { target: { value: 'secret' } })
@@ -187,28 +180,7 @@ describe('NodeDetail file manager operations', () => {
     expect(within(dialog).getAllByText('执行卸载')).toHaveLength(1)
     expect(within(dialog).getAllByText('成功').length).toBeGreaterThan(0)
     fireEvent.click(within(dialog).getByRole('button', { name: '完成并关闭' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'SSH 卸载 Agent' })).not.toBeInTheDocument())
-  })
-
-  test('keeps node records when the in-panel remove dialog is cancelled', () => {
-    const onDeleteNode = vi.fn(async () => undefined)
-
-    render(
-      <NodeDetail
-        node={node}
-        metrics={[]}
-        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
-        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
-        range="1h"
-        onRangeChange={vi.fn()}
-        onDeleteNode={onDeleteNode}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(onDeleteNode).not.toHaveBeenCalled()
-    expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '卸载 Agent' })).not.toBeInTheDocument())
   })
 
   test('shows reboot feedback from the default overview view', async () => {

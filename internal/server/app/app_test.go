@@ -117,8 +117,8 @@ func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 	if strings.Contains(command, "<install_token>") || strings.Contains(command, "agent_token") {
 		t.Fatalf("install command exposed placeholder or global token language: %s", body)
 	}
-	if !strings.Contains(command, "--mode 'normal'") {
-		t.Fatalf("default install command missing normal mode: %s", body)
+	if !strings.Contains(command, "--mode 'ops'") {
+		t.Fatalf("default install command missing ops mode: %s", body)
 	}
 	if strings.Contains(command, "sudo ./install-agent.sh") {
 		t.Fatalf("linux install command should be root-only and not use sudo: %s", body)
@@ -126,11 +126,11 @@ func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {
 	if !strings.Contains(command, "&& ./install-agent.sh") {
 		t.Fatalf("linux install command should execute installer directly as root: %s", body)
 	}
-	if strings.Contains(command, "--enable-docker") {
-		t.Fatalf("default install command contains Docker opt-in flag: %s", body)
+	if !strings.Contains(command, "--enable-docker") {
+		t.Fatalf("default install command missing Docker flag: %s", body)
 	}
-	if strings.Contains(command, "--enable-terminal") {
-		t.Fatalf("default install command contains terminal opt-in flag: %s", body)
+	if !strings.Contains(command, "--enable-terminal") {
+		t.Fatalf("default install command missing terminal flag: %s", body)
 	}
 }
 
@@ -386,7 +386,7 @@ func TestNewHandlerStartsSSHInstallJob(t *testing.T) {
 		SSHInstallPollInterval: time.Millisecond,
 	})
 
-	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1","enable_terminal":true}`)
+	body := strings.NewReader(`{"host":"192.168.1.10","username":"root","auth_type":"password","password":"secret","node_id":"node-1","name":"Node 1","enable_terminal":false,"enable_docker":false,"mode":"normal"}`)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/install/ssh", body)
 	request.Host = "panel.example"
@@ -413,7 +413,7 @@ func TestNewHandlerStartsSSHInstallJob(t *testing.T) {
 	if job == nil || job.Status != sshops.ProgressSuccess {
 		t.Fatalf("job = %#v, want success", job)
 	}
-	if runner.install.Host != "192.168.1.10" || runner.install.Username != "root" || !runner.install.EnableTerminal {
+	if runner.install.Host != "192.168.1.10" || runner.install.Username != "root" || !runner.install.EnableTerminal || !runner.install.EnableDocker || runner.install.Mode != string(installModeOps) {
 		t.Fatalf("runner install request = %#v", runner.install)
 	}
 	events := jobs.Events(response.JobID)

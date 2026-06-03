@@ -274,9 +274,11 @@ type MemoryInfo struct {
 }
 
 type DiskInfo struct {
-	Total int64   `json:"total"`
-	Used  int64   `json:"used"`
-	Usage float64 `json:"usage"`
+	Total      int64   `json:"total"`
+	Used       int64   `json:"used"`
+	Usage      float64 `json:"usage"`
+	ReadSpeed  int64   `json:"read_speed"`
+	WriteSpeed int64   `json:"write_speed"`
 }
 
 type NetworkInfo struct {

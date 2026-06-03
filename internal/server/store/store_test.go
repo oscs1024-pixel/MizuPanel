@@ -325,7 +325,7 @@ func TestMetricInsertAndRangeQuery(t *testing.T) {
 	}
 
 	oldMetric := Metric{NodeID: "node-1", CPUUsage: 10, CreatedAt: base.Add(-2 * time.Hour)}
-	newMetric := Metric{NodeID: "node-1", CPUUsage: 20, CreatedAt: base.Add(-30 * time.Minute)}
+	newMetric := Metric{NodeID: "node-1", CPUUsage: 20, Uptime: 86400, DiskReadSpeed: 4096, DiskWriteSpeed: 8192, CreatedAt: base.Add(-30 * time.Minute)}
 	otherNode := Metric{NodeID: "node-2", CPUUsage: 99, CreatedAt: base.Add(-20 * time.Minute)}
 	for _, metric := range []Metric{oldMetric, newMetric, otherNode} {
 		if err := metrics.Insert(t.Context(), metric); err != nil {
@@ -340,8 +340,8 @@ func TestMetricInsertAndRangeQuery(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len(got) = %d, want 1", len(got))
 	}
-	if got[0].CPUUsage != 20 {
-		t.Fatalf("CPUUsage = %v, want 20", got[0].CPUUsage)
+	if got[0].CPUUsage != 20 || got[0].Uptime != 86400 || got[0].DiskReadSpeed != 4096 || got[0].DiskWriteSpeed != 8192 {
+		t.Fatalf("metric = %#v", got[0])
 	}
 }
 

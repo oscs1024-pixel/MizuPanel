@@ -67,7 +67,7 @@ func TestListNodesIncludesLatestMetric(t *testing.T) {
 	}
 	for _, metric := range []store.Metric{
 		{NodeID: "node-1", CPUUsage: 10, MemoryUsage: 20, DiskUsage: 30, CreatedAt: now.Add(-time.Minute)},
-		{NodeID: "node-1", CPUUsage: 40, MemoryUsage: 50, DiskUsage: 60, CreatedAt: now},
+		{NodeID: "node-1", CPUUsage: 40, MemoryUsage: 50, DiskUsage: 60, Uptime: 86400, DiskReadSpeed: 4096, DiskWriteSpeed: 8192, CreatedAt: now},
 	} {
 		if err := metrics.Insert(t.Context(), metric); err != nil {
 			t.Fatalf("insert metric: %v", err)
@@ -87,7 +87,7 @@ func TestListNodesIncludesLatestMetric(t *testing.T) {
 	if len(response.Nodes) != 1 {
 		t.Fatalf("len(nodes) = %d, want 1", len(response.Nodes))
 	}
-	if response.Nodes[0].LatestMetric == nil || response.Nodes[0].LatestMetric.CPUUsage != 40 {
+	if response.Nodes[0].LatestMetric == nil || response.Nodes[0].LatestMetric.CPUUsage != 40 || response.Nodes[0].LatestMetric.Uptime != 86400 || response.Nodes[0].LatestMetric.DiskReadSpeed != 4096 || response.Nodes[0].LatestMetric.DiskWriteSpeed != 8192 {
 		t.Fatalf("latest metric = %#v", response.Nodes[0].LatestMetric)
 	}
 }
@@ -264,7 +264,7 @@ func TestMetricsRangeReturnsRows(t *testing.T) {
 	if err := nodes.Upsert(t.Context(), store.Node{ID: "node-1", Name: "Oracle", Status: "online", LastSeenAt: now}); err != nil {
 		t.Fatalf("upsert node: %v", err)
 	}
-	if err := metrics.Insert(t.Context(), store.Metric{NodeID: "node-1", CPUUsage: 33, CreatedAt: now.Add(-30 * time.Minute)}); err != nil {
+	if err := metrics.Insert(t.Context(), store.Metric{NodeID: "node-1", CPUUsage: 33, Uptime: 86400, DiskReadSpeed: 4096, DiskWriteSpeed: 8192, CreatedAt: now.Add(-30 * time.Minute)}); err != nil {
 		t.Fatalf("insert metric: %v", err)
 	}
 

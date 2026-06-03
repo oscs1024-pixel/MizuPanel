@@ -265,7 +265,7 @@ Release 包内置 `systemd/mizupanel-server.service` 示例，适合安装到 `/
 
 打开 Dashboard，点击 **添加主机**。Linux 主机可以选择 **SSH 自动安装**，由 Server 一次性使用你输入的 root SSH 凭据完成安装；也可以选择 **手动命令安装**，复制命令到目标机器执行。SSH 凭据不会保存到数据库、不会回显，也不会写入日志。
 
-第一版 SSH 自动安装/卸载只支持 Linux root 用户，不支持 sudo 和 Windows。Linux 手动安装/卸载命令也要求在 root shell 中执行。
+Linux 安装默认按自用 root 运维模式执行，会自动启用节点终端和 Docker 容器监控。第一版 SSH 自动安装/卸载只支持 Linux root 用户，不支持 sudo 和 Windows。Linux 手动安装/卸载命令也要求在 root shell 中执行。
 
 <details>
 <summary>Linux 安装命令示例</summary>
@@ -277,8 +277,11 @@ curl -fsSL 'http://你的面板地址:8080/scripts/install-agent.sh' -o install-
     --binary-base-url 'http://你的面板地址:8080/downloads' \
     --server-url 'ws://你的面板地址:8080/api/agent/ws' \
     --token 'one-time-install-token' \
+    --mode 'ops' \
     --node-id "$(hostname)" \
-    --name "$(hostname)"
+    --name "$(hostname)" \
+    --enable-docker \
+    --enable-terminal
 ```
 
 </details>
@@ -350,11 +353,11 @@ node:
 
 runtime:
   interval: "5s"
-  mode: "normal"
+  mode: "ops"
 
 features:
-  docker: false
-  terminal: false
+  docker: true
+  terminal: true
 ```
 
 ## Token 模型

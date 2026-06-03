@@ -7,24 +7,27 @@ import (
 )
 
 type Metric struct {
-	ID          int64
-	NodeID      string
-	CPUUsage    float64
-	CPUCores    int
-	MemoryTotal int64
-	MemoryUsed  int64
-	MemoryUsage float64
-	DiskTotal   int64
-	DiskUsed    int64
-	DiskUsage   float64
-	RXSpeed     int64
-	TXSpeed     int64
-	RXTotal     int64
-	TXTotal     int64
-	Load1       float64
-	Load5       float64
-	Load15      float64
-	CreatedAt   time.Time
+	ID             int64
+	NodeID         string
+	CPUUsage       float64
+	CPUCores       int
+	MemoryTotal    int64
+	MemoryUsed     int64
+	MemoryUsage    float64
+	DiskTotal      int64
+	DiskUsed       int64
+	DiskUsage      float64
+	Uptime         int64
+	DiskReadSpeed  int64
+	DiskWriteSpeed int64
+	RXSpeed        int64
+	TXSpeed        int64
+	RXTotal        int64
+	TXTotal        int64
+	Load1          float64
+	Load5          float64
+	Load15         float64
+	CreatedAt      time.Time
 }
 
 type MetricStore struct {
@@ -42,12 +45,12 @@ func (s *MetricStore) Insert(ctx context.Context, metric Metric) error {
 	result, err := s.db.ExecContext(ctx, `
 			INSERT INTO node_metrics (
 				node_id, cpu_usage, cpu_cores, memory_total, memory_used, memory_usage,
-				disk_total, disk_used, disk_usage, rx_speed, tx_speed, rx_total, tx_total,
-				load1, load5, load15, created_at
+				disk_total, disk_used, disk_usage, uptime, disk_read_speed, disk_write_speed,
+				rx_speed, tx_speed, rx_total, tx_total, load1, load5, load15, created_at
 			)
-			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?)
-		`, metric.NodeID, metric.CPUUsage, metric.CPUCores, metric.MemoryTotal, metric.MemoryUsed, metric.MemoryUsage, metric.DiskTotal, metric.DiskUsed, metric.DiskUsage, metric.RXSpeed, metric.TXSpeed, metric.RXTotal, metric.TXTotal, metric.Load1, metric.Load5, metric.Load15, formatTime(metric.CreatedAt), metric.NodeID)
+		`, metric.NodeID, metric.CPUUsage, metric.CPUCores, metric.MemoryTotal, metric.MemoryUsed, metric.MemoryUsage, metric.DiskTotal, metric.DiskUsed, metric.DiskUsage, metric.Uptime, metric.DiskReadSpeed, metric.DiskWriteSpeed, metric.RXSpeed, metric.TXSpeed, metric.RXTotal, metric.TXTotal, metric.Load1, metric.Load5, metric.Load15, formatTime(metric.CreatedAt), metric.NodeID)
 	if err != nil {
 		return err
 	}
@@ -64,8 +67,8 @@ func (s *MetricStore) Insert(ctx context.Context, metric Metric) error {
 func (s *MetricStore) ListRange(ctx context.Context, nodeID string, from time.Time, to time.Time) ([]Metric, error) {
 	rows, err := s.db.QueryContext(ctx, `
 			SELECT id, node_id, cpu_usage, cpu_cores, memory_total, memory_used, memory_usage,
-				disk_total, disk_used, disk_usage, rx_speed, tx_speed, rx_total, tx_total,
-				load1, load5, load15, created_at
+				disk_total, disk_used, disk_usage, uptime, disk_read_speed, disk_write_speed,
+				rx_speed, tx_speed, rx_total, tx_total, load1, load5, load15, created_at
 			FROM node_metrics
 			WHERE node_id = ? AND created_at >= ? AND created_at <= ?
 			ORDER BY created_at ASC
@@ -89,8 +92,8 @@ func (s *MetricStore) ListRange(ctx context.Context, nodeID string, from time.Ti
 func (s *MetricStore) Latest(ctx context.Context, nodeID string) (Metric, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
 			SELECT id, node_id, cpu_usage, cpu_cores, memory_total, memory_used, memory_usage,
-				disk_total, disk_used, disk_usage, rx_speed, tx_speed, rx_total, tx_total,
-				load1, load5, load15, created_at
+				disk_total, disk_used, disk_usage, uptime, disk_read_speed, disk_write_speed,
+				rx_speed, tx_speed, rx_total, tx_total, load1, load5, load15, created_at
 			FROM node_metrics
 			WHERE node_id = ?
 			ORDER BY created_at DESC
@@ -121,7 +124,7 @@ type metricScanner interface {
 func scanMetric(scanner metricScanner) (Metric, error) {
 	var metric Metric
 	var createdAt string
-	if err := scanner.Scan(&metric.ID, &metric.NodeID, &metric.CPUUsage, &metric.CPUCores, &metric.MemoryTotal, &metric.MemoryUsed, &metric.MemoryUsage, &metric.DiskTotal, &metric.DiskUsed, &metric.DiskUsage, &metric.RXSpeed, &metric.TXSpeed, &metric.RXTotal, &metric.TXTotal, &metric.Load1, &metric.Load5, &metric.Load15, &createdAt); err != nil {
+	if err := scanner.Scan(&metric.ID, &metric.NodeID, &metric.CPUUsage, &metric.CPUCores, &metric.MemoryTotal, &metric.MemoryUsed, &metric.MemoryUsage, &metric.DiskTotal, &metric.DiskUsed, &metric.DiskUsage, &metric.Uptime, &metric.DiskReadSpeed, &metric.DiskWriteSpeed, &metric.RXSpeed, &metric.TXSpeed, &metric.RXTotal, &metric.TXTotal, &metric.Load1, &metric.Load5, &metric.Load15, &createdAt); err != nil {
 		return Metric{}, err
 	}
 	parsed, err := parseTime(createdAt)

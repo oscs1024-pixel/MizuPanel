@@ -25,24 +25,27 @@ type NodeResponse struct {
 }
 
 type MetricResponse struct {
-	ID          int64     `json:"id"`
-	NodeID      string    `json:"node_id"`
-	CPUUsage    float64   `json:"cpu_usage"`
-	CPUCores    int       `json:"cpu_cores"`
-	MemoryTotal int64     `json:"memory_total"`
-	MemoryUsed  int64     `json:"memory_used"`
-	MemoryUsage float64   `json:"memory_usage"`
-	DiskTotal   int64     `json:"disk_total"`
-	DiskUsed    int64     `json:"disk_used"`
-	DiskUsage   float64   `json:"disk_usage"`
-	RXSpeed     int64     `json:"rx_speed"`
-	TXSpeed     int64     `json:"tx_speed"`
-	RXTotal     int64     `json:"rx_total"`
-	TXTotal     int64     `json:"tx_total"`
-	Load1       float64   `json:"load1"`
-	Load5       float64   `json:"load5"`
-	Load15      float64   `json:"load15"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	NodeID         string    `json:"node_id"`
+	CPUUsage       float64   `json:"cpu_usage"`
+	CPUCores       int       `json:"cpu_cores"`
+	MemoryTotal    int64     `json:"memory_total"`
+	MemoryUsed     int64     `json:"memory_used"`
+	MemoryUsage    float64   `json:"memory_usage"`
+	DiskTotal      int64     `json:"disk_total"`
+	DiskUsed       int64     `json:"disk_used"`
+	DiskUsage      float64   `json:"disk_usage"`
+	Uptime         int64     `json:"uptime"`
+	DiskReadSpeed  int64     `json:"disk_read_speed"`
+	DiskWriteSpeed int64     `json:"disk_write_speed"`
+	RXSpeed        int64     `json:"rx_speed"`
+	TXSpeed        int64     `json:"tx_speed"`
+	RXTotal        int64     `json:"rx_total"`
+	TXTotal        int64     `json:"tx_total"`
+	Load1          float64   `json:"load1"`
+	Load5          float64   `json:"load5"`
+	Load15         float64   `json:"load15"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type ProcessSnapshotResponse struct {
@@ -80,23 +83,26 @@ func nodeResponse(node store.Node) NodeResponse {
 
 func metricResponse(metric store.Metric) MetricResponse {
 	return MetricResponse{
-		ID:          metric.ID,
-		NodeID:      metric.NodeID,
-		CPUUsage:    metric.CPUUsage,
-		CPUCores:    metric.CPUCores,
-		MemoryTotal: metric.MemoryTotal,
-		MemoryUsed:  metric.MemoryUsed,
-		MemoryUsage: metric.MemoryUsage,
-		DiskTotal:   metric.DiskTotal,
-		DiskUsed:    metric.DiskUsed,
-		DiskUsage:   metric.DiskUsage,
-		RXSpeed:     metric.RXSpeed,
-		TXSpeed:     metric.TXSpeed,
-		RXTotal:     metric.RXTotal,
-		TXTotal:     metric.TXTotal,
-		Load1:       metric.Load1,
-		Load5:       metric.Load5,
-		Load15:      metric.Load15,
-		CreatedAt:   metric.CreatedAt,
+		ID:             metric.ID,
+		NodeID:         metric.NodeID,
+		CPUUsage:       metric.CPUUsage,
+		CPUCores:       metric.CPUCores,
+		MemoryTotal:    metric.MemoryTotal,
+		MemoryUsed:     metric.MemoryUsed,
+		MemoryUsage:    metric.MemoryUsage,
+		DiskTotal:      metric.DiskTotal,
+		DiskUsed:       metric.DiskUsed,
+		DiskUsage:      metric.DiskUsage,
+		Uptime:         metric.Uptime,
+		DiskReadSpeed:  metric.DiskReadSpeed,
+		DiskWriteSpeed: metric.DiskWriteSpeed,
+		RXSpeed:        metric.RXSpeed,
+		TXSpeed:        metric.TXSpeed,
+		RXTotal:        metric.RXTotal,
+		TXTotal:        metric.TXTotal,
+		Load1:          metric.Load1,
+		Load5:          metric.Load5,
+		Load15:         metric.Load15,
+		CreatedAt:      metric.CreatedAt,
 	}
 }

@@ -217,11 +217,6 @@ func handleSSHInstall(w http.ResponseWriter, r *http.Request, nodes *store.NodeS
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	mode, ok := parseInstallMode(request.Mode)
-	if !ok {
-		http.Error(w, "unsupported install mode", http.StatusBadRequest)
-		return
-	}
 	installToken, err := randomToken()
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -239,9 +234,9 @@ func handleSSHInstall(w http.ResponseWriter, r *http.Request, nodes *store.NodeS
 		Token:          installToken,
 		NodeID:         request.NodeID,
 		Name:           request.Name,
-		EnableTerminal: request.EnableTerminal,
-		EnableDocker:   request.EnableDocker,
-		Mode:           string(mode),
+		EnableTerminal: true,
+		EnableDocker:   true,
+		Mode:           string(installModeOps),
 	}
 	secrets := []string{request.Password, request.PrivateKey, request.Passphrase, installToken}
 	if waitTimeout == 0 {
@@ -431,11 +426,6 @@ func handleInstallCommand(w http.ResponseWriter, r *http.Request, publicURL stri
 		http.Error(w, "unsupported install platform", http.StatusBadRequest)
 		return
 	}
-	mode, ok := parseInstallMode(r.URL.Query().Get("mode"))
-	if !ok || platform == installPlatformWindows && mode == installModeOps {
-		http.Error(w, "unsupported install mode", http.StatusBadRequest)
-		return
-	}
 	installToken, err := randomToken()
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -446,9 +436,9 @@ func handleInstallCommand(w http.ResponseWriter, r *http.Request, publicURL stri
 		return
 	}
 	baseURL, wsURL := installURLs(publicURL, r)
-	enableDocker := platform == installPlatformLinux && r.URL.Query().Get("enable_docker") == "true"
-	enableTerminal := platform == installPlatformLinux && r.URL.Query().Get("enable_terminal") == "true"
-	command := linuxInstallCommand(baseURL, wsURL, installToken, enableDocker, enableTerminal, mode)
+	enableDocker := platform == installPlatformLinux
+	enableTerminal := platform == installPlatformLinux
+	command := linuxInstallCommand(baseURL, wsURL, installToken, enableDocker, enableTerminal, installModeOps)
 	if platform == installPlatformWindows {
 		command = windowsInstallCommand(baseURL, wsURL, installToken)
 	}

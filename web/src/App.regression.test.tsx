@@ -71,6 +71,9 @@ const metric: Metric = {
   load1: 0.1,
   load5: 0.2,
   load15: 0.3,
+  uptime: 90061,
+  disk_read_speed: 4096,
+  disk_write_speed: 8192,
   created_at: '2026-05-24T10:00:00Z'
 }
 
@@ -116,22 +119,17 @@ describe('App regression behavior', () => {
     expect(screen.getAllByText('等待指标数据').length).toBeGreaterThan(0)
   })
 
-  test('removes the selected node record and refreshes the remaining node', async () => {
+  test('does not show a separate remove-node action because Agent uninstall handles cleanup', async () => {
     window.history.pushState({}, '', '/')
-    vi.mocked(getNodes)
-      .mockResolvedValueOnce({ nodes })
-      .mockResolvedValueOnce({ nodes: [nodes[1]] })
+    vi.mocked(getNodes).mockResolvedValueOnce({ nodes })
     vi.mocked(getNodeMetrics).mockResolvedValue({ metrics: [] })
 
     render(<App />)
 
     expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
-    fireEvent.click(screen.getByRole('button', { name: '移除节点记录' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认移除' }))
-
-    await waitFor(() => expect(deleteNode).toHaveBeenCalledWith('node-1'))
-    expect(await screen.findAllByText('Tokyo JP')).toHaveLength(2)
-    expect(screen.queryByText('Oracle SG')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '移除节点记录' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '移除节点记录' })).not.toBeInTheDocument()
+    expect(deleteNode).not.toHaveBeenCalled()
   })
 
   test('shows a dashboard error when nodes fail without opening login', async () => {

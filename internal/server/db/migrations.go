@@ -48,6 +48,9 @@ func sqliteMigrationStatements() []string {
 					disk_total INTEGER,
 					disk_used INTEGER,
 					disk_usage REAL,
+					uptime INTEGER DEFAULT 0,
+					disk_read_speed INTEGER DEFAULT 0,
+					disk_write_speed INTEGER DEFAULT 0,
 					rx_speed INTEGER,
 					tx_speed INTEGER,
 					rx_total INTEGER,
@@ -127,6 +130,9 @@ func mysqlMigrationStatements() []string {
 					disk_total BIGINT,
 					disk_used BIGINT,
 					disk_usage DOUBLE,
+					uptime BIGINT DEFAULT 0,
+					disk_read_speed BIGINT DEFAULT 0,
+					disk_write_speed BIGINT DEFAULT 0,
 					rx_speed BIGINT,
 					tx_speed BIGINT,
 					rx_total BIGINT,
@@ -191,6 +197,11 @@ func migrateStatements(db *sql.DB, dialect Dialect, statements []string) error {
 			return err
 		}
 	}
+	for _, statement := range metricCompatibilityColumnStatements(dialect) {
+		if err := addColumnIfMissing(db, statement); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`UPDATE nodes SET agent_mode = COALESCE(NULLIF(agent_mode, ''), 'normal'), agent_user = COALESCE(agent_user, '')`)
 	return err
 }
@@ -205,6 +216,21 @@ func nodeCompatibilityColumnStatements(dialect Dialect) []string {
 	return []string{
 		`ALTER TABLE nodes ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'normal'`,
 		`ALTER TABLE nodes ADD COLUMN agent_user TEXT NOT NULL DEFAULT ''`,
+	}
+}
+
+func metricCompatibilityColumnStatements(dialect Dialect) []string {
+	if dialect == DialectMySQL {
+		return []string{
+			`ALTER TABLE node_metrics ADD COLUMN uptime BIGINT DEFAULT 0`,
+			`ALTER TABLE node_metrics ADD COLUMN disk_read_speed BIGINT DEFAULT 0`,
+			`ALTER TABLE node_metrics ADD COLUMN disk_write_speed BIGINT DEFAULT 0`,
+		}
+	}
+	return []string{
+		`ALTER TABLE node_metrics ADD COLUMN uptime INTEGER DEFAULT 0`,
+		`ALTER TABLE node_metrics ADD COLUMN disk_read_speed INTEGER DEFAULT 0`,
+		`ALTER TABLE node_metrics ADD COLUMN disk_write_speed INTEGER DEFAULT 0`,
 	}
 }
 

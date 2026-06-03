@@ -59,31 +59,13 @@ describe('api client', () => {
     expect(result.command).toBe('install')
   })
 
-  test('creates linux install commands with Docker opt-in', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ command: 'install --enable-docker', install_token: 'token' })))
+  test('does not expose linux install strategy options through query params', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ command: 'install --mode ops --enable-docker --enable-terminal', install_token: 'token' })))
 
-    const result = await createInstallCommand('linux', { enableDocker: true })
+    const result = await createInstallCommand('linux', { enableDocker: false, enableTerminal: false, mode: 'normal' })
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/install/command?platform=linux&enable_docker=true', { method: 'POST' })
-    expect(result.command).toBe('install --enable-docker')
-  })
-
-  test('creates linux install commands with ops mode', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ command: 'install --mode ops', install_token: 'token' })))
-
-    const result = await createInstallCommand('linux', { mode: 'ops' })
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/install/command?platform=linux&mode=ops', { method: 'POST' })
-    expect(result.command).toBe('install --mode ops')
-  })
-
-  test('creates linux install commands with terminal opt-in', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ command: 'install --enable-terminal', install_token: 'token' })))
-
-    const result = await createInstallCommand('linux', { enableTerminal: true })
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/install/command?platform=linux&enable_terminal=true', { method: 'POST' })
-    expect(result.command).toBe('install --enable-terminal')
+    expect(fetchMock).toHaveBeenCalledWith('/api/install/command?platform=linux', { method: 'POST' })
+    expect(result.command).toBe('install --mode ops --enable-docker --enable-terminal')
   })
 
   test('creates windows install commands', async () => {
@@ -95,10 +77,10 @@ describe('api client', () => {
     expect(result.command).toBe('install-windows')
   })
 
-  test('does not send linux opt-ins for windows install commands', async () => {
+  test('does not send linux install strategy options for windows install commands', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ command: 'install-windows', install_token: 'token' })))
 
-    await createInstallCommand('windows', { enableDocker: true, enableTerminal: true })
+    await createInstallCommand('windows', { enableDocker: true, enableTerminal: true, mode: 'ops' })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/install/command?platform=windows', { method: 'POST' })
   })
@@ -175,8 +157,8 @@ describe('api client', () => {
       node_id: 'node-1',
       name: 'Node 1',
       enable_terminal: true,
-      enable_docker: false,
-      mode: 'normal'
+      enable_docker: true,
+      mode: 'ops'
     })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/install/ssh', {
@@ -191,8 +173,8 @@ describe('api client', () => {
         node_id: 'node-1',
         name: 'Node 1',
         enable_terminal: true,
-        enable_docker: false,
-        mode: 'normal'
+        enable_docker: true,
+        mode: 'ops'
       })
     })
     expect(result.job_id).toBe('ssh-install-1')

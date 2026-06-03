@@ -501,9 +501,10 @@ func TestAgentWebSocketRegistersNodeAndStoresMetrics(t *testing.T) {
 		Type:      protocol.MessageTypeMetrics,
 		NodeID:    ack.NodeID,
 		Timestamp: time.Now().Unix(),
+		System:    protocol.SystemInfo{Uptime: 86400},
 		CPU:       protocol.CPUInfo{Cores: 4, Usage: 12.5},
 		Memory:    protocol.MemoryInfo{Total: 1000, Used: 500, Usage: 50},
-		Disk:      protocol.DiskInfo{Total: 2000, Used: 500, Usage: 25},
+		Disk:      protocol.DiskInfo{Total: 2000, Used: 500, Usage: 25, ReadSpeed: 4096, WriteSpeed: 8192},
 		Network:   protocol.NetworkInfo{RXSpeed: 10, TXSpeed: 20, RXTotal: 100, TXTotal: 200},
 		Load:      protocol.LoadInfo{Load1: 0.1, Load5: 0.2, Load15: 0.3},
 	}); err != nil {
@@ -529,7 +530,7 @@ func TestAgentWebSocketRegistersNodeAndStoresMetrics(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(gotMetrics) != 1 || gotMetrics[0].CPUUsage != 12.5 || gotMetrics[0].TXTotal != 200 {
+	if len(gotMetrics) != 1 || gotMetrics[0].CPUUsage != 12.5 || gotMetrics[0].TXTotal != 200 || gotMetrics[0].Uptime != 86400 || gotMetrics[0].DiskReadSpeed != 4096 || gotMetrics[0].DiskWriteSpeed != 8192 {
 		t.Fatalf("metrics = %#v", gotMetrics)
 	}
 }

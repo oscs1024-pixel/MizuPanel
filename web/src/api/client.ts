@@ -49,17 +49,9 @@ export function getNodeMetrics(nodeID: string, range: RangeOption): Promise<Metr
   return request<MetricsResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/metrics?range=${range}`)
 }
 
-export function createInstallCommand(platform: InstallPlatform = 'linux', options: InstallCommandOptions = {}): Promise<InstallCommandResponse> {
+export function createInstallCommand(platform: InstallPlatform = 'linux', _options: InstallCommandOptions = {}): Promise<InstallCommandResponse> {
+  void _options
   const params = new URLSearchParams({ platform })
-  if (platform === 'linux' && options.enableDocker) {
-    params.set('enable_docker', 'true')
-  }
-  if (platform === 'linux' && options.enableTerminal) {
-    params.set('enable_terminal', 'true')
-  }
-  if (platform === 'linux' && options.mode) {
-    params.set('mode', options.mode)
-  }
   return request<InstallCommandResponse>(`/api/install/command?${params.toString()}`, { method: 'POST' })
 }
 

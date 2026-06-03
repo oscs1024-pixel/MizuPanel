@@ -14,8 +14,12 @@ import (
 )
 
 type Collector struct {
-	previousNet   *netio.IOCountersStat
-	previousNetAt time.Time
+	previousNet        *netio.IOCountersStat
+	previousNetAt      time.Time
+	previousDiskRead   uint64
+	previousDiskWrite  uint64
+	previousDiskAt     time.Time
+	previousDiskLoaded bool
 }
 
 func NewCollector() *Collector {
@@ -66,32 +70,47 @@ func (c *Collector) Collect() (Snapshot, error) {
 		c.previousNetAt = now
 	}
 
+	var diskReadSpeed, diskWriteSpeed int64
+	if readBytes, writeBytes, ok := diskBytes(); ok {
+		now := time.Now()
+		if c.previousDiskLoaded {
+			diskReadSpeed = bytesPerSecond(c.previousDiskRead, readBytes, c.previousDiskAt, now)
+			diskWriteSpeed = bytesPerSecond(c.previousDiskWrite, writeBytes, c.previousDiskAt, now)
+		}
+		c.previousDiskRead = readBytes
+		c.previousDiskWrite = writeBytes
+		c.previousDiskAt = now
+		c.previousDiskLoaded = true
+	}
+
 	usage := 0.0
 	if len(cpuUsage) > 0 {
 		usage = cpuUsage[0]
 	}
 	return Snapshot{
-		Hostname:    hostInfo.Hostname,
-		IP:          localIP(),
-		OS:          runtime.GOOS,
-		Arch:        runtime.GOARCH,
-		Kernel:      hostInfo.KernelVersion,
-		Uptime:      int64(hostInfo.Uptime),
-		CPUCores:    cpuCounts,
-		CPUUsage:    usage,
-		MemoryTotal: int64(memory.Total),
-		MemoryUsed:  int64(memory.Used),
-		MemoryUsage: usagePercent(memory.Total, memory.Used),
-		DiskTotal:   int64(rootDisk.Total),
-		DiskUsed:    int64(rootDisk.Used),
-		DiskUsage:   usagePercent(rootDisk.Total, rootDisk.Used),
-		RXSpeed:     rxSpeed,
-		TXSpeed:     txSpeed,
-		RXTotal:     rxTotal,
-		TXTotal:     txTotal,
-		Load1:       loadInfo.Load1,
-		Load5:       loadInfo.Load5,
-		Load15:      loadInfo.Load15,
+		Hostname:       hostInfo.Hostname,
+		IP:             localIP(),
+		OS:             runtime.GOOS,
+		Arch:           runtime.GOARCH,
+		Kernel:         hostInfo.KernelVersion,
+		Uptime:         int64(hostInfo.Uptime),
+		CPUCores:       cpuCounts,
+		CPUUsage:       usage,
+		MemoryTotal:    int64(memory.Total),
+		MemoryUsed:     int64(memory.Used),
+		MemoryUsage:    usagePercent(memory.Total, memory.Used),
+		DiskTotal:      int64(rootDisk.Total),
+		DiskUsed:       int64(rootDisk.Used),
+		DiskUsage:      usagePercent(rootDisk.Total, rootDisk.Used),
+		DiskReadSpeed:  diskReadSpeed,
+		DiskWriteSpeed: diskWriteSpeed,
+		RXSpeed:        rxSpeed,
+		TXSpeed:        txSpeed,
+		RXTotal:        rxTotal,
+		TXTotal:        txTotal,
+		Load1:          loadInfo.Load1,
+		Load5:          loadInfo.Load5,
+		Load15:         loadInfo.Load15,
 	}, nil
 }
 
@@ -100,6 +119,19 @@ func usagePercent(total uint64, used uint64) float64 {
 		return 0
 	}
 	return float64(used) / float64(total) * 100
+}
+
+func diskBytes() (uint64, uint64, bool) {
+	counters, err := disk.IOCounters()
+	if err != nil || len(counters) == 0 {
+		return 0, 0, false
+	}
+	var readBytes, writeBytes uint64
+	for _, counter := range counters {
+		readBytes += counter.ReadBytes
+		writeBytes += counter.WriteBytes
+	}
+	return readBytes, writeBytes, true
 }
 
 func localIP() string {

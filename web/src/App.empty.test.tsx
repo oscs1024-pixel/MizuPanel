@@ -13,51 +13,8 @@ const linuxInstallResponse = {
     `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
     `    --token 'generated-install-token' \\`,
     `    --node-id "$(hostname)" \\`,
-    `    --name "$(hostname)"`
-  ].join('\n'),
-  install_token: 'generated-install-token'
-}
-
-const linuxDockerInstallResponse = {
-  command: [
-    `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
-    `  && chmod +x install-agent.sh \\`,
-    `  && ./install-agent.sh \\`,
-    `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
-    `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
-    `    --token 'generated-install-token' \\`,
-    `    --node-id "$(hostname)" \\`,
     `    --name "$(hostname)" \\`,
-    `    --enable-docker`
-  ].join('\n'),
-  install_token: 'generated-install-token'
-}
-
-const linuxTerminalInstallResponse = {
-  command: [
-    `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
-    `  && chmod +x install-agent.sh \\`,
-    `  && ./install-agent.sh \\`,
-    `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
-    `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
-    `    --token 'generated-install-token' \\`,
-    `    --node-id "$(hostname)" \\`,
-    `    --name "$(hostname)" \\`,
-    `    --enable-terminal`
-  ].join('\n'),
-  install_token: 'generated-install-token'
-}
-
-const linuxDockerTerminalInstallResponse = {
-  command: [
-    `curl -fsSL 'http://panel.example:8080/scripts/install-agent.sh' -o install-agent.sh \\`,
-    `  && chmod +x install-agent.sh \\`,
-    `  && ./install-agent.sh \\`,
-    `    --binary-base-url 'http://panel.example:8080/downloads' \\`,
-    `    --server-url 'ws://panel.example:8080/api/agent/ws' \\`,
-    `    --token 'generated-install-token' \\`,
-    `    --node-id "$(hostname)" \\`,
-    `    --name "$(hostname)" \\`,
+    `    --mode 'ops' \\`,
     `    --enable-docker \\`,
     `    --enable-terminal`
   ].join('\n'),
@@ -102,11 +59,9 @@ const getNodesMock = vi.mocked(getNodes)
 
 beforeEach(() => {
   createInstallCommandMock.mockReset()
-  createInstallCommandMock.mockImplementation(async (platform = 'linux', options = {}) => {
+  createInstallCommandMock.mockImplementation(async (platform = 'linux') => {
     if (platform === 'windows') return windowsInstallResponse
-    if (options.enableDocker && options.enableTerminal) return linuxDockerTerminalInstallResponse
-    if (options.enableTerminal) return linuxTerminalInstallResponse
-    return options.enableDocker ? linuxDockerInstallResponse : linuxInstallResponse
+    return linuxInstallResponse
   })
   getNodesMock.mockReset()
   getNodesMock.mockResolvedValue({ nodes: [] })
@@ -136,27 +91,21 @@ describe('App empty state', () => {
     fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     expect(await screen.findByText(/ws:\/\/panel\.example:8080\/api\/agent\/ws/)).toBeInTheDocument()
-    expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableTerminal: true, mode: 'normal' })
+    expect(createInstallCommandMock).toHaveBeenCalledWith('linux')
     expect(installButton).toHaveAttribute('aria-expanded', 'true')
     const installRegion = screen.getByRole('dialog', { name: '添加主机' })
     expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Windows' })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByLabelText('启用 Docker 容器监控')).not.toBeChecked()
-    expect(screen.getByLabelText('启用节点终端')).toBeChecked()
-    expect(screen.getByText('启用后会授予 Agent 访问 Docker socket 的权限，docker 组权限接近 root。')).toBeInTheDocument()
-    expect(screen.getByText('启用后可在节点详情打开浏览器终端，命令以 Agent 当前运行用户权限运行。')).toBeInTheDocument()
+    expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
+    expect(screen.queryByText('Agent 运行模式')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /普通模式/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /运维模式/ })).not.toBeInTheDocument()
+    expect(screen.getByText('默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。')).toBeInTheDocument()
     expect(installRegion).toHaveTextContent(/curl -fsSL 'http:\/\/panel\.example:8080\/scripts\/install-agent\.sh' -o install-agent\.sh \\\s+&& chmod \+x install-agent\.sh \\\s+&& \.\/install-agent\.sh \\\s+--binary-base-url 'http:\/\/panel\.example:8080\/downloads' \\\s+--server-url 'ws:\/\/panel\.example:8080\/api\/agent\/ws' \\\s+--token 'generated-install-token'/)
-    expect(installRegion).not.toHaveTextContent('--enable-docker')
+    expect(installRegion).toHaveTextContent("--mode 'ops'")
+    expect(installRegion).toHaveTextContent('--enable-docker')
     expect(installRegion).toHaveTextContent('--enable-terminal')
-
-    fireEvent.click(screen.getByLabelText('启用 Docker 容器监控'))
-
-    expect(await screen.findByText(/--enable-docker/)).toBeInTheDocument()
-    expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableDocker: true, enableTerminal: true, mode: 'normal' })
-
-    fireEvent.click(screen.getByLabelText('启用节点终端'))
-
-    expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableDocker: true, mode: 'normal' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
 

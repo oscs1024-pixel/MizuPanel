@@ -22,6 +22,9 @@ export type Metric = {
   disk_total: number
   disk_used: number
   disk_usage: number
+  uptime?: number
+  disk_read_speed?: number
+  disk_write_speed?: number
   rx_speed: number
   tx_speed: number
   rx_total: number

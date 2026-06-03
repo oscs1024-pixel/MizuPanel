@@ -20,38 +20,38 @@ export function HistoryPage({ nodes, selectedNodeID, metrics, range, settings, o
 
   return (
     <section className="space-y-4" aria-label="历史记录">
-      <div className="overflow-hidden rounded-[32px] border border-white/80 bg-white/90 shadow-glass backdrop-blur-xl">
-        <div className="border-b border-slate-200 bg-[radial-gradient(circle_at_10%_0%,rgba(59,130,246,0.16),transparent_28%),linear-gradient(135deg,#ffffff,#f8fafc)] px-5 py-5">
-          <p className="text-[11px] font-black uppercase tracking-[0.26em] text-blue-500">History</p>
-          <h2 className="mt-1 font-display text-3xl font-black tracking-tight text-slate-950">指标历史记录</h2>
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">查看节点 CPU、内存、磁盘、网络和负载的历史采样；当前系统设置最多保留 {rangeLabel(retention)}。</p>
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-glass">
+        <div className="border-b border-border bg-surface px-5 py-5">
+          <p className="text-[11px] font-black uppercase tracking-[0.26em] text-primary">History</p>
+          <h2 className="mt-1 font-display text-3xl font-black tracking-tight text-foreground">指标历史记录</h2>
+          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-muted-foreground">查看节点 CPU、内存、磁盘、网络和负载的历史采样；当前系统设置最多保留 {rangeLabel(retention)}。</p>
         </div>
 
         <div className="grid gap-4 p-4 xl:grid-cols-[0.34fr_0.66fr]">
-          <aside className="rounded-[26px] border border-slate-200 bg-slate-50 p-3">
-            <p className="mb-3 text-xs font-black tracking-[0.18em] text-slate-400">选择节点</p>
+          <aside className="rounded-2xl border border-border bg-surface p-3">
+            <p className="mb-3 text-xs font-black tracking-[0.18em] text-muted-foreground">选择节点</p>
             <div className="space-y-2">
               {nodes.map((node) => (
                 <button
                   key={node.id}
                   type="button"
                   onClick={() => onSelectNode(node.id)}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${selectedNode?.id === node.id ? 'border-blue-200 bg-white shadow-sm' : 'border-transparent bg-transparent hover:bg-white'}`}
+                  className={`w-full rounded-xl border px-4 py-3 text-left transition focus:outline-none focus:ring-4 focus:ring-primary/20 ${selectedNode?.id === node.id ? 'border-primary/40 bg-card shadow-sm' : 'border-transparent bg-transparent hover:bg-card'}`}
                 >
-                  <span className="block truncate text-sm font-black text-slate-950">{node.name || node.hostname}</span>
-                  <span className="mt-1 block truncate text-xs font-bold text-slate-500">{node.ip || '未知 IP'} · {node.status === 'online' ? '在线' : '离线'}</span>
+                  <span className="block truncate text-sm font-black text-foreground">{node.name || node.hostname}</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-muted-foreground">{node.ip || '未知 IP'} · {node.status === 'online' ? '在线' : '离线'}</span>
                 </button>
               ))}
             </div>
           </aside>
 
           <div className="min-w-0 space-y-4">
-            <div className="flex flex-col gap-3 rounded-[26px] border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs font-black tracking-[0.18em] text-slate-400">当前节点</p>
-                <h3 className="mt-1 text-2xl font-black text-slate-950">{selectedNode ? selectedNode.name || selectedNode.hostname : '暂无节点'}</h3>
+                <p className="text-xs font-black tracking-[0.18em] text-muted-foreground">当前节点</p>
+                <h3 className="mt-1 text-2xl font-black text-foreground">{selectedNode ? selectedNode.name || selectedNode.hostname : '暂无节点'}</h3>
               </div>
-              <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-1">
+              <div className="flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-1">
                 {rangeOptions.map((option) => {
                   const disabled = rangeSeconds[option] > retentionSeconds
                   return (
@@ -61,7 +61,7 @@ export function HistoryPage({ nodes, selectedNodeID, metrics, range, settings, o
                       disabled={disabled}
                       title={disabled ? `当前保留时间最多支持${rangeLabel(retention)}` : undefined}
                       onClick={() => onRangeChange(option)}
-                      className={`min-h-10 rounded-xl px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:text-slate-300 ${range === option ? 'bg-slate-950 text-white shadow-sm disabled:bg-slate-200 disabled:text-slate-400' : 'text-slate-500 hover:bg-white hover:text-slate-950'}`}
+                      className={`min-h-10 rounded-lg px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:text-muted-foreground/40 ${range === option ? 'bg-primary text-primary-foreground shadow-sm disabled:bg-muted disabled:text-muted-foreground' : 'text-muted-foreground hover:bg-card hover:text-foreground'}`}
                     >
                       {rangeButtonLabel(option)}
                     </button>
@@ -78,13 +78,13 @@ export function HistoryPage({ nodes, selectedNodeID, metrics, range, settings, o
             </div>
 
             {metrics.length === 0 ? (
-              <div className="rounded-[26px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm font-bold text-slate-500">当前范围暂无指标数据；如果刚把保留时间调长，需要等待新数据继续积累。</div>
+              <div className="rounded-2xl border border-dashed border-border bg-surface px-5 py-8 text-center text-sm font-bold text-muted-foreground">当前范围暂无指标数据；如果刚把保留时间调长，需要等待新数据继续积累。</div>
             ) : (
               <div className="grid gap-3 xl:grid-cols-2">
                 <MetricsChart metrics={metrics} dataKey="cpu_usage" title="CPU 历史" color="#2563eb" />
                 <MetricsChart metrics={metrics} dataKey="memory_usage" title="内存历史" color="#059669" />
                 <MetricsChart metrics={metrics} dataKey="disk_usage" title="磁盘历史" color="#d97706" />
-                <MetricsChart metrics={metrics} dataKey="load1" title="Load 走势" color="#7c3aed" />
+                <MetricsChart metrics={metrics} dataKey="load1" title="Load 走势" color="#7c3aed" unitLabel="load" domain={[0, 'auto']} />
                 <MetricsChart metrics={metrics} dataKey="rx_speed" title="下行速率" color="#0284c7" unitLabel="bytes/s" domain={[0, 'auto']} />
                 <MetricsChart metrics={metrics} dataKey="tx_speed" title="上行速率" color="#dc2626" unitLabel="bytes/s" domain={[0, 'auto']} />
               </div>

@@ -22,7 +22,10 @@ const { createInstallCommandMock } = vi.hoisted(() => ({
         `    --server-url 'ws://localhost:8080/api/agent/ws' \\`,
         `    --token 'generated-install-token' \\`,
         `    --node-id "$(hostname)" \\`,
-        `    --name "$(hostname)"`
+        `    --name "$(hostname)" \\`,
+        `    --mode 'ops' \\`,
+        `    --enable-docker \\`,
+        `    --enable-terminal`
       ].join('\n'),
     install_token: platform === 'windows' ? 'generated-windows-token' : 'generated-install-token'
   }))
@@ -62,6 +65,9 @@ vi.mock('./api/client', () => ({
           load1: 0.1,
           load5: 0.2,
           load15: 0.3,
+          uptime: 90061,
+          disk_read_speed: 4096,
+          disk_write_speed: 8192,
           created_at: '2026-05-24T10:00:00Z'
         }
       },
@@ -98,6 +104,7 @@ vi.mock('./api/client', () => ({
 }))
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/')
   window.localStorage.clear()
   createInstallCommandMock.mockReset()
   createInstallCommandMock.mockImplementation(async (platform = 'linux') => ({
@@ -118,7 +125,10 @@ beforeEach(() => {
         `    --server-url 'ws://localhost:8080/api/agent/ws' \\`,
         `    --token 'generated-install-token' \\`,
         `    --node-id "$(hostname)" \\`,
-        `    --name "$(hostname)"`
+        `    --name "$(hostname)" \\`,
+        `    --mode 'ops' \\`,
+        `    --enable-docker \\`,
+        `    --enable-terminal`
       ].join('\n'),
     install_token: platform === 'windows' ? 'generated-windows-token' : 'generated-install-token'
   }))
@@ -129,39 +139,132 @@ afterEach(() => {
 })
 
 describe('reference-style dashboard layout', () => {
-  test('renders compact host list navigation and expanded node detail without auth controls', async () => {
+  test('renders console sidebar navigation and expanded node detail without auth controls or fake entries', async () => {
     render(<App />)
 
-    const mainNavigation = await screen.findByRole('navigation', { name: '主导航' })
-    expect(within(mainNavigation).getByRole('button', { name: '主机列表' })).toBeInTheDocument()
-    expect(within(mainNavigation).getByRole('button', { name: '历史记录' })).toBeInTheDocument()
-    expect(within(mainNavigation).getByRole('button', { name: '系统设置' })).toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: '概览' })).not.toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: '日志' })).not.toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: 'Docker' })).not.toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: '文件管理' })).not.toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: '终端' })).not.toBeInTheDocument()
-    expect(within(mainNavigation).queryByRole('button', { name: '告警' })).not.toBeInTheDocument()
+    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
+    expect(within(sidebarNavigation).getByRole('button', { name: '概览' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '主机列表' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '历史记录' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '系统设置' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '日志' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: 'Docker' })).not.toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: '文件管理' })).not.toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: '终端' })).not.toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: '告警' })).not.toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '打开终端' })).toBeEnabled()
+    expect(screen.queryByText('MizuPanel Console')).not.toBeInTheDocument()
+    expect(screen.queryByText('轻量级自托管服务器监控面板')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看节点状态、指标、文件和节点级操作。')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Light' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dark' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索主机...')).toBeInTheDocument()
     expect(screen.getByText('全部 2')).toBeInTheDocument()
     expect(screen.getByText('在线 1')).toBeInTheDocument()
-    expect(screen.getByText('硬件概览')).toBeInTheDocument()
-    expect(screen.getByText('负载趋势')).toBeInTheDocument()
-    expect(screen.getByText('网络速率')).toBeInTheDocument()
+    expect(screen.getByText('平均磁盘')).toBeInTheDocument()
+    expect(screen.getByTestId('host-page-container')).toHaveClass('max-w-[1400px]')
+    expect(screen.getByTestId('host-main-grid')).toHaveClass('xl:grid-cols-[320px_minmax(0,1fr)]')
+    expect(screen.getByTestId('host-list-panel')).toHaveClass('xl:w-[320px]')
+    expect(screen.getByTestId('node-detail-charts')).toHaveClass('xl:grid-cols-3')
+    const basicInfo = screen.getByRole('region', { name: '基础信息' })
+    expect(basicInfo).toHaveClass('rounded-[14px]')
+    expect(within(basicInfo).getByText('操作系统')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('内核版本')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('架构')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('启动时间')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('运行时间')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('系统负载')).toBeInTheDocument()
+    expect(within(basicInfo).getByText('1m 0.10 · 5m 0.20 · 15m 0.30')).toBeInTheDocument()
+    expect(within(basicInfo).queryByText('在线用户')).not.toBeInTheDocument()
+    expect(within(basicInfo).queryByText('SSH 连接')).not.toBeInTheDocument()
+    const cpuChart = screen.getByRole('region', { name: 'CPU 使用率' })
+    expect(within(cpuChart).getByText('12.5%')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '内存使用率' })).getByText('50.0%')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '磁盘使用率' })).getByText('50.0%')).toBeInTheDocument()
+    const diskIOChart = screen.getByRole('region', { name: '磁盘 I/O' })
+    expect(within(diskIOChart).getByText('读')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('4.0 KB/s')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('写')).toBeInTheDocument()
+    expect(within(diskIOChart).getByText('8.0 KB/s')).toBeInTheDocument()
+    const networkChart = screen.getByRole('region', { name: '网络 I/O' })
+    expect(within(networkChart).getByText('上行')).toBeInTheDocument()
+    expect(within(networkChart).getByText('200 B/s')).toBeInTheDocument()
+    expect(within(networkChart).getByText('下行')).toBeInTheDocument()
+    expect(within(networkChart).getByText('100 B/s')).toBeInTheDocument()
+    const loadChart = screen.getByRole('region', { name: '系统负载' })
+    expect(within(loadChart).getByText('1m')).toBeInTheDocument()
+    expect(within(loadChart).getByText('0.10')).toBeInTheDocument()
+    expect(within(loadChart).getByText('5m')).toBeInTheDocument()
+    expect(within(loadChart).getByText('0.20')).toBeInTheDocument()
+    expect(within(loadChart).getByText('15m')).toBeInTheDocument()
+    expect(within(loadChart).getByText('0.30')).toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByText(/OV|HS|HT|ST|LG/)).not.toBeInTheDocument()
+    expect(screen.queryByText('本地管理员')).not.toBeInTheDocument()
+    expect(screen.queryByText('Self-hosted')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
   })
 
-  test('keeps host search state while navigating the old top navigation', async () => {
+  test('persists theme and sidebar state without losing host search state', async () => {
+    window.localStorage.setItem('mizupanel-theme', 'dark')
+    window.localStorage.setItem('mizupanel-sidebar-collapsed', 'true')
+
     render(<App />)
 
     await screen.findByText('全部 2')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    const sidebar = screen.getByLabelText('MizuPanel 侧边栏')
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true')
+    expect(sidebar).toHaveClass('transition-[width]', 'duration-300', 'ease-in-out', 'overflow-hidden')
+    const expandSidebarButton = screen.getByRole('button', { name: '展开侧边栏' })
+    expect(sidebar).not.toContainElement(expandSidebarButton)
+    expect(expandSidebarButton).toHaveClass('absolute', 'right-0', 'translate-x-1/2')
+    expect(within(sidebar).getByText('M')).toBeInTheDocument()
+    const collapsedHostButton = within(screen.getByRole('navigation', { name: '侧边导航' })).getByRole('button', { name: '主机列表' })
+    expect(collapsedHostButton).toHaveAttribute('title', '主机列表')
+    expect(collapsedHostButton).toHaveClass('px-0')
+    expect(screen.getAllByTestId('sidebar-nav-label')[0]).toHaveClass('opacity-0', 'max-w-0')
+
     fireEvent.change(screen.getByPlaceholderText('搜索主机...'), { target: { value: 'oracle' } })
-    fireEvent.click(screen.getByRole('button', { name: '历史记录' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Light' }))
+
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(window.localStorage.getItem('mizupanel-theme')).toBe('light')
+    expect(screen.getByPlaceholderText('搜索主机...')).toHaveValue('oracle')
+
+    fireEvent.click(screen.getByRole('button', { name: '展开侧边栏' }))
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false')
+    expect(screen.getAllByTestId('sidebar-nav-label')[0]).toHaveClass('opacity-100', 'max-w-[140px]')
+    expect(window.localStorage.getItem('mizupanel-sidebar-collapsed')).toBe('false')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dark' }))
+    expect(window.localStorage.getItem('mizupanel-theme')).toBe('dark')
+    expect(screen.queryByRole('button', { name: 'System' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '切换到深色主题' })).not.toBeInTheDocument()
+  })
+
+  test('shows logs as a real empty-state shell without fake log entries', async () => {
+    render(<App />)
+
+    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '日志' }))
+
+    expect(await screen.findByRole('heading', { name: '日志' })).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('搜索日志...')).toBeInTheDocument()
+    expect(screen.getByText('等待日志接口接入')).toBeInTheDocument()
+    expect(screen.queryByText(/ERROR|WARNING|SUCCESS|INFO/)).not.toBeInTheDocument()
+  })
+
+  test('keeps host search state while navigating the sidebar', async () => {
+    render(<App />)
+
+    await screen.findByText('全部 2')
+    const sidebarNavigation = screen.getByRole('navigation', { name: '侧边导航' })
+    fireEvent.change(screen.getByPlaceholderText('搜索主机...'), { target: { value: 'oracle' } })
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
     expect(await screen.findByRole('heading', { name: '指标历史记录' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '主机列表' }))
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '主机列表' }))
 
     expect(screen.getByPlaceholderText('搜索主机...')).toHaveValue('oracle')
     expect(screen.getByRole('button', { name: /Oracle SG/ })).toBeInTheDocument()
@@ -206,8 +309,8 @@ describe('reference-style dashboard layout', () => {
     render(<App />)
 
     await screen.findByText('全部 2')
-    const mainNavigation = screen.getByRole('navigation', { name: '主导航' })
-    expect(within(mainNavigation).queryByRole('button', { name: '添加主机' })).not.toBeInTheDocument()
+    const sidebarNavigation = screen.getByRole('navigation', { name: '侧边导航' })
+    expect(within(sidebarNavigation).queryByRole('button', { name: '添加主机' })).not.toBeInTheDocument()
 
     const filterToolbar = screen.getByRole('toolbar', { name: '主机筛选与操作' })
     const addHostButton = within(filterToolbar).getByRole('button', { name: '添加主机' })
@@ -217,12 +320,19 @@ describe('reference-style dashboard layout', () => {
     fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
-    expect(createInstallCommandMock).toHaveBeenCalledWith('linux', { enableTerminal: true, mode: 'normal' })
+    expect(createInstallCommandMock).toHaveBeenCalledWith('linux')
     expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
     expect(installRegion).toHaveTextContent("curl -fsSL 'http://localhost:8080/scripts/install-agent.sh'")
     expect(installRegion).toHaveTextContent("--binary-base-url 'http://localhost:8080/downloads'")
     expect(installRegion).toHaveTextContent("--server-url 'ws://localhost:8080/api/agent/ws'")
     expect(installRegion).toHaveTextContent("--token 'generated-install-token'")
+    expect(installRegion).toHaveTextContent("--mode 'ops'")
+    expect(installRegion).toHaveTextContent('--enable-docker')
+    expect(installRegion).toHaveTextContent('--enable-terminal')
+    expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
+    expect(screen.queryByText('Agent 运行模式')).not.toBeInTheDocument()
+    expect(screen.getByText('默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。')).toBeInTheDocument()
     expect(screen.getByText('token 来源：点击添加主机时，Server 会自动生成一次性 install_token。')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Windows' }))
@@ -406,5 +516,22 @@ describe('reference-style dashboard layout', () => {
 
     expect(await screen.findByText('复制失败，已为你选中命令，请按 Ctrl+C 手动复制。')).toBeInTheDocument()
     expect(window.getSelection()?.toString()).toContain("--token 'generated-install-token'")
+  })
+
+  test('toggles dark theme and persists sidebar collapse state', async () => {
+    render(<App />)
+
+    await screen.findByText('全部 2')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dark' }))
+
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(window.localStorage.getItem('mizupanel-theme')).toBe('dark')
+
+    fireEvent.click(screen.getByRole('button', { name: '收起侧边栏' }))
+
+    expect(window.localStorage.getItem('mizupanel-sidebar-collapsed')).toBe('true')
+    expect(screen.getByRole('complementary', { name: 'MizuPanel 侧边栏' })).toHaveAttribute('data-collapsed', 'true')
   })
 })

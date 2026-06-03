@@ -3,27 +3,29 @@ package metrics
 import "github.com/mizupanel/mizupanel/internal/protocol"
 
 type Snapshot struct {
-	Hostname    string
-	IP          string
-	OS          string
-	Arch        string
-	Kernel      string
-	Uptime      int64
-	CPUCores    int
-	CPUUsage    float64
-	MemoryTotal int64
-	MemoryUsed  int64
-	MemoryUsage float64
-	DiskTotal   int64
-	DiskUsed    int64
-	DiskUsage   float64
-	RXSpeed     int64
-	TXSpeed     int64
-	RXTotal     int64
-	TXTotal     int64
-	Load1       float64
-	Load5       float64
-	Load15      float64
+	Hostname       string
+	IP             string
+	OS             string
+	Arch           string
+	Kernel         string
+	Uptime         int64
+	CPUCores       int
+	CPUUsage       float64
+	MemoryTotal    int64
+	MemoryUsed     int64
+	MemoryUsage    float64
+	DiskTotal      int64
+	DiskUsed       int64
+	DiskUsage      float64
+	DiskReadSpeed  int64
+	DiskWriteSpeed int64
+	RXSpeed        int64
+	TXSpeed        int64
+	RXTotal        int64
+	TXTotal        int64
+	Load1          float64
+	Load5          float64
+	Load15         float64
 }
 
 func (s Snapshot) ToMessage(nodeID string, timestamp int64) protocol.MetricsMessage {
@@ -45,9 +47,11 @@ func (s Snapshot) ToMessage(nodeID string, timestamp int64) protocol.MetricsMess
 			Usage: s.MemoryUsage,
 		},
 		Disk: protocol.DiskInfo{
-			Total: s.DiskTotal,
-			Used:  s.DiskUsed,
-			Usage: s.DiskUsage,
+			Total:      s.DiskTotal,
+			Used:       s.DiskUsed,
+			Usage:      s.DiskUsage,
+			ReadSpeed:  s.DiskReadSpeed,
+			WriteSpeed: s.DiskWriteSpeed,
 		},
 		Network: protocol.NetworkInfo{
 			RXSpeed: s.RXSpeed,

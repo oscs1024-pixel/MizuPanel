@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,9 @@ type NodeOperations interface {
 	FileUpload(ctx context.Context, nodeID string, path string, contentBase64 string) (protocol.FileUploadResponse, error)
 	FileDelete(ctx context.Context, nodeID string, path string) (protocol.FileDeleteResponse, error)
 	Reboot(ctx context.Context, nodeID string) (protocol.RebootResponse, error)
+	AgentStatus(ctx context.Context, nodeID string) (protocol.AgentStatusResponse, error)
+	AgentRestart(ctx context.Context, nodeID string) (protocol.AgentRestartResponse, error)
+	AgentLogs(ctx context.Context, nodeID string, lines int) (protocol.AgentLogsResponse, error)
 }
 
 type NodeDisconnecter interface {
@@ -224,6 +228,18 @@ func (s *Server) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "reboot" {
 		s.handleNodeReboot(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "agent" && parts[2] == "status" {
+		s.handleNodeAgentStatus(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "agent" && parts[2] == "restart" {
+		s.handleNodeAgentRestart(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "agent" && parts[2] == "logs" {
+		s.handleNodeAgentLogs(w, r, parts[0])
 		return
 	}
 	if len(parts) == 3 && parts[1] == "terminal" && parts[2] == "session" {
@@ -523,6 +539,105 @@ func (s *Server) handleNodeReboot(w http.ResponseWriter, r *http.Request, nodeID
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) handleNodeAgentStatus(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.agentManagementAvailable(w, r, nodeID) {
+		return
+	}
+	response, err := s.agentOps.AgentStatus(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAgentOperationResponse(w, response.Code, response.Error, response)
+}
+
+func (s *Server) handleNodeAgentRestart(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if !s.agentManagementAvailable(w, r, nodeID) {
+		return
+	}
+	response, err := s.agentOps.AgentRestart(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAgentOperationResponse(w, response.Code, response.Error, response)
+}
+
+func (s *Server) handleNodeAgentLogs(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.agentManagementAvailable(w, r, nodeID) {
+		return
+	}
+	response, err := s.agentOps.AgentLogs(r.Context(), nodeID, clampAgentLogLines(r.URL.Query().Get("lines")))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAgentOperationResponse(w, response.Code, response.Error, response)
+}
+
+func (s *Server) agentManagementAvailable(w http.ResponseWriter, r *http.Request, nodeID string) bool {
+	node, err := s.nodes.Get(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return false
+	}
+	if strings.EqualFold(node.OS, "windows") {
+		writeError(w, http.StatusNotImplemented, "当前版本暂不支持 Windows Agent 管理")
+		return false
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return false
+	}
+	return true
+}
+
+func clampAgentLogLines(value string) int {
+	lines := 100
+	if parsed, err := strconv.Atoi(value); err == nil {
+		lines = parsed
+	}
+	if lines < 1 {
+		return 1
+	}
+	if lines > 500 {
+		return 500
+	}
+	return lines
+}
+
+func writeAgentOperationResponse(w http.ResponseWriter, code string, message string, response any) {
+	if code == "offline" {
+		writeError(w, http.StatusServiceUnavailable, message)
+		return
+	}
+	if code == "timeout" {
+		writeError(w, http.StatusGatewayTimeout, message)
+		return
+	}
+	if code == "unsupported" {
+		writeError(w, http.StatusNotImplemented, message)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func authorizeBrowserNodeOperation(r *http.Request) bool {
 	if r.Method == http.MethodGet {
 		return true
@@ -530,7 +645,7 @@ func authorizeBrowserNodeOperation(r *http.Request) bool {
 	if !sameOrigin(r) {
 		return false
 	}
-	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reboot") {
+	if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/reboot") || strings.HasSuffix(r.URL.Path, "/agent/restart")) {
 		return true
 	}
 	return strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json")

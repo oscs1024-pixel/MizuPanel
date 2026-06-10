@@ -357,6 +357,10 @@ type fakeNodeOperations struct {
 	fileUploadBase64   string
 	fileDeletePath     string
 	rebootNodeID       string
+	agentStatusNodeID  string
+	agentRestartNodeID string
+	agentLogsNodeID    string
+	agentLogsLines     int
 	disconnectedNodeID string
 }
 
@@ -402,6 +406,22 @@ func (f *fakeNodeOperations) FileDelete(ctx context.Context, nodeID string, path
 func (f *fakeNodeOperations) Reboot(ctx context.Context, nodeID string) (protocol.RebootResponse, error) {
 	f.rebootNodeID = nodeID
 	return protocol.RebootResponse{Type: protocol.MessageTypeRebootResponse, Accepted: true}, nil
+}
+
+func (f *fakeNodeOperations) AgentStatus(ctx context.Context, nodeID string) (protocol.AgentStatusResponse, error) {
+	f.agentStatusNodeID = nodeID
+	return protocol.AgentStatusResponse{Type: protocol.MessageTypeAgentStatusResponse, NodeID: nodeID, Version: "0.1.0", User: "root", Mode: "ops", TerminalEnabled: true, DockerAvailable: true, ConfigPath: "/usr/local/mizupanel/agent.yaml", ServiceName: "mizupanel-agent", Uptime: 1234, CollectedAt: 1710000000}, nil
+}
+
+func (f *fakeNodeOperations) AgentRestart(ctx context.Context, nodeID string) (protocol.AgentRestartResponse, error) {
+	f.agentRestartNodeID = nodeID
+	return protocol.AgentRestartResponse{Type: protocol.MessageTypeAgentRestartResponse, Accepted: true, Message: "重启命令已下发，等待 Agent 重新连接"}, nil
+}
+
+func (f *fakeNodeOperations) AgentLogs(ctx context.Context, nodeID string, lines int) (protocol.AgentLogsResponse, error) {
+	f.agentLogsNodeID = nodeID
+	f.agentLogsLines = lines
+	return protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, NodeID: nodeID, Lines: lines, Content: "mizupanel-agent started", CollectedAt: 1710000001}, nil
 }
 
 func TestNodeFileOperationsForwardToAgentWithoutBrowserAuth(t *testing.T) {
@@ -460,6 +480,69 @@ func TestNodeFileOperationsForwardToAgentWithoutBrowserAuth(t *testing.T) {
 	mux.ServeHTTP(rebootRecorder, rebootRequest)
 	if rebootRecorder.Code != http.StatusOK || ops.rebootNodeID != "node-1" {
 		t.Fatalf("reboot status/node = %d/%q body=%s", rebootRecorder.Code, ops.rebootNodeID, rebootRecorder.Body.String())
+	}
+}
+
+func TestNodeAgentManagementRoutesForwardToAgent(t *testing.T) {
+	_, nodes, metrics, _, _ := testRouter(t)
+	if err := nodes.Upsert(t.Context(), store.Node{ID: "node-1", Name: "Oracle", OS: "linux", Status: "online", LastSeenAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	ops := &fakeNodeOperations{}
+	mux := NewRouter(nodes, metrics, ops)
+
+	statusRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(statusRecorder, httptest.NewRequest(http.MethodGet, "/api/nodes/node-1/agent/status", nil))
+	if statusRecorder.Code != http.StatusOK || ops.agentStatusNodeID != "node-1" {
+		t.Fatalf("status code/node = %d/%q body=%s", statusRecorder.Code, ops.agentStatusNodeID, statusRecorder.Body.String())
+	}
+	var statusResponse protocol.AgentStatusResponse
+	if err := json.Unmarshal(statusRecorder.Body.Bytes(), &statusResponse); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if statusResponse.User != "root" || statusResponse.Mode != "ops" || !statusResponse.TerminalEnabled || !statusResponse.DockerAvailable {
+		t.Fatalf("status response = %#v", statusResponse)
+	}
+
+	restartRecorder := httptest.NewRecorder()
+	restartRequest := httptest.NewRequest(http.MethodPost, "/api/nodes/node-1/agent/restart", nil)
+	restartRequest.Header.Set("Origin", "http://example.com")
+	mux.ServeHTTP(restartRecorder, restartRequest)
+	if restartRecorder.Code != http.StatusOK || ops.agentRestartNodeID != "node-1" {
+		t.Fatalf("restart code/node = %d/%q body=%s", restartRecorder.Code, ops.agentRestartNodeID, restartRecorder.Body.String())
+	}
+
+	logsRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(logsRecorder, httptest.NewRequest(http.MethodGet, "/api/nodes/node-1/agent/logs?lines=999", nil))
+	if logsRecorder.Code != http.StatusOK || ops.agentLogsNodeID != "node-1" || ops.agentLogsLines != 500 {
+		t.Fatalf("logs code/node/lines = %d/%q/%d body=%s", logsRecorder.Code, ops.agentLogsNodeID, ops.agentLogsLines, logsRecorder.Body.String())
+	}
+	var logsResponse protocol.AgentLogsResponse
+	if err := json.Unmarshal(logsRecorder.Body.Bytes(), &logsResponse); err != nil {
+		t.Fatalf("decode logs response: %v", err)
+	}
+	if logsResponse.Lines != 500 || !strings.Contains(logsResponse.Content, "mizupanel-agent started") {
+		t.Fatalf("logs response = %#v", logsResponse)
+	}
+}
+
+func TestNodeAgentManagementRejectsMissingOrUnsupportedNodes(t *testing.T) {
+	_, nodes, metrics, _, _ := testRouter(t)
+	if err := nodes.Upsert(t.Context(), store.Node{ID: "win-1", Name: "Windows", OS: "windows", Status: "online", LastSeenAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("upsert windows node: %v", err)
+	}
+	mux := NewRouter(nodes, metrics, &fakeNodeOperations{})
+
+	missingRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(missingRecorder, httptest.NewRequest(http.MethodGet, "/api/nodes/missing/agent/status", nil))
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("missing status = %d, want 404; body=%s", missingRecorder.Code, missingRecorder.Body.String())
+	}
+
+	unsupportedRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(unsupportedRecorder, httptest.NewRequest(http.MethodGet, "/api/nodes/win-1/agent/status", nil))
+	if unsupportedRecorder.Code != http.StatusNotImplemented {
+		t.Fatalf("windows status = %d, want 501; body=%s", unsupportedRecorder.Code, unsupportedRecorder.Body.String())
 	}
 }
 

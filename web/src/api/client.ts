@@ -1,19 +1,28 @@
-import type { DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
 
 export type SessionTokenResponse = {
   token: string
 }
 
 export class APIError extends Error {
-  constructor(public status: number) {
-    super(`Request failed: ${status}`)
+  constructor(public status: number, message = `Request failed: ${status}`) {
+    super(message)
+  }
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  try {
+    const body = await response.json() as { error?: string }
+    return body.error || `Request failed: ${response.status}`
+  } catch {
+    return `Request failed: ${response.status}`
   }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = init === undefined ? await fetch(path) : await fetch(path, init)
   if (!response.ok) {
-    throw new APIError(response.status)
+    throw new APIError(response.status, await errorMessage(response))
   }
   return response.json() as Promise<T>
 }
@@ -21,7 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   const response = init === undefined ? await fetch(path) : await fetch(path, init)
   if (!response.ok) {
-    throw new APIError(response.status)
+    throw new APIError(response.status, await errorMessage(response))
   }
 }
 
@@ -113,6 +122,18 @@ export function deleteNodePath(nodeID: string, path: string): Promise<FileDelete
 
 export function rebootNode(nodeID: string): Promise<RebootResponse> {
   return request<RebootResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/reboot`, { method: 'POST' })
+}
+
+export function getAgentStatus(nodeID: string): Promise<AgentStatusResponse> {
+  return request<AgentStatusResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/agent/status`)
+}
+
+export function restartAgent(nodeID: string): Promise<AgentRestartResponse> {
+  return request<AgentRestartResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/agent/restart`, { method: 'POST' })
+}
+
+export function getAgentLogs(nodeID: string, lines = 100): Promise<AgentLogsResponse> {
+  return request<AgentLogsResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/agent/logs?lines=${encodeURIComponent(lines.toString())}`)
 }
 
 export function createTerminalSession(nodeID: string): Promise<SessionTokenResponse> {

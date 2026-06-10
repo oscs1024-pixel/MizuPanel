@@ -18,6 +18,7 @@ type Client struct {
 	serverURL                   string
 	token                       string
 	onNodeToken                 func(string) error
+	agentManagementHandler      AgentManagementHandler
 	terminalHandlerFactory      TerminalHandlerFactory
 	containerExecHandlerFactory ContainerExecHandlerFactory
 }
@@ -28,6 +29,12 @@ type TerminalSender interface {
 
 type ContainerExecSender interface {
 	SendContainerExec(protocol.ContainerExecMessage) error
+}
+
+type AgentManagementHandler interface {
+	Status() protocol.AgentStatusResponse
+	Restart() protocol.AgentRestartResponse
+	Logs(lines int) protocol.AgentLogsResponse
 }
 
 type TerminalHandler interface {
@@ -57,6 +64,10 @@ func NewClient(serverURL string, token string) *Client {
 
 func (c *Client) SetNodeTokenHandler(handler func(string) error) {
 	c.onNodeToken = handler
+}
+
+func (c *Client) SetAgentManagementHandler(handler AgentManagementHandler) {
+	c.agentManagementHandler = handler
 }
 
 func (c *Client) SetTerminalHandlerFactory(factory TerminalHandlerFactory) {
@@ -233,6 +244,44 @@ func (c *Client) readLoop(writer *connectionWriter, terminalHandler TerminalHand
 			response := reboot.Run(context.Background(), reboot.CurrentOS(), nil)
 			response.Type = protocol.MessageTypeRebootResponse
 			response.RequestID = request.RequestID
+			_ = writer.writeJSON(response)
+		case protocol.MessageTypeAgentStatusRequest:
+			if c.agentManagementHandler == nil {
+				continue
+			}
+			var request protocol.AgentStatusRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.agentManagementHandler.Status()
+			response.Type = protocol.MessageTypeAgentStatusResponse
+			response.RequestID = request.RequestID
+			response.NodeID = request.NodeID
+			_ = writer.writeJSON(response)
+		case protocol.MessageTypeAgentRestartRequest:
+			if c.agentManagementHandler == nil {
+				continue
+			}
+			var request protocol.AgentRestartRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.agentManagementHandler.Restart()
+			response.Type = protocol.MessageTypeAgentRestartResponse
+			response.RequestID = request.RequestID
+			_ = writer.writeJSON(response)
+		case protocol.MessageTypeAgentLogsRequest:
+			if c.agentManagementHandler == nil {
+				continue
+			}
+			var request protocol.AgentLogsRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.agentManagementHandler.Logs(request.Lines)
+			response.Type = protocol.MessageTypeAgentLogsResponse
+			response.RequestID = request.RequestID
+			response.NodeID = request.NodeID
 			_ = writer.writeJSON(response)
 		case protocol.MessageTypeTerminalStart, protocol.MessageTypeTerminalData, protocol.MessageTypeTerminalResize, protocol.MessageTypeTerminalClose:
 			if terminalHandler == nil {

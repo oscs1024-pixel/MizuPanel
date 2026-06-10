@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
+import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getAgentLogs, getAgentStatus, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
 
 describe('api client', () => {
   afterEach(() => {
@@ -145,6 +145,24 @@ describe('api client', () => {
     expect(result.accepted).toBe(true)
   })
 
+  test('fetches Agent management status, restart and recent logs', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: '0.1.0', user: 'root', mode: 'ops', terminal_enabled: true, docker_available: true, service_name: 'mizupanel-agent', uptime: 3600, collected_at: 1710000000 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, message: '重启命令已下发，等待 Agent 重新连接' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ lines: 100, content: 'mizupanel-agent started', collected_at: 1710000001 })))
+
+    const status = await getAgentStatus('node/1')
+    const restart = await restartAgent('node/1')
+    const logs = await getAgentLogs('node/1', 100)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/nodes/node%2F1/agent/status')
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/nodes/node%2F1/agent/restart', { method: 'POST' })
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/nodes/node%2F1/agent/logs?lines=100')
+    expect(status.user).toBe('root')
+    expect(restart.accepted).toBe(true)
+    expect(logs.content).toContain('started')
+  })
+
   test('starts SSH install jobs', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ job_id: 'ssh-install-1' }), { status: 202 }))
 
@@ -229,6 +247,12 @@ describe('api client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unauthorized', { status: 401 }))
 
     await expect(createInstallCommand()).rejects.toMatchObject({ status: 401 })
+  })
+
+  test('uses API error body messages when requests fail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: 'Agent 离线，无法执行管理操作。' }), { status: 503 }))
+
+    await expect(getAgentStatus('node-1')).rejects.toThrow('Agent 离线，无法执行管理操作。')
   })
 
   test('throws when the API response is not ok', async () => {

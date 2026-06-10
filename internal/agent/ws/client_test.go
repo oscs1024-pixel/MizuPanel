@@ -1,11 +1,13 @@
 package ws
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -92,6 +94,79 @@ func TestClientPersistsNodeTokenFromHelloAck(t *testing.T) {
 	if persistedToken != "node-token" {
 		t.Fatalf("persisted token = %q, want node-token", persistedToken)
 	}
+}
+
+func TestRunRespondsToAgentManagementRequests(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	statusReceived := make(chan protocol.AgentStatusResponse, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		var hello protocol.HelloMessage
+		if err := conn.ReadJSON(&hello); err != nil {
+			t.Errorf("read hello: %v", err)
+			return
+		}
+		if err := conn.WriteJSON(protocol.HelloAckMessage{Type: protocol.MessageTypeHelloAck, NodeID: "node-1", Interval: 1}); err != nil {
+			t.Errorf("write ack: %v", err)
+			return
+		}
+		var metric protocol.MetricsMessage
+		if err := conn.ReadJSON(&metric); err != nil {
+			t.Errorf("read metric: %v", err)
+			return
+		}
+		if err := conn.WriteJSON(protocol.AgentStatusRequest{Type: protocol.MessageTypeAgentStatusRequest, RequestID: "req-status", NodeID: "node-1"}); err != nil {
+			t.Errorf("write status request: %v", err)
+			return
+		}
+		var response protocol.AgentStatusResponse
+		if err := conn.ReadJSON(&response); err != nil {
+			t.Errorf("read status response: %v", err)
+			return
+		}
+		statusReceived <- response
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client := NewClient("ws"+strings.TrimPrefix(server.URL, "http"), "")
+	client.SetAgentManagementHandler(fakeAgentManagementHandler{})
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Run(ctx, protocol.HelloMessage{Type: protocol.MessageTypeHello, Hostname: "oracle-sg"}, time.Hour, func(nodeID string, timestamp int64) (protocol.MetricsMessage, error) {
+			return protocol.MetricsMessage{Type: protocol.MessageTypeMetrics, NodeID: nodeID, Timestamp: timestamp}, nil
+		})
+	}()
+
+	response := <-statusReceived
+	cancel()
+	if err := <-done; err != nil && err != context.Canceled && !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if response.Type != protocol.MessageTypeAgentStatusResponse || response.RequestID != "req-status" || response.User != "root" || response.Mode != "ops" || !response.TerminalEnabled {
+		t.Fatalf("status response = %#v", response)
+	}
+}
+
+type fakeAgentManagementHandler struct{}
+
+func (fakeAgentManagementHandler) Status() protocol.AgentStatusResponse {
+	return protocol.AgentStatusResponse{Version: "0.1.0", User: "root", Mode: "ops", TerminalEnabled: true, DockerAvailable: true, ConfigPath: "/usr/local/mizupanel/agent.yaml", ServiceName: "mizupanel-agent", Uptime: 12, CollectedAt: 1710000000}
+}
+
+func (fakeAgentManagementHandler) Restart() protocol.AgentRestartResponse {
+	return protocol.AgentRestartResponse{Accepted: true, Message: "重启命令已下发，等待 Agent 重新连接"}
+}
+
+func (fakeAgentManagementHandler) Logs(int) protocol.AgentLogsResponse {
+	return protocol.AgentLogsResponse{Lines: 100, Content: "started", CollectedAt: 1710000000}
 }
 
 func TestSendHelloAndMetricSendsHelloBeforeMetric(t *testing.T) {

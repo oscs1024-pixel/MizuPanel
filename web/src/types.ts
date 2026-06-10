@@ -218,3 +218,34 @@ export type RebootResponse = {
   error?: string
   code?: string
 }
+
+export type AgentStatusResponse = {
+  version?: string
+  user?: string
+  mode?: AgentMode | string
+  terminal_enabled: boolean
+  docker_available: boolean
+  docker_error?: string
+  config_path?: string
+  service_name?: string
+  uptime?: number
+  collected_at?: number
+  error?: string
+  code?: string
+}
+
+export type AgentRestartResponse = {
+  accepted: boolean
+  message?: string
+  error?: string
+  code?: string
+}
+
+export type AgentLogsResponse = {
+  lines: number
+  content?: string
+  truncated?: boolean
+  collected_at?: number
+  error?: string
+  code?: string
+}

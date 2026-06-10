@@ -104,6 +104,47 @@ func TestFileOperationMessagesJSON(t *testing.T) {
 	}
 }
 
+func TestAgentManagementMessagesJSON(t *testing.T) {
+	status := AgentStatusResponse{Type: MessageTypeAgentStatusResponse, RequestID: "req-1", NodeID: "node-1", Version: "0.1.0", User: "root", Mode: "ops", TerminalEnabled: true, DockerAvailable: true, ConfigPath: "/usr/local/mizupanel/agent.yaml", ServiceName: "mizupanel-agent", Uptime: 1234, CollectedAt: 1710000000}
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	var gotStatus AgentStatusResponse
+	if err := json.Unmarshal(data, &gotStatus); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if gotStatus.Type != MessageTypeAgentStatusResponse || gotStatus.RequestID != "req-1" || gotStatus.User != "root" || gotStatus.Mode != "ops" || !gotStatus.TerminalEnabled || !gotStatus.DockerAvailable || gotStatus.ServiceName != "mizupanel-agent" || gotStatus.Uptime != 1234 {
+		t.Fatalf("unexpected status response: %#v", gotStatus)
+	}
+
+	logsRequest := AgentLogsRequest{Type: MessageTypeAgentLogsRequest, RequestID: "req-2", NodeID: "node-1", Lines: 500}
+	data, err = json.Marshal(logsRequest)
+	if err != nil {
+		t.Fatalf("marshal logs request: %v", err)
+	}
+	var gotLogsRequest AgentLogsRequest
+	if err := json.Unmarshal(data, &gotLogsRequest); err != nil {
+		t.Fatalf("unmarshal logs request: %v", err)
+	}
+	if gotLogsRequest.Type != MessageTypeAgentLogsRequest || gotLogsRequest.Lines != 500 {
+		t.Fatalf("unexpected logs request: %#v", gotLogsRequest)
+	}
+
+	restart := AgentRestartResponse{Type: MessageTypeAgentRestartResponse, RequestID: "req-3", Accepted: true, Message: "重启命令已下发，等待 Agent 重新连接"}
+	data, err = json.Marshal(restart)
+	if err != nil {
+		t.Fatalf("marshal restart response: %v", err)
+	}
+	var gotRestart AgentRestartResponse
+	if err := json.Unmarshal(data, &gotRestart); err != nil {
+		t.Fatalf("unmarshal restart response: %v", err)
+	}
+	if gotRestart.Type != MessageTypeAgentRestartResponse || !gotRestart.Accepted || gotRestart.Message == "" {
+		t.Fatalf("unexpected restart response: %#v", gotRestart)
+	}
+}
+
 func TestTerminalMessageJSON(t *testing.T) {
 	payload := []byte("whoami\n")
 	msg := TerminalMessage{Type: MessageTypeTerminalData, SessionID: "term-1", NodeID: "node-1", Data: base64.StdEncoding.EncodeToString(payload), Rows: 24, Cols: 80}

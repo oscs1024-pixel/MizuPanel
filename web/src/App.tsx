@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { createInstallCommand, deleteNodePath, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
+import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
 import { HistoryPage } from './pages/HistoryPage'
@@ -838,7 +838,7 @@ export default function App() {
               <span>当前显示 {filteredNodes.length} 台</span>
             </div>
           </section>
-          <NodeDetail node={visibleSelectedNode} metrics={selectedMetrics} processSnapshot={selectedProcessSnapshot} dockerSnapshot={selectedDockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onSSHUninstall={startSSHUninstall} />
+          <NodeDetail node={visibleSelectedNode} metrics={selectedMetrics} processSnapshot={selectedProcessSnapshot} dockerSnapshot={selectedDockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onSSHUninstall={startSSHUninstall} onGetAgentStatus={getAgentStatus} onRestartAgent={restartAgent} onGetAgentLogs={getAgentLogs} />
         </div>
       )}
     </div>

@@ -165,21 +165,25 @@ type Handler struct {
 }
 
 type agentConnection struct {
-	nodeID          string
-	sessionID       string
-	conn            *websocket.Conn
-	writeMu         sync.Mutex
-	terminalEnabled bool
-	sessionMu       sync.Mutex
-	terminals       map[string]*browserTerminal
-	containerExecs  map[string]*browserContainerExec
-	pendingMu       sync.Mutex
-	pendingLists    map[string]chan protocol.FileListResponse
-	pendingReads    map[string]chan protocol.FileReadResponse
-	pendingWrites   map[string]chan protocol.FileWriteResponse
-	pendingUploads  map[string]chan protocol.FileUploadResponse
-	pendingDeletes  map[string]chan protocol.FileDeleteResponse
-	pendingReboots  map[string]chan protocol.RebootResponse
+	nodeID                  string
+	sessionID               string
+	conn                    *websocket.Conn
+	writeMu                 sync.Mutex
+	terminalEnabled         bool
+	supportsAgentManagement bool
+	sessionMu               sync.Mutex
+	terminals               map[string]*browserTerminal
+	containerExecs          map[string]*browserContainerExec
+	pendingMu               sync.Mutex
+	pendingLists            map[string]chan protocol.FileListResponse
+	pendingReads            map[string]chan protocol.FileReadResponse
+	pendingWrites           map[string]chan protocol.FileWriteResponse
+	pendingUploads          map[string]chan protocol.FileUploadResponse
+	pendingDeletes          map[string]chan protocol.FileDeleteResponse
+	pendingReboots          map[string]chan protocol.RebootResponse
+	pendingAgentStatuses    map[string]chan protocol.AgentStatusResponse
+	pendingAgentRestarts    map[string]chan protocol.AgentRestartResponse
+	pendingAgentLogs        map[string]chan protocol.AgentLogsResponse
 }
 
 type browserTerminal struct {
@@ -340,7 +344,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := h.startSession(nodeID)
-	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse)}
+	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, supportsAgentManagement: hello.AgentManagement, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse), pendingAgentStatuses: make(map[string]chan protocol.AgentStatusResponse), pendingAgentRestarts: make(map[string]chan protocol.AgentRestartResponse), pendingAgentLogs: make(map[string]chan protocol.AgentLogsResponse)}
 	h.registerConnection(agent)
 	defer h.unregisterConnection(agent)
 	defer h.finishSession(context.WithoutCancel(r.Context()), nodeID, sessionID)
@@ -405,6 +409,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			agent.deliverReboot(message)
+		case protocol.MessageTypeAgentStatusResponse:
+			var message protocol.AgentStatusResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverAgentStatus(message)
+		case protocol.MessageTypeAgentRestartResponse:
+			var message protocol.AgentRestartResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverAgentRestart(message)
+		case protocol.MessageTypeAgentLogsResponse:
+			var message protocol.AgentLogsResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverAgentLogs(message)
 		case protocol.MessageTypeTerminalStarted, protocol.MessageTypeTerminalData, protocol.MessageTypeTerminalExit, protocol.MessageTypeTerminalError, protocol.MessageTypeTerminalClose:
 			var message protocol.TerminalMessage
 			if err := json.Unmarshal(rawMessage, &message); err != nil {
@@ -638,6 +660,90 @@ func (h *Handler) Reboot(ctx context.Context, nodeID string) (protocol.RebootRes
 		return protocol.RebootResponse{Type: protocol.MessageTypeRebootResponse, Code: "timeout", Error: "重启请求超时。"}, nil
 	case <-ctx.Done():
 		return protocol.RebootResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) AgentStatus(ctx context.Context, nodeID string) (protocol.AgentStatusResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.AgentStatusResponse{Type: protocol.MessageTypeAgentStatusResponse, Code: "offline", Error: "Agent 离线，无法执行管理操作。"}, nil
+	}
+	if !agent.supportsAgentManagement {
+		return protocol.AgentStatusResponse{Type: protocol.MessageTypeAgentStatusResponse, Code: "unsupported", Error: "当前 Agent 版本暂不支持 Agent 管理，请重新安装或升级 Agent 后再试。"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.AgentStatusResponse{}, err
+	}
+	ch := make(chan protocol.AgentStatusResponse, 1)
+	agent.addAgentStatusRequest(requestID, ch)
+	defer agent.removeAgentStatusRequest(requestID)
+	if err := agent.writeJSON(protocol.AgentStatusRequest{Type: protocol.MessageTypeAgentStatusRequest, RequestID: requestID, NodeID: nodeID}); err != nil {
+		return protocol.AgentStatusResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(10 * time.Second):
+		return protocol.AgentStatusResponse{Type: protocol.MessageTypeAgentStatusResponse, Code: "timeout", Error: "Agent 状态请求超时。"}, nil
+	case <-ctx.Done():
+		return protocol.AgentStatusResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) AgentRestart(ctx context.Context, nodeID string) (protocol.AgentRestartResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.AgentRestartResponse{Type: protocol.MessageTypeAgentRestartResponse, Code: "offline", Error: "Agent 离线，无法执行管理操作。"}, nil
+	}
+	if !agent.supportsAgentManagement {
+		return protocol.AgentRestartResponse{Type: protocol.MessageTypeAgentRestartResponse, Code: "unsupported", Error: "当前 Agent 版本暂不支持 Agent 管理，请重新安装或升级 Agent 后再试。"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.AgentRestartResponse{}, err
+	}
+	ch := make(chan protocol.AgentRestartResponse, 1)
+	agent.addAgentRestartRequest(requestID, ch)
+	defer agent.removeAgentRestartRequest(requestID)
+	if err := agent.writeJSON(protocol.AgentRestartRequest{Type: protocol.MessageTypeAgentRestartRequest, RequestID: requestID, NodeID: nodeID}); err != nil {
+		return protocol.AgentRestartResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(10 * time.Second):
+		return protocol.AgentRestartResponse{Type: protocol.MessageTypeAgentRestartResponse, Code: "timeout", Error: "Agent 重启请求超时。"}, nil
+	case <-ctx.Done():
+		return protocol.AgentRestartResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) AgentLogs(ctx context.Context, nodeID string, lines int) (protocol.AgentLogsResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, Code: "offline", Error: "Agent 离线，无法执行管理操作。"}, nil
+	}
+	if !agent.supportsAgentManagement {
+		return protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, Code: "unsupported", Error: "当前 Agent 版本暂不支持 Agent 管理，请重新安装或升级 Agent 后再试。"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.AgentLogsResponse{}, err
+	}
+	ch := make(chan protocol.AgentLogsResponse, 1)
+	agent.addAgentLogsRequest(requestID, ch)
+	defer agent.removeAgentLogsRequest(requestID)
+	if err := agent.writeJSON(protocol.AgentLogsRequest{Type: protocol.MessageTypeAgentLogsRequest, RequestID: requestID, NodeID: nodeID, Lines: lines}); err != nil {
+		return protocol.AgentLogsResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(10 * time.Second):
+		return protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, Code: "timeout", Error: "Agent 日志请求超时。"}, nil
+	case <-ctx.Done():
+		return protocol.AgentLogsResponse{}, ctx.Err()
 	}
 }
 
@@ -909,6 +1015,42 @@ func (c *agentConnection) removeRebootRequest(requestID string) {
 	delete(c.pendingReboots, requestID)
 }
 
+func (c *agentConnection) addAgentStatusRequest(requestID string, ch chan protocol.AgentStatusResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingAgentStatuses[requestID] = ch
+}
+
+func (c *agentConnection) addAgentRestartRequest(requestID string, ch chan protocol.AgentRestartResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingAgentRestarts[requestID] = ch
+}
+
+func (c *agentConnection) addAgentLogsRequest(requestID string, ch chan protocol.AgentLogsResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingAgentLogs[requestID] = ch
+}
+
+func (c *agentConnection) removeAgentStatusRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingAgentStatuses, requestID)
+}
+
+func (c *agentConnection) removeAgentRestartRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingAgentRestarts, requestID)
+}
+
+func (c *agentConnection) removeAgentLogsRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingAgentLogs, requestID)
+}
+
 func (c *agentConnection) deliverFileList(response protocol.FileListResponse) {
 	c.pendingMu.Lock()
 	ch := c.pendingLists[response.RequestID]
@@ -963,6 +1105,33 @@ func (c *agentConnection) deliverReboot(response protocol.RebootResponse) {
 	}
 }
 
+func (c *agentConnection) deliverAgentStatus(response protocol.AgentStatusResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingAgentStatuses[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverAgentRestart(response protocol.AgentRestartResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingAgentRestarts[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverAgentLogs(response protocol.AgentLogsResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingAgentLogs[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
 func (c *agentConnection) closePendingOperations(reason string) {
 	c.pendingMu.Lock()
 	lists := c.pendingLists
@@ -971,12 +1140,18 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	uploads := c.pendingUploads
 	deletes := c.pendingDeletes
 	reboots := c.pendingReboots
+	agentStatuses := c.pendingAgentStatuses
+	agentRestarts := c.pendingAgentRestarts
+	agentLogs := c.pendingAgentLogs
 	c.pendingLists = make(map[string]chan protocol.FileListResponse)
 	c.pendingReads = make(map[string]chan protocol.FileReadResponse)
 	c.pendingWrites = make(map[string]chan protocol.FileWriteResponse)
 	c.pendingUploads = make(map[string]chan protocol.FileUploadResponse)
 	c.pendingDeletes = make(map[string]chan protocol.FileDeleteResponse)
 	c.pendingReboots = make(map[string]chan protocol.RebootResponse)
+	c.pendingAgentStatuses = make(map[string]chan protocol.AgentStatusResponse)
+	c.pendingAgentRestarts = make(map[string]chan protocol.AgentRestartResponse)
+	c.pendingAgentLogs = make(map[string]chan protocol.AgentLogsResponse)
 	c.pendingMu.Unlock()
 	for requestID, ch := range lists {
 		ch <- protocol.FileListResponse{Type: protocol.MessageTypeFileListResponse, RequestID: requestID, Code: "offline", Error: reason}
@@ -995,6 +1170,15 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	}
 	for requestID, ch := range reboots {
 		ch <- protocol.RebootResponse{Type: protocol.MessageTypeRebootResponse, RequestID: requestID, Code: "offline", Error: reason}
+	}
+	for requestID, ch := range agentStatuses {
+		ch <- protocol.AgentStatusResponse{Type: protocol.MessageTypeAgentStatusResponse, RequestID: requestID, Code: "offline", Error: reason}
+	}
+	for requestID, ch := range agentRestarts {
+		ch <- protocol.AgentRestartResponse{Type: protocol.MessageTypeAgentRestartResponse, RequestID: requestID, Code: "offline", Error: reason}
+	}
+	for requestID, ch := range agentLogs {
+		ch <- protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, RequestID: requestID, Code: "offline", Error: reason}
 	}
 }
 

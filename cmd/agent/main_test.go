@@ -35,6 +35,19 @@ func TestAgentDockerCollectionRequiresConfigOptIn(t *testing.T) {
 	}
 }
 
+func TestAgentManagementDockerStatusUsesCollector(t *testing.T) {
+	content, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read agent main: %v", err)
+	}
+	source := string(content)
+	for _, want := range []string{"DockerStatus:", "func() (bool, string)", "dockerCollector.Collect()", "return snapshot.Available, snapshot.Error"} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("agent management Docker status does not use live collector status, missing %q", want)
+		}
+	}
+}
+
 func TestAgentPackageBuildsForWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("cross-build test is for non-Windows CI")

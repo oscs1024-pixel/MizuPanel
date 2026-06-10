@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
 import { formatBytes, formatPercent, formatSpeed } from '../lib/format'
 import { MetricsChart } from '../components/MetricsChart'
 
@@ -19,9 +19,12 @@ type NodeDetailProps = {
   onDeletePath?: (nodeID: string, path: string) => Promise<FileDeleteResponse>
   onRebootNode?: (nodeID: string) => Promise<RebootResponse>
   onSSHUninstall?: (nodeID: string, request: SSHUninstallRequest) => Promise<SSHJobResponse>
+  onGetAgentStatus?: (nodeID: string) => Promise<AgentStatusResponse>
+  onRestartAgent?: (nodeID: string) => Promise<AgentRestartResponse>
+  onGetAgentLogs?: (nodeID: string, lines: number) => Promise<AgentLogsResponse>
 }
 
-type DetailSection = 'overview' | 'processes' | 'containers' | 'files'
+type DetailSection = 'overview' | 'processes' | 'containers' | 'files' | 'agent'
 type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name'
 type DockerFilter = 'all' | 'running' | 'stopped' | 'abnormal'
 type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
@@ -41,7 +44,7 @@ function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProg
   return next
 }
 
-export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onSSHUninstall }: NodeDetailProps) {
+export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onSSHUninstall, onGetAgentStatus, onRestartAgent, onGetAgentLogs }: NodeDetailProps) {
   const [activeSection, setActiveSection] = useState<DetailSection>('overview')
   const [processSort, setProcessSort] = useState<ProcessSort>('cpu')
   const [processSearch, setProcessSearch] = useState('')
@@ -54,6 +57,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
   const [pathInput, setPathInput] = useState('/')
   const [editorOpen, setEditorOpen] = useState(false)
   const fileRequestSeq = useRef(0)
+  const agentRequestSeq = useRef(0)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const [operationMessage, setOperationMessage] = useState<string>()
   const [fileLoading, setFileLoading] = useState(false)
@@ -69,6 +73,48 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
   const [sshUninstallMessage, setSSHUninstallMessage] = useState<string>()
   const [sshUninstallError, setSSHUninstallError] = useState<string>()
   const [sshUninstallEvents, setSSHUninstallEvents] = useState<SSHProgressEventLog[]>([])
+  const [agentStatus, setAgentStatus] = useState<AgentStatusResponse>()
+  const [agentLogs, setAgentLogs] = useState<AgentLogsResponse>()
+  const [agentLoading, setAgentLoading] = useState(false)
+  const [agentMessage, setAgentMessage] = useState<string>()
+  const [agentError, setAgentError] = useState<string>()
+
+  useEffect(() => {
+    agentRequestSeq.current += 1
+    setAgentStatus(undefined)
+    setAgentLogs(undefined)
+    setAgentMessage(undefined)
+    setAgentError(undefined)
+    setAgentLoading(false)
+    if (!node || activeSection !== 'agent') return
+    const requestID = agentRequestSeq.current
+    if (node.status !== 'online') {
+      setAgentError('节点离线，无法获取 Agent 管理信息。')
+      return
+    }
+    setAgentLoading(true)
+    Promise.allSettled([
+      onGetAgentStatus ? onGetAgentStatus(node.id) : Promise.resolve(undefined),
+      onGetAgentLogs ? onGetAgentLogs(node.id, 100) : Promise.resolve(undefined)
+    ])
+      .then(([statusResult, logsResult]) => {
+        if (requestID !== agentRequestSeq.current) return
+        if (statusResult.status === 'fulfilled' && statusResult.value) {
+          setAgentStatus(statusResult.value)
+        } else if (statusResult.status === 'rejected') {
+          setAgentError(statusResult.reason instanceof Error ? statusResult.reason.message : 'Agent 状态加载失败')
+        }
+        if (logsResult.status === 'fulfilled' && logsResult.value) {
+          setAgentLogs(logsResult.value)
+          if (logsResult.value.error) setAgentError(logsResult.value.error)
+        } else if (logsResult.status === 'rejected') {
+          setAgentError(logsResult.reason instanceof Error ? logsResult.reason.message : 'Agent 日志加载失败')
+        }
+      })
+      .finally(() => {
+        if (requestID === agentRequestSeq.current) setAgentLoading(false)
+      })
+  }, [node?.id, node?.status])
 
   const filteredProcesses = useMemo(() => {
     const keyword = processSearch.trim().toLowerCase()
@@ -358,6 +404,79 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       .finally(() => setSSHUninstallLoading(false))
   }
 
+  const loadAgentManagement = () => {
+    setActiveSection('agent')
+    setAgentStatus(undefined)
+    setAgentLogs(undefined)
+    setAgentMessage(undefined)
+    setAgentError(undefined)
+    const requestID = agentRequestSeq.current + 1
+    agentRequestSeq.current = requestID
+    if (!online) {
+      setAgentError('节点离线，无法获取 Agent 管理信息。')
+      return
+    }
+    setAgentLoading(true)
+    Promise.allSettled([
+      onGetAgentStatus ? onGetAgentStatus(node.id) : Promise.resolve(undefined),
+      onGetAgentLogs ? onGetAgentLogs(node.id, 100) : Promise.resolve(undefined)
+    ])
+      .then(([statusResult, logsResult]) => {
+        if (requestID !== agentRequestSeq.current) return
+        if (statusResult.status === 'fulfilled' && statusResult.value) {
+          setAgentStatus(statusResult.value)
+        } else if (statusResult.status === 'rejected') {
+          setAgentError(statusResult.reason instanceof Error ? statusResult.reason.message : 'Agent 状态加载失败')
+        }
+        if (logsResult.status === 'fulfilled' && logsResult.value) {
+          setAgentLogs(logsResult.value)
+          if (logsResult.value.error) setAgentError(logsResult.value.error)
+        } else if (logsResult.status === 'rejected') {
+          setAgentError(logsResult.reason instanceof Error ? logsResult.reason.message : 'Agent 日志加载失败')
+        }
+      })
+      .finally(() => {
+        if (requestID === agentRequestSeq.current) setAgentLoading(false)
+      })
+  }
+
+  const refreshAgentLogs = () => {
+    if (!online || !onGetAgentLogs) {
+      setAgentError('节点离线，无法获取 Agent 日志。')
+      return
+    }
+    const requestID = agentRequestSeq.current + 1
+    agentRequestSeq.current = requestID
+    setAgentLoading(true)
+    setAgentError(undefined)
+    onGetAgentLogs(node.id, 100)
+      .then((logs) => {
+        if (requestID !== agentRequestSeq.current) return
+        setAgentLogs(logs)
+        if (logs.error) setAgentError(logs.error)
+      })
+      .catch((err: unknown) => {
+        if (requestID === agentRequestSeq.current) setAgentError(err instanceof Error ? err.message : 'Agent 日志加载失败')
+      })
+      .finally(() => {
+        if (requestID === agentRequestSeq.current) setAgentLoading(false)
+      })
+  }
+
+  const restartAgentService = () => {
+    if (!online || !onRestartAgent) {
+      setAgentError('节点离线，无法重启 Agent。')
+      return
+    }
+    const confirmed = window.confirm(`确认重启 ${agentStatus?.service_name || 'mizupanel-agent'}？\n重启后 Agent 会短暂断开并自动重新连接。`)
+    if (!confirmed) return
+    setAgentMessage(undefined)
+    setAgentError(undefined)
+    onRestartAgent(node.id)
+      .then((response) => setAgentMessage(response.accepted ? response.message || '重启命令已下发，等待 Agent 重新连接' : formatOperationError(response.code, response.error || 'Agent 重启命令发送失败')))
+      .catch((err: unknown) => setAgentError(err instanceof Error ? err.message : 'Agent 重启命令发送失败'))
+  }
+
   return (
     <section className="min-w-0 space-y-2">
       <div className="rounded-[14px] border border-border bg-card p-3 shadow-sm">
@@ -426,13 +545,14 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           ['overview', '监控概览'],
           ['processes', '进程信息'],
           ['containers', '容器信息'],
-          ['files', '文件管理']
+          ['files', '文件管理'],
+          ['agent', 'Agent 管理']
         ] as const).map(([section, label]) => (
           <button
             key={section}
             type="button"
             aria-pressed={activeSection === section}
-            onClick={() => section === 'files' ? loadFiles(fileList?.path || '/') : setActiveSection(section)}
+            onClick={() => section === 'files' ? loadFiles(fileList?.path || '/') : section === 'agent' ? loadAgentManagement() : setActiveSection(section)}
             className={`min-h-9 cursor-pointer rounded-xl px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-primary/20 ${activeSection === section ? 'bg-primary/10 text-primary shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
           >
             {label}
@@ -620,6 +740,46 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         </section>
       ) : null}
 
+      {activeSection === 'agent' ? (
+        <section role="region" aria-label="Agent 管理" className="overflow-hidden rounded-[28px] border border-border bg-card shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-border bg-surface p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-success">Agent Management</p>
+              <h3 className="mt-1 text-lg font-black text-foreground">Agent 管理</h3>
+              <p className="mt-1 text-xs font-bold text-muted-foreground">单节点 Agent 状态、重启与最近日志。</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={loadAgentManagement} disabled={!online || agentLoading} className="min-h-10 rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60">刷新状态</button>
+              <button type="button" onClick={refreshAgentLogs} disabled={!online || agentLoading} className="min-h-10 rounded-2xl border border-success/30 bg-success/10 px-4 text-xs font-black text-success transition hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-60">刷新日志</button>
+              <button type="button" aria-label="重启 Agent" onClick={restartAgentService} disabled={!online} className="min-h-10 rounded-2xl border border-warning/30 bg-warning/10 px-4 text-xs font-black text-warning transition hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60">重启 Agent</button>
+            </div>
+          </div>
+          {agentMessage ? <p className="m-4 rounded-2xl border border-success/30 bg-success/10 px-4 py-3 text-sm font-black text-success">{agentMessage}</p> : null}
+          {agentError ? <p className="m-4 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm font-black text-warning">{agentError}</p> : null}
+          {agentLoading ? <p className="m-4 rounded-2xl border border-info/30 bg-info/10 px-4 py-3 text-sm font-black text-info">正在加载 Agent 管理信息...</p> : null}
+          <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+              <InfoBlock label="服务名称" value={agentStatus?.service_name || 'mizupanel-agent'} />
+              <InfoBlock label="Agent 版本" value={agentStatus?.version || node.agent_version || '未知'} />
+              <InfoBlock label="运行用户" value={agentStatus?.user || node.agent_user || '未知'} />
+              <InfoBlock label="运行模式" value={formatAgentMode(agentStatus?.mode || node.agent_mode)} />
+              <InfoBlock label="运行时间" value={formatUptime(agentStatus?.uptime)} />
+              <InfoBlock label="配置路径" value={agentStatus?.config_path || '暂未上报'} wrap />
+              <InfoBlock label="终端能力" value={agentStatus?.terminal_enabled ? '已启用' : '未启用'} />
+              <InfoBlock label="Docker 能力" value={agentStatus?.docker_available ? '可用' : agentStatus?.docker_error || '不可用'} wrap />
+            </div>
+            <div className="min-w-0 rounded-2xl border border-border bg-slate-950 p-3 text-slate-100 shadow-inner">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Recent Logs · {agentLogs?.lines || 100} lines</p>
+                <span className="text-xs font-bold text-slate-500">{formatUnixTime(agentLogs?.collected_at)}</span>
+              </div>
+              {agentLogs?.truncated ? <p className="mb-2 rounded-xl bg-warning/20 px-3 py-2 text-xs font-black text-warning">日志内容较长，已截断显示。</p> : null}
+              <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-xl bg-code px-3 py-3 font-mono text-xs font-semibold leading-5 text-code-foreground">{agentLogs?.content || '暂无 Agent 日志，点击刷新日志后查看。'}</pre>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {sshUninstallOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
           <section role="dialog" aria-modal="true" aria-label="卸载 Agent" className="w-full max-w-2xl overflow-hidden rounded-[30px] border border-danger/30 bg-card shadow-2xl outline-none">
@@ -761,6 +921,12 @@ function formatLoadSummary(metric?: Metric) {
   const load5 = Number.isFinite(metric.load5) ? metric.load5.toFixed(2) : '—'
   const load15 = Number.isFinite(metric.load15) ? metric.load15.toFixed(2) : '—'
   return `1m ${load1} · 5m ${load5} · 15m ${load15}`
+}
+
+function formatAgentMode(mode?: string) {
+  if (mode === 'ops') return '运维模式'
+  if (mode === 'normal') return '普通模式'
+  return mode || '未知'
 }
 
 function formatUptime(seconds?: number) {

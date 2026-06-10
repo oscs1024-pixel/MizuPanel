@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from './App'
-import { getNodeDocker, getNodeMetrics, getNodeProcesses, getNodes } from './api/client'
+import { getAgentLogs, getAgentStatus, getNodeDocker, getNodeMetrics, getNodeProcesses, getNodes, restartAgent } from './api/client'
 import type { DockerSnapshotResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse } from './types'
 
 vi.mock('./api/client', () => ({
@@ -11,6 +11,9 @@ vi.mock('./api/client', () => ({
   getNodeMetrics: vi.fn(),
   getNodeProcesses: vi.fn(),
   getNodeDocker: vi.fn(),
+  getAgentStatus: vi.fn(async () => ({ version: '0.1.0', user: 'root', mode: 'ops', terminal_enabled: true, docker_available: true, service_name: 'mizupanel-agent', uptime: 3600, collected_at: 1710000000 })),
+  restartAgent: vi.fn(async () => ({ accepted: true, message: '重启命令已下发，等待 Agent 重新连接' })),
+  getAgentLogs: vi.fn(async () => ({ lines: 100, content: 'mizupanel-agent started', collected_at: 1710000001 })),
   getSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
   updateSettings: vi.fn(async () => ({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })),
   getNodeFiles: vi.fn(async () => ({ path: '/', entries: [] })),
@@ -108,10 +111,16 @@ describe('node monitoring detail', () => {
     vi.mocked(getNodeMetrics).mockReset()
     vi.mocked(getNodeProcesses).mockReset()
     vi.mocked(getNodeDocker).mockReset()
+    vi.mocked(getAgentStatus).mockReset()
+    vi.mocked(getAgentLogs).mockReset()
+    vi.mocked(restartAgent).mockReset()
     vi.mocked(getNodes).mockResolvedValue(nodesResponse)
     vi.mocked(getNodeMetrics).mockResolvedValue(emptyMetrics)
     vi.mocked(getNodeProcesses).mockResolvedValue(processSnapshot)
     vi.mocked(getNodeDocker).mockResolvedValue(dockerSnapshot)
+    vi.mocked(getAgentStatus).mockResolvedValue({ version: '0.1.0', user: 'root', mode: 'ops', terminal_enabled: true, docker_available: true, service_name: 'mizupanel-agent', uptime: 3600, collected_at: 1710000000 })
+    vi.mocked(getAgentLogs).mockResolvedValue({ lines: 100, content: 'mizupanel-agent started', collected_at: 1710000001 })
+    vi.mocked(restartAgent).mockResolvedValue({ accepted: true, message: '重启命令已下发，等待 Agent 重新连接' })
   })
 
   test('loads snapshots and shows them behind detail section buttons', async () => {
@@ -164,6 +173,25 @@ describe('node monitoring detail', () => {
     expect(screen.getByRole('region', { name: 'Docker 容器' })).toHaveTextContent('Docker 24.0.0')
     expect(screen.getByRole('region', { name: 'Docker 容器' })).toHaveTextContent('nginx:latest')
     expect(screen.queryByRole('region', { name: '进程 Top' })).not.toBeInTheDocument()
+  })
+
+  test('wires Agent management actions through the API client', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Oracle SG' })
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    const panel = await screen.findByRole('region', { name: 'Agent 管理' })
+
+    await waitFor(() => expect(getAgentStatus).toHaveBeenCalledWith('node-1'))
+    expect(getAgentLogs).toHaveBeenCalledWith('node-1', 100)
+    expect(within(panel).getByText('mizupanel-agent started')).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByRole('button', { name: '重启 Agent' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('mizupanel-agent'))
+    expect(restartAgent).toHaveBeenCalledWith('node-1')
+    expect(await within(panel).findByText('重启命令已下发，等待 Agent 重新连接')).toBeInTheDocument()
   })
 
   test('uses placeholders for missing disk I/O fields and derives boot time from uptime', async () => {

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { NodeDetail } from './NodeDetail'
-import type { FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, Node, RebootResponse, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, Node, RebootResponse, SSHUninstallRequest } from '../types'
 
 const node: Node = {
   id: 'node-1',
@@ -203,6 +203,239 @@ describe('NodeDetail file manager operations', () => {
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('当前执行用户：root'))
     expect(onRebootNode).toHaveBeenCalledWith('node-1')
     expect(await screen.findByText('重启命令已发送，节点可能会暂时离线，请稍后等待 Agent 重新连接。')).toBeInTheDocument()
+  })
+
+  test('shows Agent management status, recent logs and restart feedback', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onGetAgentStatus = vi.fn(async (): Promise<AgentStatusResponse> => ({
+      version: '0.1.0',
+      user: 'root',
+      mode: 'ops',
+      terminal_enabled: true,
+      docker_available: true,
+      config_path: '/usr/local/mizupanel/agent.yaml',
+      service_name: 'mizupanel-agent',
+      uptime: 3661,
+      collected_at: 1710000000
+    }))
+    const onGetAgentLogs = vi.fn(async (): Promise<AgentLogsResponse> => ({ lines: 100, content: 'mizupanel-agent started', collected_at: 1710000001 }))
+    const onRestartAgent = vi.fn(async (): Promise<AgentRestartResponse> => ({ accepted: true, message: '重启命令已下发，等待 Agent 重新连接' }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onRestartAgent={onRestartAgent}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    const panel = await screen.findByRole('region', { name: 'Agent 管理' })
+
+    await waitFor(() => expect(onGetAgentStatus).toHaveBeenCalledWith('node-1'))
+    expect(onGetAgentLogs).toHaveBeenCalledWith('node-1', 100)
+    expect(within(panel).getByText('mizupanel-agent')).toBeInTheDocument()
+    expect(within(panel).getByText('0.1.0')).toBeInTheDocument()
+    expect(within(panel).getByText('root')).toBeInTheDocument()
+    expect(within(panel).getByText('运维模式')).toBeInTheDocument()
+    expect(within(panel).getByText('1 小时 1 分钟')).toBeInTheDocument()
+    expect(within(panel).getByText('mizupanel-agent started')).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByRole('button', { name: '重启 Agent' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('mizupanel-agent'))
+    expect(onRestartAgent).toHaveBeenCalledWith('node-1')
+    expect(await within(panel).findByText('重启命令已下发，等待 Agent 重新连接')).toBeInTheDocument()
+  })
+
+  test('clears stale Agent management data when switching to an offline node', async () => {
+    const onGetAgentStatus = vi.fn(async (): Promise<AgentStatusResponse> => ({
+      version: '0.1.0',
+      user: 'root',
+      mode: 'ops',
+      terminal_enabled: true,
+      docker_available: true,
+      config_path: '/usr/local/mizupanel/agent.yaml',
+      service_name: 'mizupanel-agent',
+      uptime: 3661,
+      collected_at: 1710000000
+    }))
+    const onGetAgentLogs = vi.fn(async (): Promise<AgentLogsResponse> => ({ lines: 100, content: 'node-a-log', collected_at: 1710000001 }))
+    const offlineNode = { ...node, id: 'node-2', name: 'Tokyo JP', status: 'offline' }
+
+    const { rerender } = render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    expect(await screen.findByText('node-a-log')).toBeInTheDocument()
+
+    rerender(
+      <NodeDetail
+        node={offlineNode}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-2', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-2', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+
+    expect(await screen.findByText('节点离线，无法获取 Agent 管理信息。')).toBeInTheDocument()
+    expect(screen.queryByText('node-a-log')).not.toBeInTheDocument()
+    expect(screen.queryByText('/usr/local/mizupanel/agent.yaml')).not.toBeInTheDocument()
+  })
+
+  test('shows Agent logs errors while keeping the loaded status visible', async () => {
+    const onGetAgentStatus = vi.fn(async (): Promise<AgentStatusResponse> => ({
+      version: '0.1.0',
+      user: 'root',
+      mode: 'ops',
+      terminal_enabled: true,
+      docker_available: true,
+      service_name: 'mizupanel-agent',
+      uptime: 3661,
+      collected_at: 1710000000
+    }))
+    const onGetAgentLogs = vi.fn(async (): Promise<AgentLogsResponse> => ({ lines: 100, error: 'journalctl failed', code: 'failed', collected_at: 1710000001 }))
+
+    render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    const panel = await screen.findByRole('region', { name: 'Agent 管理' })
+
+    expect(await within(panel).findByText('journalctl failed')).toBeInTheDocument()
+    expect(within(panel).getByText('0.1.0')).toBeInTheDocument()
+    expect(within(panel).getByText('暂无 Agent 日志，点击刷新日志后查看。')).toBeInTheDocument()
+  })
+
+  test('clears stale Agent management data when the selected node goes offline', async () => {
+    const onGetAgentStatus = vi.fn(async (): Promise<AgentStatusResponse> => ({
+      version: '0.1.0',
+      user: 'root',
+      mode: 'ops',
+      terminal_enabled: true,
+      docker_available: true,
+      config_path: '/usr/local/mizupanel/agent.yaml',
+      service_name: 'mizupanel-agent',
+      uptime: 3661,
+      collected_at: 1710000000
+    }))
+    const onGetAgentLogs = vi.fn(async (): Promise<AgentLogsResponse> => ({ lines: 100, content: 'same-node-log', collected_at: 1710000001 }))
+
+    const { rerender } = render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    expect(await screen.findByText('same-node-log')).toBeInTheDocument()
+
+    rerender(
+      <NodeDetail
+        node={{ ...node, status: 'offline' }}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    expect(await screen.findByText('节点离线，无法获取 Agent 管理信息。')).toBeInTheDocument()
+    expect(screen.queryByText('same-node-log')).not.toBeInTheDocument()
+    expect(screen.queryByText('/usr/local/mizupanel/agent.yaml')).not.toBeInTheDocument()
+  })
+
+  test('reloads Agent management for the newly selected node and ignores stale responses', async () => {
+    const nodeOneStatus = deferred<AgentStatusResponse>()
+    const nodeOneLogs = deferred<AgentLogsResponse>()
+    const nodeTwoStatus = deferred<AgentStatusResponse>()
+    const nodeTwoLogs = deferred<AgentLogsResponse>()
+    const onGetAgentStatus = vi.fn((_nodeID: string): Promise<AgentStatusResponse> => _nodeID === 'node-2' ? nodeTwoStatus.promise : nodeOneStatus.promise)
+    const onGetAgentLogs = vi.fn((_nodeID: string): Promise<AgentLogsResponse> => _nodeID === 'node-2' ? nodeTwoLogs.promise : nodeOneLogs.promise)
+    const nextNode = { ...node, id: 'node-2', name: 'Tokyo JP', ip: '10.0.0.2' }
+
+    const { rerender } = render(
+      <NodeDetail
+        node={node}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-1', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-1', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 管理' }))
+    await waitFor(() => expect(onGetAgentStatus).toHaveBeenCalledWith('node-1'))
+
+    rerender(
+      <NodeDetail
+        node={nextNode}
+        metrics={[]}
+        processSnapshot={{ node_id: 'node-2', collected_at: 0, error: '', processes: [] }}
+        dockerSnapshot={{ node_id: 'node-2', collected_at: 0, available: false, error: '', containers: [] }}
+        range="1h"
+        onRangeChange={vi.fn()}
+        onGetAgentStatus={onGetAgentStatus}
+        onGetAgentLogs={onGetAgentLogs}
+      />
+    )
+
+    await waitFor(() => expect(onGetAgentStatus).toHaveBeenCalledWith('node-2'))
+    await act(async () => {
+      nodeOneStatus.resolve({ version: 'stale', user: 'old-root', mode: 'ops', terminal_enabled: true, docker_available: true, service_name: 'old-agent', uptime: 1 })
+      nodeOneLogs.resolve({ lines: 100, content: 'old-node-log' })
+      nodeTwoStatus.resolve({ version: '0.2.0', user: 'new-root', mode: 'ops', terminal_enabled: true, docker_available: true, service_name: 'new-agent', uptime: 120 })
+      nodeTwoLogs.resolve({ lines: 100, content: 'new-node-log' })
+    })
+
+    const panel = await screen.findByRole('region', { name: 'Agent 管理' })
+    expect(await within(panel).findByText('new-node-log')).toBeInTheDocument()
+    expect(within(panel).getByText('0.2.0')).toBeInTheDocument()
+    expect(within(panel).queryByText('old-node-log')).not.toBeInTheDocument()
+    expect(within(panel).queryByText('stale')).not.toBeInTheDocument()
   })
 
   test('uploads files to the current directory and deletes entries after confirmation', async () => {

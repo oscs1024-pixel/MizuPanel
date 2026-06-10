@@ -347,6 +347,28 @@ func TestBearerTokenAcceptsCaseInsensitiveScheme(t *testing.T) {
 	}
 }
 
+func TestAgentManagementRejectsConnectionsWithoutCapability(t *testing.T) {
+	handler := &Handler{connections: map[string]*agentConnection{"node-1": {nodeID: "node-1", supportsAgentManagement: false}}}
+
+	status, err := handler.AgentStatus(t.Context(), "node-1")
+	if err != nil {
+		t.Fatalf("AgentStatus returned error: %v", err)
+	}
+	restart, err := handler.AgentRestart(t.Context(), "node-1")
+	if err != nil {
+		t.Fatalf("AgentRestart returned error: %v", err)
+	}
+	logs, err := handler.AgentLogs(t.Context(), "node-1", 100)
+	if err != nil {
+		t.Fatalf("AgentLogs returned error: %v", err)
+	}
+	for name, code := range map[string]string{"status": status.Code, "restart": restart.Code, "logs": logs.Code} {
+		if code != "unsupported" {
+			t.Fatalf("%s code = %q, want unsupported", name, code)
+		}
+	}
+}
+
 func TestAgentConnectionEnforcesCombinedTerminalSessionLimit(t *testing.T) {
 	agent := &agentConnection{
 		terminals:      make(map[string]*browserTerminal),

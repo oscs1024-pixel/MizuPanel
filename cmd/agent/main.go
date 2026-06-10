@@ -9,6 +9,7 @@ import (
 
 	agentconfig "github.com/mizupanel/mizupanel/internal/agent/config"
 	agentdocker "github.com/mizupanel/mizupanel/internal/agent/docker"
+	agentmanagement "github.com/mizupanel/mizupanel/internal/agent/management"
 	"github.com/mizupanel/mizupanel/internal/agent/metrics"
 	agentprocess "github.com/mizupanel/mizupanel/internal/agent/process"
 	agentterminal "github.com/mizupanel/mizupanel/internal/agent/terminal"
@@ -55,6 +56,21 @@ func runAgent(ctx context.Context, configPath string) error {
 		initialSnapshot.Hostname = cfg.Name
 	}
 	client := agentws.NewClient(cfg.ServerURL, cfg.Token)
+	client.SetAgentManagementHandler(agentmanagement.NewHandler(agentmanagement.Options{
+		Version:         "0.1.0",
+		User:            currentUsername(),
+		Mode:            cfg.AgentMode,
+		TerminalEnabled: cfg.EnableTerminal && agentterminal.Supported(),
+		DockerStatus: func() (bool, string) {
+			if dockerCollector == nil {
+				return false, "Docker 监控未启用"
+			}
+			snapshot := dockerCollector.Collect()
+			return snapshot.Available, snapshot.Error
+		},
+		ConfigPath: configPath,
+		StartTime:  time.Now(),
+	}))
 	client.SetTerminalHandlerFactory(func(sender agentws.TerminalSender) agentws.TerminalHandler {
 		return agentterminal.NewManager(cfg.EnableTerminal, sender)
 	})
@@ -67,18 +83,19 @@ func runAgent(ctx context.Context, configPath string) error {
 		})
 	}
 	return client.RunForever(ctx, protocol.HelloMessage{
-		Type:         protocol.MessageTypeHello,
-		NodeID:       cfg.NodeID,
-		AgentVersion: "0.1.0",
-		Hostname:     initialSnapshot.Hostname,
-		Name:         cfg.Name,
-		IP:           initialSnapshot.IP,
-		OS:           initialSnapshot.OS,
-		Arch:         initialSnapshot.Arch,
-		Kernel:       initialSnapshot.Kernel,
-		Terminal:     cfg.EnableTerminal && agentterminal.Supported(),
-		AgentMode:    cfg.AgentMode,
-		AgentUser:    currentUsername(),
+		Type:            protocol.MessageTypeHello,
+		NodeID:          cfg.NodeID,
+		AgentVersion:    "0.1.0",
+		Hostname:        initialSnapshot.Hostname,
+		Name:            cfg.Name,
+		IP:              initialSnapshot.IP,
+		OS:              initialSnapshot.OS,
+		Arch:            initialSnapshot.Arch,
+		Kernel:          initialSnapshot.Kernel,
+		Terminal:        cfg.EnableTerminal && agentterminal.Supported(),
+		AgentMode:       cfg.AgentMode,
+		AgentUser:       currentUsername(),
+		AgentManagement: true,
 	}, cfg.Interval, 3*time.Second, func(nodeID string, timestamp int64) (protocol.MetricsMessage, error) {
 		snapshot, err := collector.Collect()
 		if err != nil {

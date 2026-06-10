@@ -1,30 +1,36 @@
 package protocol
 
 const (
-	MessageTypeHello              = "hello"
-	MessageTypeHelloAck           = "hello_ack"
-	MessageTypeMetrics            = "metrics"
-	MessageTypePing               = "ping"
-	MessageTypePong               = "pong"
-	MessageTypeFileListRequest    = "file_list_request"
-	MessageTypeFileListResponse   = "file_list_response"
-	MessageTypeFileReadRequest    = "file_read_request"
-	MessageTypeFileReadResponse   = "file_read_response"
-	MessageTypeFileWriteRequest   = "file_write_request"
-	MessageTypeFileWriteResponse  = "file_write_response"
-	MessageTypeFileUploadRequest  = "file_upload_request"
-	MessageTypeFileUploadResponse = "file_upload_response"
-	MessageTypeFileDeleteRequest  = "file_delete_request"
-	MessageTypeFileDeleteResponse = "file_delete_response"
-	MessageTypeRebootRequest      = "reboot_request"
-	MessageTypeRebootResponse     = "reboot_response"
-	MessageTypeTerminalStart      = "terminal_start"
-	MessageTypeTerminalStarted    = "terminal_started"
-	MessageTypeTerminalData       = "terminal_data"
-	MessageTypeTerminalResize     = "terminal_resize"
-	MessageTypeTerminalClose      = "terminal_close"
-	MessageTypeTerminalExit       = "terminal_exit"
-	MessageTypeTerminalError      = "terminal_error"
+	MessageTypeHello                = "hello"
+	MessageTypeHelloAck             = "hello_ack"
+	MessageTypeMetrics              = "metrics"
+	MessageTypePing                 = "ping"
+	MessageTypePong                 = "pong"
+	MessageTypeFileListRequest      = "file_list_request"
+	MessageTypeFileListResponse     = "file_list_response"
+	MessageTypeFileReadRequest      = "file_read_request"
+	MessageTypeFileReadResponse     = "file_read_response"
+	MessageTypeFileWriteRequest     = "file_write_request"
+	MessageTypeFileWriteResponse    = "file_write_response"
+	MessageTypeFileUploadRequest    = "file_upload_request"
+	MessageTypeFileUploadResponse   = "file_upload_response"
+	MessageTypeFileDeleteRequest    = "file_delete_request"
+	MessageTypeFileDeleteResponse   = "file_delete_response"
+	MessageTypeRebootRequest        = "reboot_request"
+	MessageTypeRebootResponse       = "reboot_response"
+	MessageTypeAgentStatusRequest   = "agent_status_request"
+	MessageTypeAgentStatusResponse  = "agent_status_response"
+	MessageTypeAgentRestartRequest  = "agent_restart_request"
+	MessageTypeAgentRestartResponse = "agent_restart_response"
+	MessageTypeAgentLogsRequest     = "agent_logs_request"
+	MessageTypeAgentLogsResponse    = "agent_logs_response"
+	MessageTypeTerminalStart        = "terminal_start"
+	MessageTypeTerminalStarted      = "terminal_started"
+	MessageTypeTerminalData         = "terminal_data"
+	MessageTypeTerminalResize       = "terminal_resize"
+	MessageTypeTerminalClose        = "terminal_close"
+	MessageTypeTerminalExit         = "terminal_exit"
+	MessageTypeTerminalError        = "terminal_error"
 
 	MessageTypeContainerExecStart   = "container_exec_start"
 	MessageTypeContainerExecStarted = "container_exec_started"
@@ -36,18 +42,19 @@ const (
 )
 
 type HelloMessage struct {
-	Type         string `json:"type"`
-	NodeID       string `json:"node_id"`
-	AgentVersion string `json:"agent_version"`
-	Hostname     string `json:"hostname"`
-	Name         string `json:"name"`
-	IP           string `json:"ip"`
-	OS           string `json:"os"`
-	Arch         string `json:"arch"`
-	Kernel       string `json:"kernel"`
-	Terminal     bool   `json:"terminal"`
-	AgentMode    string `json:"agent_mode,omitempty"`
-	AgentUser    string `json:"agent_user,omitempty"`
+	Type            string `json:"type"`
+	NodeID          string `json:"node_id"`
+	AgentVersion    string `json:"agent_version"`
+	Hostname        string `json:"hostname"`
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	OS              string `json:"os"`
+	Arch            string `json:"arch"`
+	Kernel          string `json:"kernel"`
+	Terminal        bool   `json:"terminal"`
+	AgentMode       string `json:"agent_mode,omitempty"`
+	AgentUser       string `json:"agent_user,omitempty"`
+	AgentManagement bool   `json:"agent_management,omitempty"`
 }
 
 type HelloAckMessage struct {
@@ -167,6 +174,64 @@ type RebootResponse struct {
 	Accepted  bool   `json:"accepted"`
 	Error     string `json:"error,omitempty"`
 	Code      string `json:"code,omitempty"`
+}
+
+type AgentStatusRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
+type AgentStatusResponse struct {
+	Type            string `json:"type"`
+	RequestID       string `json:"request_id,omitempty"`
+	NodeID          string `json:"node_id,omitempty"`
+	Version         string `json:"version,omitempty"`
+	User            string `json:"user,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	TerminalEnabled bool   `json:"terminal_enabled"`
+	DockerAvailable bool   `json:"docker_available"`
+	DockerError     string `json:"docker_error,omitempty"`
+	ConfigPath      string `json:"config_path,omitempty"`
+	ServiceName     string `json:"service_name,omitempty"`
+	Uptime          int64  `json:"uptime,omitempty"`
+	CollectedAt     int64  `json:"collected_at,omitempty"`
+	Error           string `json:"error,omitempty"`
+	Code            string `json:"code,omitempty"`
+}
+
+type AgentRestartRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
+type AgentRestartResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Accepted  bool   `json:"accepted"`
+	Message   string `json:"message,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Code      string `json:"code,omitempty"`
+}
+
+type AgentLogsRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	NodeID    string `json:"node_id,omitempty"`
+	Lines     int    `json:"lines"`
+}
+
+type AgentLogsResponse struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"request_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
+	Lines       int    `json:"lines"`
+	Content     string `json:"content,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
+	CollectedAt int64  `json:"collected_at,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Code        string `json:"code,omitempty"`
 }
 
 type TerminalMessage struct {

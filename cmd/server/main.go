@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mizupanel/mizupanel/internal/server/api"
 	"github.com/mizupanel/mizupanel/internal/server/app"
 	"github.com/mizupanel/mizupanel/internal/server/config"
 	serverdb "github.com/mizupanel/mizupanel/internal/server/db"
@@ -62,9 +63,19 @@ func main() {
 		DownloadDir:      paths.DownloadDir,
 		EnableTerminal:   cfg.EnableTerminal,
 		MetricsRetention: cfg.MetricsRetention,
+		AdminAuth:        appAuthConfig(cfg.AdminAuth),
 	})
 	log.Printf("MizuPanel server listening on %s", cfg.Listen)
 	log.Fatal(http.ListenAndServe(cfg.Listen, handler))
+}
+
+func appAuthConfig(cfg config.AdminAuthConfig) api.AuthConfig {
+	return api.AuthConfig{
+		Enabled:    cfg.Enabled,
+		Username:   cfg.Username,
+		Password:   cfg.Password,
+		SessionTTL: cfg.SessionTTL,
+	}
 }
 
 type releaseAssetPaths struct {

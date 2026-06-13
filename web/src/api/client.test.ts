@@ -1,10 +1,32 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getAgentLogs, getAgentStatus, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
+import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
 
 describe('api client', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('fetches auth session and sends login/logout requests', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ auth_enabled: true, authenticated: false, username: '' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true, username: 'admin' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })))
+
+    const session = await getAuthSession()
+    const loginResponse = await login('admin', 'secret')
+    await logout()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/auth/session')
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'secret' })
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/auth/logout', { method: 'POST' })
+    expect(session.auth_enabled).toBe(true)
+    expect(session.authenticated).toBe(false)
+    expect(loginResponse.username).toBe('admin')
   })
 
   test('fetches nodes from the REST API', async () => {

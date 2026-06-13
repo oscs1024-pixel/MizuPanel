@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from './App'
-import { createInstallCommand, startSSHInstall } from './api/client'
+import { APIError, createInstallCommand, getAuthSession, getNodes, login, logout, setUnauthorizedHandler, startSSHInstall } from './api/client'
 
 const eventSources: FakeEventSource[] = []
 
@@ -19,6 +19,16 @@ class FakeEventSource extends EventTarget {
 }
 
 vi.mock('./api/client', () => ({
+  APIError: class APIError extends Error {
+    constructor(public status: number, message: string) {
+      super(message)
+      this.name = 'APIError'
+    }
+  },
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
+  login: vi.fn(async () => ({ authenticated: true, username: 'admin' })),
+  logout: vi.fn(async () => undefined),
   getNodes: vi.fn(async () => ({
     nodes: [
       {
@@ -91,6 +101,7 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByText('MizuPanel')).toBeInTheDocument()
+    expect(getAuthSession).toHaveBeenCalled()
     expect(screen.queryByText('MizuPanel Console')).not.toBeInTheDocument()
     expect(screen.queryByText('轻量级自托管服务器监控面板')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Light' })).toBeInTheDocument()
@@ -99,6 +110,60 @@ describe('App', () => {
     expect(screen.getByText('平均磁盘')).toBeInTheDocument()
     expect(screen.getByText('异常节点')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()
+  })
+
+  test('shows login page when admin auth is enabled and session is unauthenticated', async () => {
+    vi.mocked(getAuthSession).mockResolvedValueOnce({ auth_enabled: true, authenticated: false, username: '' })
+
+    render(<App />)
+
+    expect(await screen.findByRole('dialog', { name: '登录 MizuPanel' })).toBeInTheDocument()
+    expect(screen.getByLabelText('用户名')).toHaveValue('admin')
+    expect(screen.getByLabelText('密码')).toHaveValue('')
+    expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()
+    expect(screen.queryByText('Oracle SG')).not.toBeInTheDocument()
+  })
+
+  test('logs in and logs out with configured admin credentials', async () => {
+    vi.mocked(getAuthSession).mockResolvedValueOnce({ auth_enabled: true, authenticated: false, username: '' })
+
+    render(<App />)
+
+    await screen.findByRole('dialog', { name: '登录 MizuPanel' })
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'admin' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+
+    await waitFor(() => expect(login).toHaveBeenCalledWith('admin', 'secret'))
+    expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
+    expect(screen.getByText('admin')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+
+    await waitFor(() => expect(logout).toHaveBeenCalled())
+    expect(await screen.findByRole('dialog', { name: '登录 MizuPanel' })).toBeInTheDocument()
+  })
+
+  test('returns to login page when API returns 401 after authentication', async () => {
+    let unauthorizedCallback: (() => void) | undefined
+    vi.mocked(setUnauthorizedHandler).mockImplementation((handler) => {
+      unauthorizedCallback = handler
+    })
+
+    vi.mocked(getAuthSession).mockResolvedValueOnce({ auth_enabled: true, authenticated: true, username: 'admin' })
+
+    render(<App />)
+
+    expect(await screen.findAllByText('Oracle SG')).toHaveLength(2)
+    expect(screen.getByText('admin')).toBeInTheDocument()
+    expect(unauthorizedCallback).toBeDefined()
+
+    act(() => {
+      unauthorizedCallback!()
+    })
+
+    expect(await screen.findByRole('dialog', { name: '登录 MizuPanel' })).toBeInTheDocument()
+    expect(screen.getByText(/登录已过期/)).toBeInTheDocument()
   })
 
   test('keeps manual command controls out of the SSH install tab and hides fixed install options', async () => {

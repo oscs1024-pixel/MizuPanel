@@ -34,6 +34,8 @@ const windowsInstallResponse = {
 }
 
 vi.mock('./api/client', () => ({
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
   createInstallCommand: vi.fn(),
   getNodes: vi.fn(async () => ({ nodes: [] })),
   getNodeMetrics: vi.fn(async () => ({ metrics: [] })),

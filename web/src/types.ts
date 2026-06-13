@@ -1,6 +1,17 @@
 export type RangeOption = '1h' | '6h' | '24h' | '3d' | '7d'
 export type AgentMode = 'normal' | 'ops'
 
+export type AuthSessionResponse = {
+  auth_enabled: boolean
+  authenticated: boolean
+  username: string
+}
+
+export type LoginResponse = {
+  authenticated: boolean
+  username: string
+}
+
 export type SettingsResponse = {
   metrics_retention: RangeOption
   metrics_retention_seconds: number

@@ -27,7 +27,27 @@
 
 MizuPanel 是一个面向个人服务器和小型服务器集群的轻量级自托管监控面板。它由 Server、Dashboard 和 Agent 组成。Agent 主动通过 WebSocket 连接 Server，并上报 CPU、内存、磁盘、网络和负载指标。
 
-> 注意：当前预览版本暂时没有登录门禁。`/api/install/command` 可以在未认证情况下生成安装 token。公网暴露 MizuPanel 之前，请先恢复最小管理员认证。
+默认情况下 Dashboard 不需要登录即可访问。如果需要保护 Dashboard，可以在配置文件或环境变量中启用管理员认证：
+
+```yaml
+security:
+  admin:
+    enabled: true
+    username: admin
+    password: your-secret-password
+    session_ttl: 24h
+```
+
+或通过环境变量：
+
+```bash
+MIZUPANEL_AUTH_ENABLED=true
+MIZUPANEL_ADMIN_USERNAME=admin
+MIZUPANEL_ADMIN_PASSWORD=your-secret-password
+MIZUPANEL_SESSION_TTL=24h
+```
+
+启用后，Dashboard 所有敏感 API（节点管理、系统设置、Agent 安装）都需要先登录。Agent WebSocket 连接不受影响。
 
 ## 功能特性
 
@@ -82,7 +102,7 @@ docker compose up -d
 http://127.0.0.1:8080
 ```
 
-默认情况下 Compose 只绑定 `127.0.0.1`，避免在没有登录门禁时直接暴露到所有网卡。你自己在服务器或局域网使用时，可以显式开放：
+默认情况下 Compose 只绑定 `127.0.0.1`。你自己在服务器或局域网使用时，可以显式开放：
 
 ```bash
 MIZUPANEL_BIND_ADDR=0.0.0.0 docker compose up -d

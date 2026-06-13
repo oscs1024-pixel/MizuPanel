@@ -22,6 +22,14 @@ type Config struct {
 	AgentToken       string
 	PublicURL        string
 	EnableTerminal   bool
+	AdminAuth        AdminAuthConfig
+}
+
+type AdminAuthConfig struct {
+	Enabled    bool
+	Username   string
+	Password   string
+	SessionTTL time.Duration
 }
 
 type fileConfig struct {
@@ -50,6 +58,12 @@ type fileConfig struct {
 	} `yaml:"metrics"`
 	Security struct {
 		AgentToken string `yaml:"agent_token"`
+		Admin      struct {
+			Enabled    bool   `yaml:"enabled"`
+			Username   string `yaml:"username"`
+			Password   string `yaml:"password"`
+			SessionTTL string `yaml:"session_ttl"`
+		} `yaml:"admin"`
 	} `yaml:"security"`
 
 	Listen                  string `yaml:"listen"`
@@ -90,21 +104,29 @@ func Load(path string) (Config, error) {
 		MetricsRetention: 6 * time.Hour,
 		CleanupInterval:  10 * time.Minute,
 		AgentToken:       os.Getenv("MIZUPANEL_AGENT_TOKEN"),
+		AdminAuth: AdminAuthConfig{
+			Username:   "admin",
+			SessionTTL: 24 * time.Hour,
+		},
 	}
-	if path == "" {
-		return cfg, nil
-	}
+	if path != "" {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return Config{}, err
+		}
 
-	content, err := os.ReadFile(path)
-	if err != nil {
+		var file fileConfig
+		if err := yaml.Unmarshal(content, &file); err != nil {
+			return Config{}, err
+		}
+		if err := applyFileConfig(&cfg, file); err != nil {
+			return Config{}, err
+		}
+	}
+	if err := applyEnvironmentConfig(&cfg); err != nil {
 		return Config{}, err
 	}
-
-	var file fileConfig
-	if err := yaml.Unmarshal(content, &file); err != nil {
-		return Config{}, err
-	}
-	if err := applyFileConfig(&cfg, file); err != nil {
+	if err := validateConfig(&cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -188,6 +210,20 @@ func applyFileConfig(cfg *Config, file fileConfig) error {
 	if file.Security.AgentToken != "" {
 		cfg.AgentToken = file.Security.AgentToken
 	}
+	cfg.AdminAuth.Enabled = file.Security.Admin.Enabled
+	if file.Security.Admin.Username != "" {
+		cfg.AdminAuth.Username = file.Security.Admin.Username
+	}
+	if file.Security.Admin.Password != "" {
+		cfg.AdminAuth.Password = file.Security.Admin.Password
+	}
+	if file.Security.Admin.SessionTTL != "" {
+		duration, err := parseDuration(file.Security.Admin.SessionTTL)
+		if err != nil {
+			return fmt.Errorf("parse security.admin.session_ttl: %w", err)
+		}
+		cfg.AdminAuth.SessionTTL = duration
+	}
 	if file.Server.PublicURL != "" {
 		cfg.PublicURL = strings.TrimRight(file.Server.PublicURL, "/")
 	}
@@ -196,6 +232,43 @@ func applyFileConfig(cfg *Config, file fileConfig) error {
 	}
 	expandStorageEnv(&cfg.Storage)
 	return validateStorageConfig(&cfg.Storage)
+}
+
+func applyEnvironmentConfig(cfg *Config) error {
+	if value, ok := os.LookupEnv("MIZUPANEL_AUTH_ENABLED"); ok {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_AUTH_ENABLED: %w", err)
+		}
+		cfg.AdminAuth.Enabled = enabled
+	}
+	if value, ok := os.LookupEnv("MIZUPANEL_ADMIN_USERNAME"); ok {
+		cfg.AdminAuth.Username = value
+	}
+	if value, ok := os.LookupEnv("MIZUPANEL_ADMIN_PASSWORD"); ok {
+		cfg.AdminAuth.Password = value
+	}
+	if value, ok := os.LookupEnv("MIZUPANEL_SESSION_TTL"); ok {
+		duration, err := parseDuration(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_SESSION_TTL: %w", err)
+		}
+		cfg.AdminAuth.SessionTTL = duration
+	}
+	return nil
+}
+
+func validateConfig(cfg *Config) error {
+	if cfg.AdminAuth.Username == "" {
+		cfg.AdminAuth.Username = "admin"
+	}
+	if cfg.AdminAuth.SessionTTL <= 0 {
+		return fmt.Errorf("security.admin.session_ttl must be positive")
+	}
+	if cfg.AdminAuth.Enabled && cfg.AdminAuth.Password == "" {
+		return fmt.Errorf("security.admin.password is required when admin auth is enabled")
+	}
+	return nil
 }
 
 func expandStorageEnv(storage *serverdb.StorageConfig) {

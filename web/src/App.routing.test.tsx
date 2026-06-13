@@ -4,6 +4,8 @@ import { describe, expect, test, vi } from 'vitest'
 import App from './App'
 
 vi.mock('./api/client', () => ({
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
   getNodes: vi.fn(async () => ({
     nodes: [
       {

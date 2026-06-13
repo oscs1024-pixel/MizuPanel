@@ -32,6 +32,8 @@ const { createInstallCommandMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('./api/client', () => ({
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
   createInstallCommand: createInstallCommandMock,
   getNodes: vi.fn(async () => ({
     nodes: [

@@ -27,7 +27,27 @@
 
 MizuPanel is a lightweight self-hosted server monitoring panel for personal servers and small fleets. It is composed of a Server, a Dashboard, and Agents. Agents actively connect to the Server over WebSocket and report CPU, memory, disk, network, and load metrics.
 
-> Note: the current preview temporarily has no login gate. `/api/install/command` can mint install tokens without authentication. Restore minimal admin authentication before exposing MizuPanel publicly.
+By default, the Dashboard does not require authentication. To protect the Dashboard, enable admin authentication in the configuration file or environment variables:
+
+```yaml
+security:
+  admin:
+    enabled: true
+    username: admin
+    password: your-secret-password
+    session_ttl: 24h
+```
+
+Or via environment variables:
+
+```bash
+MIZUPANEL_AUTH_ENABLED=true
+MIZUPANEL_ADMIN_USERNAME=admin
+MIZUPANEL_ADMIN_PASSWORD=your-secret-password
+MIZUPANEL_SESSION_TTL=24h
+```
+
+When enabled, all sensitive Dashboard APIs (node management, system settings, Agent installation) require login first. Agent WebSocket connections are unaffected.
 
 ## Features
 

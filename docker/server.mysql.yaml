@@ -19,3 +19,8 @@ metrics:
 security:
   # Prefer Dashboard-generated one-time install tokens.
   # agent_token: "change-this-to-a-random-secret"
+  admin:
+    enabled: false
+    username: "admin"
+    password: ""
+    session_ttl: "24h"

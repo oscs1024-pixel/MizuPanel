@@ -6,6 +6,8 @@ import { getNodeDocker, getNodeMetrics, getNodeProcesses, getNodes, getSettings,
 import type { Metric, Node } from './types'
 
 vi.mock('./api/client', () => ({
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
   createInstallCommand: vi.fn(async () => ({ command: 'install command', install_token: 'install-token' })),
   getNodes: vi.fn(),
   getNodeMetrics: vi.fn(),

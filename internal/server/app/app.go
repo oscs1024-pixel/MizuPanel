@@ -51,6 +51,7 @@ type Dependencies struct {
 	SSHJobTimeout          time.Duration
 	SSHInstallWaitTimeout  time.Duration
 	SSHInstallPollInterval time.Duration
+	AdminAuth              api.AuthConfig
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -64,7 +65,8 @@ func NewHandler(deps Dependencies) http.Handler {
 		DockerSnapshots:  deps.DockerSnapshots,
 		Interval:         deps.Interval,
 	})
-	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention})
+	auth := api.NewAuthenticator(deps.AdminAuth)
+	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
 	sshJobs := deps.SSHJobs
 	if sshJobs == nil {
 		sshJobs = sshops.NewManager()
@@ -73,23 +75,24 @@ func NewHandler(deps Dependencies) http.Handler {
 	if sshRunner == nil {
 		sshRunner = sshops.NewCommandRunner()
 	}
+	mux.Handle("/api/auth/", apiRouter)
 	mux.Handle("/api/settings", apiRouter)
 	mux.Handle("/api/nodes", apiRouter)
-	mux.HandleFunc("/api/nodes/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/nodes/", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		if handleSSHUninstallRoute(w, r, deps.Nodes, hub, sshJobs, sshRunner, deps.PublicURL, deps.SSHJobTimeout) {
 			return
 		}
 		apiRouter.ServeHTTP(w, r)
-	})
-	mux.HandleFunc("/api/install/command", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/install/command", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		handleInstallCommand(w, r, deps.PublicURL, installAuth)
-	})
-	mux.HandleFunc("/api/install/ssh", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/install/ssh", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		handleSSHInstall(w, r, deps.Nodes, sshJobs, sshRunner, deps.PublicURL, installAuth, deps.SSHJobTimeout, deps.SSHInstallWaitTimeout, deps.SSHInstallPollInterval)
-	})
-	mux.HandleFunc("/api/install/ssh/", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/install/ssh/", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		handleSSHInstallEvents(w, r, sshJobs)
-	})
+	}))
 	mux.Handle("/api/agent/ws", hub)
 	mux.HandleFunc("/scripts/install-agent.sh", agentInstallScriptHandler)
 	mux.HandleFunc("/scripts/install-agent.ps1", windowsAgentInstallScriptHandler)

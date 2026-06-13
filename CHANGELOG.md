@@ -1,0 +1,112 @@
+# Changelog
+
+All notable changes to MizuPanel will be documented in this file.
+
+## Unreleased
+
+### Added
+
+- Added optional admin authentication (Auth v1) for Dashboard access protection.
+- Added `security.admin.*` configuration fields for enabling authentication, setting username/password, and configuring session TTL.
+- Added environment variable overrides: `MIZUPANEL_AUTH_ENABLED`, `MIZUPANEL_ADMIN_USERNAME`, `MIZUPANEL_ADMIN_PASSWORD`, `MIZUPANEL_SESSION_TTL`.
+- Added `/api/auth/session`, `/api/auth/login`, and `/api/auth/logout` endpoints for authentication flow.
+- Added in-memory session management with HttpOnly session cookies (SameSite=Lax).
+- Added Dashboard login page with username/password form when authentication is enabled and user is not logged in.
+- Added logout button in Dashboard header when user is authenticated.
+- Added authentication middleware protecting sensitive Dashboard APIs: `/api/settings`, `/api/nodes`, `/api/nodes/*`, `/api/install/*`.
+
+### Changed
+
+- Agent WebSocket connections (`/api/agent/ws`) remain public and use existing node token authentication.
+- Default authentication is disabled (`security.admin.enabled: false`) to preserve existing deployment behavior.
+- Session storage is in-memory; Server restart requires re-login.
+
+### Security
+
+- Password comparison uses constant-time `crypto/subtle.ConstantTimeCompare` to prevent timing attacks.
+- Passwords are stored in plaintext in configuration files (self-use scope, not hashed).
+- Empty passwords are rejected when authentication is enabled.
+- Session TTL defaults to 24 hours; expired sessions are automatically pruned.
+
+## v0.0.4 - 2026-06-10
+
+### Added
+
+- Added a node-level Agent 管理 tab for checking Agent status, recent Agent logs, and sending Agent restart requests.
+- Added Agent management request/response messages across protocol, Agent WebSocket handling, Server agent hub forwarding, and node API routes.
+- Added local Agent management handlers for runtime, Docker availability, restart acceptance, and bounded recent log reads.
+
+### Fixed
+
+- Fixed Agent 管理 UI state handling so stale status/log data is cleared when switching nodes or when a node becomes offline.
+- Fixed API error handling so JSON `error` messages from Agent management endpoints are shown instead of generic HTTP failures.
+- Fixed Docker capability reporting to reflect actual collector availability and errors instead of only the configured Docker monitoring flag.
+
+## v0.0.3 - 2026-06-03
+
+### Added
+
+- Added real Agent uptime, disk read speed, and disk write speed collection across Agent, protocol, Server persistence, API responses, and Dashboard charts.
+- Added node detail display for derived boot time and formatted runtime based on reported uptime.
+- Added disk I/O chart summaries for read/write throughput.
+
+### Changed
+
+- Refined the Dashboard layout with smoother sidebar collapse/expand animation and a cleaner content header.
+- Moved the sidebar collapse control to the outside edge of the sidebar so the collapsed sidebar keeps the logo at the top.
+- Simplified Agent installation for self-use root deployments: Linux SSH and manual install now default to root ops mode with terminal access and Docker monitoring enabled.
+- Removed Agent install option controls for terminal, Docker monitoring, and run mode from both SSH automatic install and manual install flows.
+- Updated manual install copy to use platform-neutral wording where Linux and Windows commands share the same flow.
+
+### Fixed
+
+- Fixed disk I/O display for legacy or missing metrics so the Dashboard shows placeholders instead of `NaN undefined/s`.
+- Fixed boot time and runtime display when metric history rows are missing new uptime fields.
+- Fixed manual install command generation so Linux install strategy options are owned by the Server instead of frontend query parameters.
+
+## v0.0.2 - 2026-06-01
+
+### Added
+
+- Added the first project changelog.
+- Added Docker deployment support with a root `Dockerfile`, default SQLite `docker-compose.yml`, optional MySQL `docker-compose.mysql.yml`, and Docker-specific server configs under `docker/`.
+- Added optional MySQL storage support alongside the default SQLite storage mode.
+- Added database dialect handling for SQLite/MySQL migrations and upsert SQL.
+- Added system settings for metrics retention, with runtime updates persisted in the database.
+- Added metrics history views with selectable ranges for CPU, memory, disk, network, and load data.
+- Added in-panel node record removal confirmation dialog instead of the browser-native confirm dialog.
+- Added README architecture SVG at `assets/mizupanel-architecture.svg`.
+- Added README screenshot gallery with Dashboard, metrics history, system settings, add-host, and Web terminal screenshots under `assets/screenshots/`.
+- Added Linux root-only SSH Agent install jobs with one-time password/private-key credentials and Server-Sent Events progress.
+- Added Linux root-only SSH Agent uninstall jobs from node details, including optional panel record removal and progress events.
+- Added SSH automatic install controls for terminal access, Docker monitoring, and Agent run mode in the add-host dialog.
+- Added Chinese default README with English switch link and a separate `README.en.md`.
+
+### Changed
+
+- Kept SQLite as the default storage backend for simple self-hosted deployments.
+- Updated server configuration to support structured storage settings for SQLite and MySQL.
+- Updated metric retention validation to use supported values: `6h`, `24h`, `3d`, and `7d`.
+- Updated Docker Compose defaults to bind the panel to `127.0.0.1` unless `MIZUPANEL_BIND_ADDR=0.0.0.0` is explicitly set.
+- Reorganized README content to prioritize core features, Docker quick start, architecture, release package deployment, and Agent setup.
+- Condensed Agent install commands into collapsible README sections.
+- Changed Linux manual Agent install/uninstall commands to root-only execution instead of `sudo` wrappers.
+- Changed SSH install fallback identity handling to use the remote hostname when no node ID is provided.
+- Reworked token documentation into a table and registration flow.
+
+### Fixed
+
+- Fixed Vite proxy behavior so same-origin protected API operations such as deleting node records work through the dev server.
+- Fixed Vite dev proxy WebSocket forwarding so browser terminal connections under `/api` work through the frontend dev server.
+- Fixed metrics API behavior for missing nodes by returning `404` instead of empty history data.
+- Fixed history range selection so ranges beyond the configured retention are disabled and rejected.
+- Fixed MySQL migration compatibility for existing schemas by using MySQL-compatible column definitions.
+- Fixed SSH automatic install option changes so they no longer create unused manual install tokens while the SSH tab is active.
+- Fixed the add-host dialog so closing it clears one-time SSH credential fields and install progress state.
+
+### Security
+
+- Avoided exposing database passwords through browser APIs or logs.
+- Changed MySQL Docker credentials to required environment variables instead of hardcoded deployment passwords.
+- Preserved Agent's active-connection model so target hosts do not expose Agent ports.
+- Changed SSH install/uninstall remote scripts to use unique `mktemp` paths instead of predictable `/tmp` script names.

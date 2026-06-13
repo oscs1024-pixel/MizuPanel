@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
+import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
 import { HistoryPage } from './pages/HistoryPage'
@@ -113,6 +113,13 @@ export default function App() {
   const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : 'hosts')
   const [theme, setTheme] = useState<ThemeMode>(() => storedTheme())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storedSidebarCollapsed())
+  const [authEnabled, setAuthEnabled] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [currentUsername, setCurrentUsername] = useState('')
+  const [loginUsername, setLoginUsername] = useState('admin')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState<string>()
+  const [loginLoading, setLoginLoading] = useState(false)
   const [nodes, setNodes] = useState<Node[]>([])
   const [selectedNodeID, setSelectedNodeID] = useState<string>()
   const [metrics, setMetrics] = useState<Metric[]>([])
@@ -166,6 +173,14 @@ export default function App() {
     window.localStorage.setItem('mizupanel-sidebar-collapsed', sidebarCollapsed ? 'true' : 'false')
   }, [sidebarCollapsed])
 
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setAuthenticated(false)
+      setCurrentUsername('')
+      setError('登录已过期，请重新登录')
+    })
+  }, [])
+
   const loadNodes = useCallback(() => {
     return getNodes()
       .then((response) => {
@@ -181,9 +196,18 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    loadNodes()
+    getAuthSession()
+      .then((response) => {
+        if (cancelled) return
+        setAuthEnabled(response.auth_enabled)
+        setAuthenticated(response.authenticated)
+        setCurrentUsername(response.username)
+        if (!response.auth_enabled || response.authenticated) {
+          return loadNodes()
+        }
+      })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : '节点加载失败')
+        if (!cancelled) setError(err instanceof Error ? err.message : '认证会话检查失败')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -510,10 +534,91 @@ export default function App() {
       .finally(() => setSettingsSaving(false))
   }
 
+  const handleLogin = () => {
+    setLoginLoading(true)
+    setLoginError(undefined)
+    login(loginUsername, loginPassword)
+      .then((response) => {
+        setAuthenticated(response.authenticated)
+        setCurrentUsername(response.username)
+        setLoginPassword('')
+        return loadNodes()
+      })
+      .catch((err: unknown) => setLoginError(err instanceof Error ? err.message : '登录失败'))
+      .finally(() => setLoginLoading(false))
+  }
+
+  const handleLogout = () => {
+    logout()
+      .then(() => {
+        setAuthenticated(false)
+        setCurrentUsername('')
+        setNodes([])
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : '退出登录失败'))
+  }
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
         <div className="rounded-[28px] border border-border bg-card px-6 py-5 text-sm font-black text-muted-foreground shadow-glass">正在加载节点...</div>
+      </main>
+    )
+  }
+
+  if (authEnabled && !authenticated) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="登录 MizuPanel"
+          className="w-full max-w-md rounded-[28px] border border-border bg-card p-6 shadow-glass"
+        >
+          <h1 className="text-2xl font-black text-foreground">登录 MizuPanel</h1>
+          <p className="mt-2 text-sm font-semibold text-muted-foreground">请使用管理员账号登录以继续。</p>
+          <div className="mt-6 space-y-4">
+            <label className="block text-sm font-black text-foreground">
+              用户名
+              <input
+                aria-label="用户名"
+                type="text"
+                value={loginUsername}
+                onChange={(event) => setLoginUsername(event.target.value)}
+                className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
+              />
+            </label>
+            <label className="block text-sm font-black text-foreground">
+              密码
+              <input
+                aria-label="密码"
+                type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && handleLogin()}
+                className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
+              />
+            </label>
+            {error ? (
+              <div className="rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2 text-sm font-black text-warning">
+                {error}
+              </div>
+            ) : null}
+            {loginError ? (
+              <div className="rounded-2xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm font-black text-danger">
+                {loginError}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleLogin}
+              disabled={loginLoading}
+              className="min-h-11 w-full cursor-pointer rounded-2xl bg-primary px-4 text-sm font-black text-primary-foreground shadow-sm transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loginLoading ? '登录中...' : '登录'}
+            </button>
+          </div>
+        </div>
       </main>
     )
   }
@@ -911,6 +1016,18 @@ export default function App() {
             <div className="flex justify-end">
               <h1 className="sr-only">{contentCopy.title}</h1>
               <div className="flex flex-wrap items-center gap-2">
+                {authenticated && currentUsername ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-foreground">{currentUsername}</span>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="min-h-9 cursor-pointer rounded-xl border border-border bg-card px-3 text-xs font-black text-muted-foreground transition hover:border-danger/50 hover:text-danger focus:outline-none focus:ring-4 focus:ring-primary/20"
+                    >
+                      退出登录
+                    </button>
+                  </div>
+                ) : null}
                 <div className="flex rounded-xl border border-border bg-card p-1" aria-label="主题切换">
                   {(['light', 'dark'] as const).map((item) => (
                     <button

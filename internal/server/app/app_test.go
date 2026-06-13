@@ -17,6 +17,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/mizupanel/mizupanel/internal/protocol"
+	"github.com/mizupanel/mizupanel/internal/server/api"
 	serverdb "github.com/mizupanel/mizupanel/internal/server/db"
 	"github.com/mizupanel/mizupanel/internal/server/sshops"
 	"github.com/mizupanel/mizupanel/internal/server/store"
@@ -75,6 +76,60 @@ func (f *hangingSSHInstallRunner) Install(ctx context.Context, request sshops.In
 
 func (f *hangingSSHInstallRunner) Uninstall(ctx context.Context, request sshops.UninstallRequest, emit sshops.EmitFunc) error {
 	return nil
+}
+
+func TestNewHandlerProtectsInstallCommandWhenAdminAuthEnabled(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:     store.NewNodeStore(database),
+		Metrics:   store.NewMetricStore(database),
+		AdminAuth: api.AuthConfig{Enabled: true, Username: "admin", Password: "secret", SessionTTL: time.Hour},
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/install/command", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s, want 401", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "authentication required") {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestNewHandlerLeavesAgentWebSocketOutsideAdminAuth(t *testing.T) {
+	database, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := serverdb.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	handler := NewHandler(Dependencies{
+		Nodes:       store.NewNodeStore(database),
+		Metrics:     store.NewMetricStore(database),
+		AgentTokens: store.NewAgentTokenStore(database),
+		AdminAuth:   api.AuthConfig{Enabled: true, Username: "admin", Password: "secret", SessionTTL: time.Hour},
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/ws", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code == http.StatusUnauthorized && strings.Contains(recorder.Body.String(), "authentication required") {
+		t.Fatalf("agent websocket should not require dashboard auth: status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestNewHandlerCreatesInstallCommandWithoutLogin(t *testing.T) {

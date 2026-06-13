@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -55,6 +56,7 @@ type Server struct {
 	defaultMetricsRetention time.Duration
 	terminalTokens          map[string]terminalToken
 	terminalMu              sync.Mutex
+	auth                    *Authenticator
 }
 
 type terminalToken struct {
@@ -73,6 +75,34 @@ type SettingsConfig struct {
 	DefaultMetricsRetention time.Duration
 }
 
+type AuthConfig struct {
+	Enabled    bool
+	Username   string
+	Password   string
+	SessionTTL time.Duration
+}
+
+type authSession struct {
+	username  string
+	expiresAt time.Time
+}
+
+type Authenticator struct {
+	config   AuthConfig
+	sessions map[string]authSession
+	mu       sync.Mutex
+}
+
+func NewAuthenticator(config AuthConfig) *Authenticator {
+	if config.Username == "" {
+		config.Username = "admin"
+	}
+	if config.SessionTTL <= 0 {
+		config.SessionTTL = 24 * time.Hour
+	}
+	return &Authenticator{config: config, sessions: make(map[string]authSession)}
+}
+
 const (
 	terminalTokenKindNode          = "terminal"
 	terminalTokenKindContainerExec = "container_exec"
@@ -83,7 +113,7 @@ const (
 )
 
 func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...any) *http.ServeMux {
-	server := &Server{nodes: nodes, metrics: metrics, defaultMetricsRetention: 6 * time.Hour, terminalTokens: make(map[string]terminalToken)}
+	server := &Server{nodes: nodes, metrics: metrics, defaultMetricsRetention: 6 * time.Hour, terminalTokens: make(map[string]terminalToken), auth: NewAuthenticator(AuthConfig{})}
 	for _, snapshotStore := range snapshots {
 		switch typed := snapshotStore.(type) {
 		case *store.ProcessSnapshotStore:
@@ -105,15 +135,167 @@ func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...
 			if typed.DefaultMetricsRetention > 0 {
 				server.defaultMetricsRetention = typed.DefaultMetricsRetention
 			}
+		case AuthConfig:
+			server.auth = NewAuthenticator(typed)
+		case *Authenticator:
+			server.auth = typed
 		case NodeOperations:
 			server.agentOps = typed
 		}
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/settings", server.handleSettings)
-	mux.HandleFunc("/api/nodes", server.handleNodes)
-	mux.HandleFunc("/api/nodes/", server.handleNodeRoutes)
+	mux.HandleFunc("/api/auth/session", server.handleAuthSession)
+	mux.HandleFunc("/api/auth/login", server.handleAuthLogin)
+	mux.HandleFunc("/api/auth/logout", server.handleAuthLogout)
+	mux.HandleFunc("/api/settings", server.requireAuth(server.handleSettings))
+	mux.HandleFunc("/api/nodes", server.requireAuth(server.handleNodes))
+	mux.HandleFunc("/api/nodes/", server.requireAuth(server.handleNodeRoutes))
 	return mux
+}
+
+func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
+	s.auth.HandleSession(w, r)
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	s.auth.HandleLogin(w, r)
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	s.auth.HandleLogout(w, r)
+}
+
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return s.auth.Require(next)
+}
+
+func (a *Authenticator) HandleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := a.authenticatedUsername(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auth_enabled":  a.config.Enabled,
+		"authenticated": !a.config.Enabled || ok,
+		"username":      username,
+	})
+}
+
+func (a *Authenticator) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.config.Enabled {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": ""})
+		return
+	}
+	var request struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(request.Username), []byte(a.config.Username)) != 1 || subtle.ConstantTimeCompare([]byte(request.Password), []byte(a.config.Password)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		return
+	}
+	token, err := a.createSession(a.config.Username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	http.SetCookie(w, a.sessionCookie(r, token, int(a.config.SessionTTL.Seconds())))
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": a.config.Username})
+}
+
+func (a *Authenticator) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if cookie, err := r.Cookie("mizupanel_session"); err == nil {
+		a.deleteSession(cookie.Value)
+	}
+	http.SetCookie(w, a.sessionCookie(r, "", -1))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *Authenticator) Require(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.config.Enabled {
+			next(w, r)
+			return
+		}
+		if _, ok := a.authenticatedUsername(r); !ok {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (a *Authenticator) authenticatedUsername(r *http.Request) (string, bool) {
+	if !a.config.Enabled {
+		return "", true
+	}
+	cookie, err := r.Cookie("mizupanel_session")
+	if err != nil || cookie.Value == "" {
+		return "", false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	a.pruneSessionsLocked(now)
+	session, ok := a.sessions[cookie.Value]
+	if !ok || now.After(session.expiresAt) {
+		delete(a.sessions, cookie.Value)
+		return "", false
+	}
+	return session.username, true
+}
+
+func (a *Authenticator) createSession(username string) (string, error) {
+	var bytes [32]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(bytes[:])
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	a.pruneSessionsLocked(now)
+	a.sessions[token] = authSession{username: username, expiresAt: now.Add(a.config.SessionTTL)}
+	return token, nil
+}
+
+func (a *Authenticator) deleteSession(token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.sessions, token)
+}
+
+func (a *Authenticator) pruneSessionsLocked(now time.Time) {
+	for token, session := range a.sessions {
+		if now.After(session.expiresAt) {
+			delete(a.sessions, token)
+		}
+	}
+}
+
+func (a *Authenticator) sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     "mizupanel_session",
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+	}
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {

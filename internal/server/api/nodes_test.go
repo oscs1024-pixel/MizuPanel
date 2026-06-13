@@ -38,6 +38,125 @@ func testRouter(t *testing.T) (*http.ServeMux, *store.NodeStore, *store.MetricSt
 	return mux, nodes, metrics, processes, docker
 }
 
+func TestAuthSessionReportsDisabledAuthAsAuthenticated(t *testing.T) {
+	mux, _, _, _, _ := testRouter(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var response struct {
+		AuthEnabled   bool   `json:"auth_enabled"`
+		Authenticated bool   `json:"authenticated"`
+		Username      string `json:"username"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.AuthEnabled || !response.Authenticated || response.Username != "" {
+		t.Fatalf("session response = %+v", response)
+	}
+}
+
+func TestAdminAuthProtectsNodesAndAllowsLoginLogout(t *testing.T) {
+	_, nodes, metrics, _, _ := testRouter(t)
+	mux := NewRouter(nodes, metrics, AuthConfig{Enabled: true, Username: "admin", Password: "secret", SessionTTL: time.Hour})
+
+	unauthenticated := httptest.NewRecorder()
+	mux.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/nodes", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", unauthenticated.Code)
+	}
+	if !strings.Contains(unauthenticated.Body.String(), "authentication required") {
+		t.Fatalf("unauthenticated body = %s", unauthenticated.Body.String())
+	}
+
+	login := httptest.NewRecorder()
+	loginBody := strings.NewReader(`{"username":"admin","password":"secret"}`)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", loginBody)
+	loginRequest.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(login, loginRequest)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s, want 200", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Name != "mizupanel_session" || !cookies[0].HttpOnly {
+		t.Fatalf("login cookies = %#v", cookies)
+	}
+
+	authenticated := httptest.NewRecorder()
+	authenticatedRequest := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	authenticatedRequest.AddCookie(cookies[0])
+	mux.ServeHTTP(authenticated, authenticatedRequest)
+	if authenticated.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d, body = %s, want 200", authenticated.Code, authenticated.Body.String())
+	}
+
+	logout := httptest.NewRecorder()
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutRequest.AddCookie(cookies[0])
+	mux.ServeHTTP(logout, logoutRequest)
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, body = %s, want 200", logout.Code, logout.Body.String())
+	}
+
+	afterLogout := httptest.NewRecorder()
+	afterLogoutRequest := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	afterLogoutRequest.AddCookie(cookies[0])
+	mux.ServeHTTP(afterLogout, afterLogoutRequest)
+	if afterLogout.Code != http.StatusUnauthorized {
+		t.Fatalf("after logout status = %d, want 401", afterLogout.Code)
+	}
+}
+
+func TestAdminAuthRejectsInvalidLogin(t *testing.T) {
+	_, nodes, metrics, _, _ := testRouter(t)
+	mux := NewRouter(nodes, metrics, AuthConfig{Enabled: true, Username: "admin", Password: "secret", SessionTTL: time.Hour})
+
+	recorder := httptest.NewRecorder()
+	body := strings.NewReader(`{"username":"admin","password":"wrong"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", body)
+	request.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s, want 401", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid username or password") {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestAdminAuthExpiresSessions(t *testing.T) {
+	_, nodes, metrics, _, _ := testRouter(t)
+	mux := NewRouter(nodes, metrics, AuthConfig{Enabled: true, Username: "admin", Password: "secret", SessionTTL: time.Millisecond})
+
+	login := httptest.NewRecorder()
+	body := strings.NewReader(`{"username":"admin","password":"secret"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", body)
+	request.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(login, request)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s, want 200", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatalf("login did not set session cookie")
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	recorder := httptest.NewRecorder()
+	expiredRequest := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	expiredRequest.AddCookie(cookies[0])
+	mux.ServeHTTP(recorder, expiredRequest)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expired session status = %d, want 401", recorder.Code)
+	}
+}
+
 func TestListNodesReturnsEmptyList(t *testing.T) {
 	mux, _, _, _, _ := testRouter(t)
 	recorder := httptest.NewRecorder()

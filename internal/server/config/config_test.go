@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +37,118 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.EnableTerminal {
 		t.Fatal("EnableTerminal = true, want false default")
+	}
+}
+
+func TestLoadDefaultAdminAuthConfig(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.AdminAuth.Enabled {
+		t.Fatal("AdminAuth.Enabled = true, want false default")
+	}
+	if cfg.AdminAuth.Username != "admin" {
+		t.Fatalf("AdminAuth.Username = %q, want admin", cfg.AdminAuth.Username)
+	}
+	if cfg.AdminAuth.Password != "" {
+		t.Fatalf("AdminAuth.Password = %q, want empty default", cfg.AdminAuth.Password)
+	}
+	if cfg.AdminAuth.SessionTTL != 24*time.Hour {
+		t.Fatalf("AdminAuth.SessionTTL = %s, want 24h", cfg.AdminAuth.SessionTTL)
+	}
+}
+
+func TestLoadAdminAuthFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`security:
+  admin:
+    enabled: true
+    username: root
+    password: secret
+    session_ttl: 12h
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.AdminAuth.Enabled {
+		t.Fatal("AdminAuth.Enabled = false, want true")
+	}
+	if cfg.AdminAuth.Username != "root" || cfg.AdminAuth.Password != "secret" || cfg.AdminAuth.SessionTTL != 12*time.Hour {
+		t.Fatalf("AdminAuth = %+v", cfg.AdminAuth)
+	}
+}
+
+func TestLoadAdminAuthEnvironmentOverridesFile(t *testing.T) {
+	t.Setenv("MIZUPANEL_AUTH_ENABLED", "true")
+	t.Setenv("MIZUPANEL_ADMIN_USERNAME", "env-admin")
+	t.Setenv("MIZUPANEL_ADMIN_PASSWORD", "env-secret")
+	t.Setenv("MIZUPANEL_SESSION_TTL", "6h")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`security:
+  admin:
+    enabled: false
+    username: file-admin
+    password: file-secret
+    session_ttl: 12h
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.AdminAuth.Enabled || cfg.AdminAuth.Username != "env-admin" || cfg.AdminAuth.Password != "env-secret" || cfg.AdminAuth.SessionTTL != 6*time.Hour {
+		t.Fatalf("AdminAuth = %+v", cfg.AdminAuth)
+	}
+}
+
+func TestLoadRejectsEnabledAdminAuthWithoutPassword(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`security:
+  admin:
+    enabled: true
+    username: admin
+    password: ""
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "security.admin.password") {
+		t.Fatalf("Load error = %v, want security.admin.password error", err)
+	}
+}
+
+func TestLoadRejectsInvalidAdminSessionTTL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`security:
+  admin:
+    enabled: true
+    username: admin
+    password: secret
+    session_ttl: nope
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "security.admin.session_ttl") {
+		t.Fatalf("Load error = %v, want security.admin.session_ttl error", err)
 	}
 }
 

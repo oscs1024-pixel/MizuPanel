@@ -1,4 +1,4 @@
-import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
 
 export type SessionTokenResponse = {
   token: string
@@ -8,6 +8,12 @@ export class APIError extends Error {
   constructor(public status: number, message = `Request failed: ${status}`) {
     super(message)
   }
+}
+
+let onUnauthorized: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: () => void) {
+  onUnauthorized = handler
 }
 
 async function errorMessage(response: Response): Promise<string> {
@@ -22,7 +28,11 @@ async function errorMessage(response: Response): Promise<string> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = init === undefined ? await fetch(path) : await fetch(path, init)
   if (!response.ok) {
-    throw new APIError(response.status, await errorMessage(response))
+    const error = new APIError(response.status, await errorMessage(response))
+    if (response.status === 401 && onUnauthorized) {
+      onUnauthorized()
+    }
+    throw error
   }
   return response.json() as Promise<T>
 }
@@ -30,8 +40,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   const response = init === undefined ? await fetch(path) : await fetch(path, init)
   if (!response.ok) {
-    throw new APIError(response.status, await errorMessage(response))
+    const error = new APIError(response.status, await errorMessage(response))
+    if (response.status === 401 && onUnauthorized) {
+      onUnauthorized()
+    }
+    throw error
   }
+}
+
+export function getAuthSession(): Promise<AuthSessionResponse> {
+  return request<AuthSessionResponse>('/api/auth/session')
+}
+
+export function login(username: string, password: string): Promise<LoginResponse> {
+  return request<LoginResponse>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  })
+}
+
+export function logout(): Promise<void> {
+  return requestVoid('/api/auth/logout', { method: 'POST' })
 }
 
 export function getNodes(): Promise<NodesResponse> {

@@ -6,6 +6,8 @@ import { getAgentLogs, getAgentStatus, getNodeDocker, getNodeMetrics, getNodePro
 import type { DockerSnapshotResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse } from './types'
 
 vi.mock('./api/client', () => ({
+  setUnauthorizedHandler: vi.fn(),
+  getAuthSession: vi.fn(async () => ({ auth_enabled: false, authenticated: true, username: '' })),
   createInstallCommand: vi.fn(async () => ({ command: 'install', install_token: 'token' })),
   getNodes: vi.fn(),
   getNodeMetrics: vi.fn(),

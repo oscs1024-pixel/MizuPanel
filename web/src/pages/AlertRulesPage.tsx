@@ -156,7 +156,7 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '删除规则失败'))
   }
 
-  const addChannel = (type: 'webhook' | 'dingtalk') => {
+  const addChannel = (type: 'webhook' | 'dingtalk' | 'feishu' | 'wecom') => {
     setFormChannels((current) => [...current, { type, webhook_url: '' }])
   }
 
@@ -429,6 +429,20 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                     >
                       + DingTalk
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => addChannel('feishu')}
+                      className="min-h-8 cursor-pointer rounded-xl border border-border bg-card px-3 text-xs font-black text-foreground transition hover:border-primary/50 focus:outline-none focus:ring-4 focus:ring-primary/20"
+                    >
+                      + 飞书
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addChannel('wecom')}
+                      className="min-h-8 cursor-pointer rounded-xl border border-border bg-card px-3 text-xs font-black text-foreground transition hover:border-primary/50 focus:outline-none focus:ring-4 focus:ring-primary/20"
+                    >
+                      + 企业微信
+                    </button>
                   </div>
                 </div>
 
@@ -440,7 +454,13 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                       <div key={index} className="rounded-2xl border border-border bg-surface p-3">
                         <div className="mb-2 flex items-center justify-between">
                           <span className="text-xs font-black uppercase text-primary">
-                            {channel.type === 'webhook' ? 'Webhook' : 'DingTalk'}
+                            {channel.type === 'webhook'
+                              ? 'Webhook'
+                              : channel.type === 'dingtalk'
+                                ? 'DingTalk'
+                                : channel.type === 'feishu'
+                                  ? '飞书'
+                                  : '企业微信'}
                           </span>
                           <button
                             type="button"
@@ -454,10 +474,18 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                           type="text"
                           value={channel.webhook_url || ''}
                           onChange={(e) => updateChannel(index, { webhook_url: e.target.value })}
-                          placeholder={channel.type === 'webhook' ? 'https://...' : 'https://oapi.dingtalk.com/robot/send?access_token=...'}
+                          placeholder={
+                            channel.type === 'webhook'
+                              ? 'https://...'
+                              : channel.type === 'dingtalk'
+                              ? 'https://oapi.dingtalk.com/robot/send?access_token=...'
+                              : channel.type === 'feishu'
+                              ? 'https://open.feishu.cn/open-apis/bot/v2/hook/...'
+                              : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...'
+                          }
                           className="min-h-9 w-full rounded-xl border border-border bg-card px-3 text-xs font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
                         />
-                        {channel.type === 'dingtalk' ? (
+                        {channel.type === 'dingtalk' || channel.type === 'feishu' || channel.type === 'wecom' ? (
                           <input
                             type="text"
                             value={channel.secret || ''}

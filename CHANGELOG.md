@@ -27,6 +27,9 @@ All notable changes to MizuPanel will be documented in this file.
 - Added DingTalk robot notification channel with HMAC-SHA256 signature support.
 - Added alert state tracking in memory to prevent duplicate notifications.
 - Added automatic alert resolution tracking (updates `resolved_at` when condition no longer met).
+- Added Feishu (飞书) notification channel with interactive card format and HMAC-SHA256 signature support.
+- Added WeCom (企业微信) notification channel with markdown message format.
+- Added notification channel buttons for DingTalk, Feishu, and WeCom in the alert rule form.
 - Added Dashboard "告警规则" page with rule list, create/edit/delete forms, and enable/disable controls.
 - Added alert icon to Dashboard sidebar navigation.
 

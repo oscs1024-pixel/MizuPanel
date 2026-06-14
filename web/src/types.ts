@@ -277,7 +277,7 @@ export type AlertRule = {
 }
 
 export type NotificationChannel = {
-  type: 'webhook' | 'dingtalk' | 'email'
+  type: 'webhook' | 'dingtalk' | 'feishu' | 'wecom' | 'email'
   webhook_url?: string
   secret?: string
   headers?: Record<string, string>

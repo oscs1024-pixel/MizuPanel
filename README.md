@@ -58,6 +58,7 @@ MIZUPANEL_SESSION_TTL=24h
 - 历史指标查询，默认指标保留 6 小时。
 - Dashboard 生成 Linux 和 Windows Agent 安装命令。
 - Agent 主动连接 Server；目标主机不需要暴露 Agent 端口。
+- 告警规则和历史记录，支持 Webhook、钉钉、飞书、企业微信通知。
 
 技术栈与部署：
 
@@ -80,13 +81,13 @@ MIZUPANEL_SESSION_TTL=24h
 | --- | --- |
 | <img src="assets/screenshots/dashboard.png" alt="MizuPanel Dashboard" width="100%" /> | <img src="assets/screenshots/history.png" alt="指标历史记录" width="100%" /> |
 
-| 系统设置 | 添加主机 |
+| 告警规则 | 系统设置 |
 | --- | --- |
-| <img src="assets/screenshots/settings.png" alt="系统设置" width="100%" /> | <img src="assets/screenshots/add-host.png" alt="添加主机" width="100%" /> |
+| <img src="assets/screenshots/alert-rules.png" alt="告警规则" width="100%" /> | <img src="assets/screenshots/settings.png" alt="系统设置" width="100%" /> |
 
-| Web 终端 |
-| --- |
-| <img src="assets/screenshots/terminal.png" alt="Web 终端" width="100%" /> |
+| 添加主机 | Web 终端 |
+| --- | --- |
+| <img src="assets/screenshots/add-host.png" alt="添加主机" width="100%" /> | <img src="assets/screenshots/terminal.png" alt="Web 终端" width="100%" /> |
 
 ## Docker 快速启动
 
@@ -251,6 +252,11 @@ storage:
 metrics:
   retention: "6h" # 历史指标保留时间。
   cleanup_interval: "10m" # 按保留策略清理历史指标的执行间隔。
+
+alerting:
+  enabled: true # 启用告警系统；设为 false 关闭所有告警检查。
+  check_interval: "30s" # 告警引擎检查指标的执行间隔。
+  max_rules: 100 # 允许创建的告警规则数量上限。
 
 security:
   # agent_token 是可选配置，只在你需要长期 bootstrap token 时设置。

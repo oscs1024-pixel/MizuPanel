@@ -58,6 +58,7 @@ Core features:
 - Historical metrics queries with 6-hour default retention.
 - Dashboard-generated Linux and Windows Agent install commands.
 - Agents actively connect to Server; target hosts do not expose Agent ports.
+- Alert rules and history with Webhook, DingTalk, Feishu, and WeCom notifications.
 
 Stack and deployment:
 
@@ -80,13 +81,13 @@ Stack and deployment:
 | --- | --- |
 | <img src="assets/screenshots/dashboard.png" alt="MizuPanel Dashboard" width="100%" /> | <img src="assets/screenshots/history.png" alt="Metrics history" width="100%" /> |
 
-| System settings | Add host |
+| Alert rules | System settings |
 | --- | --- |
-| <img src="assets/screenshots/settings.png" alt="System settings" width="100%" /> | <img src="assets/screenshots/add-host.png" alt="Add host" width="100%" /> |
+| <img src="assets/screenshots/alert-rules.png" alt="Alert rules" width="100%" /> | <img src="assets/screenshots/settings.png" alt="System settings" width="100%" /> |
 
-| Web terminal |
-| --- |
-| <img src="assets/screenshots/terminal.png" alt="Web terminal" width="100%" /> |
+| Add host | Web terminal |
+| --- | --- |
+| <img src="assets/screenshots/add-host.png" alt="Add host" width="100%" /> | <img src="assets/screenshots/terminal.png" alt="Web terminal" width="100%" /> |
 
 ## Docker quick start
 
@@ -251,6 +252,11 @@ storage:
 metrics:
   retention: "6h" # How long historical metrics are kept before cleanup.
   cleanup_interval: "10m" # How often the retention cleanup job runs.
+
+alerting:
+  enabled: true # Enable the alerting system; set to false to disable all alert checking.
+  check_interval: "30s" # How often the alert engine checks metrics against rules.
+  max_rules: 100 # Maximum number of alert rules allowed.
 
 security:
   # agent_token is optional and should only be set if you need a long-lived bootstrap token.

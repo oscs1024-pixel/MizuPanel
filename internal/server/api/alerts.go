@@ -38,6 +38,9 @@ func (s *Server) handleAlertRules(alertStore *store.AlertStore) http.HandlerFunc
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			if rules == nil {
+				rules = []store.AlertRule{}
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
 		case http.MethodPost:
 			if !sameOrigin(r) {

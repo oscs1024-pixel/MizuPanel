@@ -52,7 +52,7 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
     setLoading(true)
     setError(undefined)
     getAlertRules()
-      .then((response) => setRules(response.rules))
+      .then((response) => setRules(response.rules || []))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '加载告警规则失败'))
       .finally(() => setLoading(false))
   }

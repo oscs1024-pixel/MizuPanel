@@ -89,6 +89,7 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.Handle("/api/auth/", apiRouter)
 	mux.Handle("/api/settings", apiRouter)
 	mux.Handle("/api/nodes", apiRouter)
+	mux.Handle("/api/alerts/", apiRouter)
 	mux.HandleFunc("/api/nodes/", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		if handleSSHUninstallRoute(w, r, deps.Nodes, hub, sshJobs, sshRunner, deps.PublicURL, deps.SSHJobTimeout) {
 			return

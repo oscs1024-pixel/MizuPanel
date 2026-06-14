@@ -1,4 +1,4 @@
-import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AlertHistoryResponse, AlertRule, AlertRulesResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
 
 export type SessionTokenResponse = {
   token: string
@@ -173,3 +173,40 @@ export function createTerminalSession(nodeID: string): Promise<SessionTokenRespo
 export function createContainerExecSession(nodeID: string, containerID: string): Promise<SessionTokenResponse> {
   return request<SessionTokenResponse>(`/api/nodes/${encodeURIComponent(nodeID)}/containers/${encodeURIComponent(containerID)}/exec/session`, { method: 'POST' })
 }
+
+export function getAlertRules(): Promise<AlertRulesResponse> {
+  return request<AlertRulesResponse>('/api/alerts/rules')
+}
+
+export function createAlertRule(rule: Omit<AlertRule, 'id' | 'created_at' | 'updated_at'>): Promise<AlertRule> {
+  return request<AlertRule>('/api/alerts/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rule)
+  })
+}
+
+export function updateAlertRule(id: number, rule: Omit<AlertRule, 'id' | 'created_at' | 'updated_at'>): Promise<AlertRule> {
+  return request<AlertRule>(`/api/alerts/rules/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rule)
+  })
+}
+
+export function deleteAlertRule(id: number): Promise<void> {
+  return requestVoid(`/api/alerts/rules/${id}`, { method: 'DELETE' })
+}
+
+export function toggleAlertRule(id: number, enabled: boolean): Promise<AlertRule> {
+  return request<AlertRule>(`/api/alerts/rules/${id}/toggle`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  })
+}
+
+export function getAlertHistory(nodeID: string, limit = 100): Promise<AlertHistoryResponse> {
+  return request<AlertHistoryResponse>(`/api/alerts/history?node_id=${encodeURIComponent(nodeID)}&limit=${limit}`)
+}
+

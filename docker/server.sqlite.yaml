@@ -20,3 +20,8 @@ security:
     username: "admin"
     password: ""
     session_ttl: "24h"
+
+alerting:
+  enabled: true
+  check_interval: "30s"
+  max_rules: 100

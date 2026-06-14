@@ -23,6 +23,7 @@ type Config struct {
 	PublicURL        string
 	EnableTerminal   bool
 	AdminAuth        AdminAuthConfig
+	Alerting         AlertingConfig
 }
 
 type AdminAuthConfig struct {
@@ -30,6 +31,12 @@ type AdminAuthConfig struct {
 	Username   string
 	Password   string
 	SessionTTL time.Duration
+}
+
+type AlertingConfig struct {
+	Enabled       bool
+	CheckInterval time.Duration
+	MaxRules      int
 }
 
 type fileConfig struct {
@@ -65,6 +72,11 @@ type fileConfig struct {
 			SessionTTL string `yaml:"session_ttl"`
 		} `yaml:"admin"`
 	} `yaml:"security"`
+	Alerting struct {
+		Enabled       bool   `yaml:"enabled"`
+		CheckInterval string `yaml:"check_interval"`
+		MaxRules      int    `yaml:"max_rules"`
+	} `yaml:"alerting"`
 
 	Listen                  string `yaml:"listen"`
 	DatabasePath            string `yaml:"database_path"`
@@ -107,6 +119,11 @@ func Load(path string) (Config, error) {
 		AdminAuth: AdminAuthConfig{
 			Username:   "admin",
 			SessionTTL: 24 * time.Hour,
+		},
+		Alerting: AlertingConfig{
+			Enabled:       true,
+			CheckInterval: 30 * time.Second,
+			MaxRules:      100,
 		},
 	}
 	if path != "" {
@@ -230,6 +247,17 @@ func applyFileConfig(cfg *Config, file fileConfig) error {
 	if file.Server.EnableTerminal != nil {
 		cfg.EnableTerminal = *file.Server.EnableTerminal
 	}
+	cfg.Alerting.Enabled = file.Alerting.Enabled
+	if file.Alerting.CheckInterval != "" {
+		duration, err := parseDuration(file.Alerting.CheckInterval)
+		if err != nil {
+			return fmt.Errorf("parse alerting.check_interval: %w", err)
+		}
+		cfg.Alerting.CheckInterval = duration
+	}
+	if file.Alerting.MaxRules != 0 {
+		cfg.Alerting.MaxRules = file.Alerting.MaxRules
+	}
 	expandStorageEnv(&cfg.Storage)
 	return validateStorageConfig(&cfg.Storage)
 }
@@ -254,6 +282,20 @@ func applyEnvironmentConfig(cfg *Config) error {
 			return fmt.Errorf("parse MIZUPANEL_SESSION_TTL: %w", err)
 		}
 		cfg.AdminAuth.SessionTTL = duration
+	}
+	if value, ok := os.LookupEnv("MIZUPANEL_ALERTING_ENABLED"); ok {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_ALERTING_ENABLED: %w", err)
+		}
+		cfg.Alerting.Enabled = enabled
+	}
+	if value, ok := os.LookupEnv("MIZUPANEL_ALERT_CHECK_INTERVAL"); ok {
+		duration, err := parseDuration(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_ALERT_CHECK_INTERVAL: %w", err)
+		}
+		cfg.Alerting.CheckInterval = duration
 	}
 	return nil
 }

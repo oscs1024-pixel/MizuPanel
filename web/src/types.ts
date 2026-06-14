@@ -260,3 +260,50 @@ export type AgentLogsResponse = {
   error?: string
   code?: string
 }
+
+export type AlertRule = {
+  id: number
+  name: string
+  enabled: boolean
+  metric_field: string
+  operator: string
+  threshold: number
+  duration_seconds: number
+  scope_type: 'all' | 'nodes'
+  scope_node_ids?: string[]
+  notification_channels: NotificationChannel[]
+  created_at: string
+  updated_at: string
+}
+
+export type NotificationChannel = {
+  type: 'webhook' | 'dingtalk' | 'email'
+  webhook_url?: string
+  secret?: string
+  headers?: Record<string, string>
+}
+
+export type AlertHistory = {
+  id: number
+  rule_id: number
+  rule_name: string
+  node_id: string
+  node_name: string
+  metric_field: string
+  metric_value: number
+  threshold: number
+  triggered_at: string
+  resolved_at?: string
+  notification_sent: boolean
+  notification_error?: string
+  created_at: string
+}
+
+export type AlertRulesResponse = {
+  rules: AlertRule[]
+}
+
+export type AlertHistoryResponse = {
+  history: AlertHistory[]
+}
+

@@ -28,3 +28,9 @@ security:
     username: "admin"
     password: "" # Plaintext password for self-use deployments; can be overridden by MIZUPANEL_ADMIN_PASSWORD.
     session_ttl: "24h"
+
+alerting:
+  enabled: true # Enable the alerting system; set to false to disable all alert checking.
+  check_interval: "30s" # How often the alert engine checks metrics against rules.
+  max_rules: 100 # Maximum number of alert rules allowed.
+

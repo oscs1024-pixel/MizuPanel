@@ -321,3 +321,89 @@ func TestLoadSupportsLegacyFlatConfig(t *testing.T) {
 		t.Fatalf("loaded legacy config = %+v", cfg)
 	}
 }
+
+func TestLoadDefaultAlertingConfig(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if !cfg.Alerting.Enabled {
+		t.Fatal("Alerting.Enabled = false, want true default")
+	}
+	if cfg.Alerting.CheckInterval != 30*time.Second {
+		t.Fatalf("Alerting.CheckInterval = %s, want 30s", cfg.Alerting.CheckInterval)
+	}
+	if cfg.Alerting.MaxRules != 100 {
+		t.Fatalf("Alerting.MaxRules = %d, want 100", cfg.Alerting.MaxRules)
+	}
+}
+
+func TestLoadAlertingFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`alerting:
+  enabled: false
+  check_interval: 1m
+  max_rules: 50
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Alerting.Enabled {
+		t.Fatal("Alerting.Enabled = true, want false")
+	}
+	if cfg.Alerting.CheckInterval != time.Minute {
+		t.Fatalf("Alerting.CheckInterval = %s, want 1m", cfg.Alerting.CheckInterval)
+	}
+	if cfg.Alerting.MaxRules != 50 {
+		t.Fatalf("Alerting.MaxRules = %d, want 50", cfg.Alerting.MaxRules)
+	}
+}
+
+func TestLoadAlertingEnvironmentOverridesFile(t *testing.T) {
+	t.Setenv("MIZUPANEL_ALERTING_ENABLED", "false")
+	t.Setenv("MIZUPANEL_ALERT_CHECK_INTERVAL", "2m")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`alerting:
+  enabled: true
+  check_interval: 30s
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Alerting.Enabled {
+		t.Fatal("Alerting.Enabled = true, want false from env")
+	}
+	if cfg.Alerting.CheckInterval != 2*time.Minute {
+		t.Fatalf("Alerting.CheckInterval = %s, want 2m from env", cfg.Alerting.CheckInterval)
+	}
+}
+
+func TestLoadRejectsInvalidAlertCheckInterval(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte(`alerting:
+  check_interval: invalid
+`)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "alerting.check_interval") {
+		t.Fatalf("Load error = %v, want alerting.check_interval error", err)
+	}
+}
+

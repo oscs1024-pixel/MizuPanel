@@ -114,12 +114,15 @@ const (
 
 func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...any) *http.ServeMux {
 	server := &Server{nodes: nodes, metrics: metrics, defaultMetricsRetention: 6 * time.Hour, terminalTokens: make(map[string]terminalToken), auth: NewAuthenticator(AuthConfig{})}
+	var alertStore *store.AlertStore
 	for _, snapshotStore := range snapshots {
 		switch typed := snapshotStore.(type) {
 		case *store.ProcessSnapshotStore:
 			server.processes = typed
 		case *store.DockerSnapshotStore:
 			server.docker = typed
+		case *store.AlertStore:
+			alertStore = typed
 		case TerminalHub:
 			server.terminalHub = typed
 			if ops, ok := snapshotStore.(NodeOperations); ok {
@@ -150,6 +153,11 @@ func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...
 	mux.HandleFunc("/api/settings", server.requireAuth(server.handleSettings))
 	mux.HandleFunc("/api/nodes", server.requireAuth(server.handleNodes))
 	mux.HandleFunc("/api/nodes/", server.requireAuth(server.handleNodeRoutes))
+	if alertStore != nil {
+		mux.HandleFunc("/api/alerts/rules", server.requireAuth(server.handleAlertRules(alertStore)))
+		mux.HandleFunc("/api/alerts/rules/", server.requireAuth(server.handleAlertRuleRoutes(alertStore)))
+		mux.HandleFunc("/api/alerts/history", server.requireAuth(server.handleAlertHistory(alertStore)))
+	}
 	return mux
 }
 

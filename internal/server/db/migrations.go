@@ -98,6 +98,39 @@ func sqliteMigrationStatements() []string {
 					value TEXT NOT NULL,
 					updated_at DATETIME NOT NULL
 				);`,
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					name TEXT NOT NULL,
+					enabled INTEGER NOT NULL DEFAULT 1,
+					metric_field TEXT NOT NULL,
+					operator TEXT NOT NULL,
+					threshold REAL NOT NULL,
+					duration_seconds INTEGER NOT NULL,
+					scope_type TEXT NOT NULL,
+					scope_node_ids TEXT,
+					notification_channels TEXT NOT NULL,
+					created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+				);`,
+		`CREATE TABLE IF NOT EXISTS alert_history (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					rule_id INTEGER NOT NULL,
+					rule_name TEXT NOT NULL,
+					node_id TEXT NOT NULL,
+					node_name TEXT NOT NULL,
+					metric_field TEXT NOT NULL,
+					metric_value REAL NOT NULL,
+					threshold REAL NOT NULL,
+					triggered_at DATETIME NOT NULL,
+					resolved_at DATETIME,
+					notification_sent INTEGER NOT NULL DEFAULT 0,
+					notification_error TEXT,
+					created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+				);`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_node ON alert_history(node_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_history_resolved ON alert_history(resolved_at);`,
 	}
 }
 
@@ -180,6 +213,39 @@ func mysqlMigrationStatements() []string {
 					value VARCHAR(255) NOT NULL,
 					updated_at VARCHAR(64) NOT NULL
 				);`,
+		`CREATE TABLE IF NOT EXISTS alert_rules (
+					id BIGINT AUTO_INCREMENT PRIMARY KEY,
+					name VARCHAR(255) NOT NULL,
+					enabled BOOLEAN NOT NULL DEFAULT 1,
+					metric_field VARCHAR(64) NOT NULL,
+					operator VARCHAR(8) NOT NULL,
+					threshold DOUBLE NOT NULL,
+					duration_seconds INT NOT NULL,
+					scope_type VARCHAR(32) NOT NULL,
+					scope_node_ids TEXT,
+					notification_channels LONGTEXT NOT NULL,
+					created_at VARCHAR(64) NOT NULL,
+					updated_at VARCHAR(64) NOT NULL
+				);`,
+		`CREATE TABLE IF NOT EXISTS alert_history (
+					id BIGINT AUTO_INCREMENT PRIMARY KEY,
+					rule_id BIGINT NOT NULL,
+					rule_name VARCHAR(255) NOT NULL,
+					node_id VARCHAR(191) NOT NULL,
+					node_name VARCHAR(255) NOT NULL,
+					metric_field VARCHAR(64) NOT NULL,
+					metric_value DOUBLE NOT NULL,
+					threshold DOUBLE NOT NULL,
+					triggered_at VARCHAR(64) NOT NULL,
+					resolved_at VARCHAR(64),
+					notification_sent BOOLEAN NOT NULL DEFAULT 0,
+					notification_error TEXT,
+					created_at VARCHAR(64) NOT NULL,
+					FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+				);`,
+		`CREATE INDEX idx_alert_history_node ON alert_history(node_id);`,
+		`CREATE INDEX idx_alert_history_triggered ON alert_history(triggered_at);`,
+		`CREATE INDEX idx_alert_history_resolved ON alert_history(resolved_at);`,
 	}
 }
 

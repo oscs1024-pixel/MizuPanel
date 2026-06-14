@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mizupanel/mizupanel/internal/server/agenthub"
+	"github.com/mizupanel/mizupanel/internal/server/alerting"
 	"github.com/mizupanel/mizupanel/internal/server/api"
 	"github.com/mizupanel/mizupanel/internal/server/sshops"
 	"github.com/mizupanel/mizupanel/internal/server/store"
@@ -39,6 +40,7 @@ type Dependencies struct {
 	DockerSnapshots        *store.DockerSnapshotStore
 	AgentTokens            *store.AgentTokenStore
 	Settings               *store.SettingsStore
+	Alerts                 *store.AlertStore
 	AgentToken             string
 	PublicURL              string
 	Interval               int
@@ -46,6 +48,8 @@ type Dependencies struct {
 	DownloadDir            string
 	EnableTerminal         bool
 	MetricsRetention       time.Duration
+	AlertingEnabled        bool
+	AlertCheckInterval     time.Duration
 	SSHJobs                *sshops.Manager
 	SSHRunner              sshops.Runner
 	SSHJobTimeout          time.Duration
@@ -66,7 +70,14 @@ func NewHandler(deps Dependencies) http.Handler {
 		Interval:         deps.Interval,
 	})
 	auth := api.NewAuthenticator(deps.AdminAuth)
-	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
+	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, deps.Alerts, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
+
+	// Start alerting engine if enabled
+	if deps.AlertingEnabled && deps.Alerts != nil {
+		engine := alerting.NewEngine(deps.Alerts, deps.Metrics, deps.Nodes)
+		go startAlertingEngine(context.Background(), engine, deps.AlertCheckInterval)
+	}
+
 	sshJobs := deps.SSHJobs
 	if sshJobs == nil {
 		sshJobs = sshops.NewManager()
@@ -577,3 +588,21 @@ func staticHandler(dir string) http.Handler {
 		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 	})
 }
+
+func startAlertingEngine(ctx context.Context, engine *alerting.Engine, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := engine.CheckRules(ctx); err != nil {
+				// Log error but continue
+				fmt.Fprintf(os.Stderr, "alerting engine error: %v\n", err)
+			}
+		}
+	}
+}
+

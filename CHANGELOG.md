@@ -14,12 +14,29 @@ All notable changes to MizuPanel will be documented in this file.
 - Added Dashboard login page with username/password form when authentication is enabled and user is not logged in.
 - Added logout button in Dashboard header when user is authenticated.
 - Added authentication middleware protecting sensitive Dashboard APIs: `/api/settings`, `/api/nodes`, `/api/nodes/*`, `/api/install/*`.
+- Added Alert System v1 with metric-based alert rules and notification channels.
+- Added `alert_rules` and `alert_history` database tables with SQLite and MySQL migrations.
+- Added alert rules CRUD API: create, list, update, delete, and toggle enable/disable.
+- Added alert history query API by node ID with configurable limit.
+- Added alert engine with 30-second polling (configurable via `alerting.check_interval`).
+- Added support for CPU, memory, disk, swap usage and system load metrics monitoring.
+- Added comparison operators: `>`, `>=`, `<`, `<=`, `=` for threshold evaluation.
+- Added duration-based alert conditions (alert only triggers after condition persists for specified seconds).
+- Added node scope filtering: "all nodes" or "specific node IDs".
+- Added Webhook notification channel with custom headers support.
+- Added DingTalk robot notification channel with HMAC-SHA256 signature support.
+- Added alert state tracking in memory to prevent duplicate notifications.
+- Added automatic alert resolution tracking (updates `resolved_at` when condition no longer met).
+- Added Dashboard "告警规则" page with rule list, create/edit/delete forms, and enable/disable controls.
+- Added alert icon to Dashboard sidebar navigation.
 
 ### Changed
 
 - Agent WebSocket connections (`/api/agent/ws`) remain public and use existing node token authentication.
 - Default authentication is disabled (`security.admin.enabled: false`) to preserve existing deployment behavior.
 - Session storage is in-memory; Server restart requires re-login.
+- Alert engine runs in background goroutine, checks all enabled rules every 30 seconds by default.
+- Alert state is memory-only; service restart loses tracking state but preserves history records.
 
 ### Security
 
@@ -27,6 +44,7 @@ All notable changes to MizuPanel will be documented in this file.
 - Passwords are stored in plaintext in configuration files (self-use scope, not hashed).
 - Empty passwords are rejected when authentication is enabled.
 - Session TTL defaults to 24 hours; expired sessions are automatically pruned.
+- Alert rules API endpoints are protected by authentication middleware when auth is enabled.
 
 ## v0.0.4 - 2026-06-10
 

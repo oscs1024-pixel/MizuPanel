@@ -3,6 +3,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
+import { AlertRulesPage } from './pages/AlertRulesPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { NodeDetail } from './pages/NodeDetail'
 import { NodeList } from './pages/NodeList'
@@ -30,10 +31,11 @@ type AppRoute =
   | { kind: 'overview' }
   | { kind: 'history' }
   | { kind: 'settings' }
+  | { kind: 'alerts' }
   | { kind: 'logs' }
   | { kind: 'dashboard' }
 
-type AppPage = 'overview' | 'hosts' | 'history' | 'settings' | 'logs'
+type AppPage = 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs'
 type ThemeMode = 'light' | 'dark'
 
 function currentRoute(): AppRoute {
@@ -45,6 +47,7 @@ function currentRoute(): AppRoute {
   if (detailMatch) return { kind: 'node-detail', nodeID: decodeRouteNodeID(detailMatch[1]) ?? detailMatch[1] }
   if (window.location.pathname === '/history') return { kind: 'history' }
   if (window.location.pathname === '/settings') return { kind: 'settings' }
+  if (window.location.pathname === '/alerts') return { kind: 'alerts' }
   if (window.location.pathname === '/overview') return { kind: 'overview' }
   if (window.location.pathname === '/logs') return { kind: 'logs' }
   return { kind: 'dashboard' }
@@ -97,20 +100,22 @@ const pageCopy: Record<AppPage, { title: string, description: string }> = {
   hosts: { title: '主机列表', description: '查看节点状态、指标、文件和节点级操作。' },
   history: { title: '历史记录', description: '按节点和时间范围查看历史指标。' },
   settings: { title: '系统设置', description: '调整 MizuPanel 的全局运行参数。' },
+  alerts: { title: '告警规则', description: '配置基于指标的告警规则和通知渠道。' },
   logs: { title: '日志', description: '日志接口接入前仅提供控制台空状态壳。' }
 }
 
-const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts' | 'history' | 'settings' | 'logs' }> = [
+const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' }> = [
   { page: 'overview', label: '概览', icon: 'overview' },
   { page: 'hosts', label: '主机列表', icon: 'hosts' },
   { page: 'history', label: '历史记录', icon: 'history' },
+  { page: 'alerts', label: '告警规则', icon: 'alerts' },
   { page: 'settings', label: '系统设置', icon: 'settings' },
   { page: 'logs', label: '日志', icon: 'logs' }
 ]
 
 export default function App() {
   const route = useMemo(() => currentRoute(), [])
-  const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : 'hosts')
+  const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'alerts' ? 'alerts' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : 'hosts')
   const [theme, setTheme] = useState<ThemeMode>(() => storedTheme())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storedSidebarCollapsed())
   const [authEnabled, setAuthEnabled] = useState(false)
@@ -219,7 +224,7 @@ export default function App() {
 
   useEffect(() => {
     if (page !== 'hosts' || !selectedNodeID) return
-    if (window.location.pathname === '/history' || window.location.pathname === '/settings' || window.location.pathname === '/overview' || window.location.pathname === '/logs') return
+    if (window.location.pathname === '/history' || window.location.pathname === '/settings' || window.location.pathname === '/alerts' || window.location.pathname === '/overview' || window.location.pathname === '/logs') return
     if (window.location.pathname !== nodePath(selectedNodeID)) {
       window.history.replaceState({}, '', nodePath(selectedNodeID))
     }
@@ -512,9 +517,11 @@ export default function App() {
       ? '/history'
       : nextPage === 'settings'
         ? '/settings'
-        : nextPage === 'logs'
-          ? '/logs'
-          : selectedNodeID ? nodePath(selectedNodeID) : '/'
+        : nextPage === 'alerts'
+          ? '/alerts'
+          : nextPage === 'logs'
+            ? '/logs'
+            : selectedNodeID ? nodePath(selectedNodeID) : '/'
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path)
     }
@@ -1101,6 +1108,8 @@ export default function App() {
                 <HistoryPage nodes={nodes} selectedNodeID={selectedNodeID} metrics={metrics} range={range} settings={settings} onSelectNode={setSelectedNodeID} onRangeChange={setRange} />
               ) : page === 'settings' ? (
                 <SystemSettingsPage settings={settings} selectedRetention={settingsRetention} saving={settingsSaving} message={settingsMessage} error={settingsError} onSelectRetention={setSettingsRetention} onSave={saveSettings} />
+              ) : page === 'alerts' ? (
+                <AlertRulesPage nodes={nodes} />
               ) : page === 'logs' ? (
                 <section className="rounded-2xl border border-border bg-card p-5 shadow-glass">
                   <div className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1143,7 +1152,7 @@ function TopStatCard({ title, value, subtitle, tone }: { title: string, value: s
   )
 }
 
-function NavIcon({ name }: { name: 'overview' | 'hosts' | 'history' | 'settings' | 'logs' }) {
+function NavIcon({ name }: { name: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' }) {
   const common = "h-5 w-5"
   if (name === 'overview') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></svg>
@@ -1153,6 +1162,9 @@ function NavIcon({ name }: { name: 'overview' | 'hosts' | 'history' | 'settings'
   }
   if (name === 'history') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a8 8 0 1 0 2.35-5.65" /><path d="M4 5.5v4h4" /><path d="M12 8v4l2.5 2" /></svg>
+  }
+  if (name === 'alerts') {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
   }
   if (name === 'settings') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5v2.25M12 18.25v2.25M5.99 5.99l1.6 1.6M16.41 16.41l1.6 1.6M3.5 12h2.25M18.25 12h2.25M5.99 18.01l1.6-1.6M16.41 7.59l1.6-1.6" /><circle cx="12" cy="12" r="3.5" /></svg>

@@ -40,6 +40,7 @@ func main() {
 	dockerSnapshots := store.NewDockerSnapshotStoreWithDialect(database, dialect)
 	agentTokens := store.NewAgentTokenStoreWithDialect(database, dialect)
 	settings := store.NewSettingsStoreWithDialect(database, dialect)
+	alerts := store.NewAlertStore(database)
 	cleaner := retention.NewDynamicCleaner(metrics, func() (time.Duration, error) {
 		return settings.MetricsRetention(context.Background(), cfg.MetricsRetention)
 	})
@@ -50,20 +51,23 @@ func main() {
 		log.Fatal(err)
 	}
 	handler := app.NewHandler(app.Dependencies{
-		Nodes:            nodes,
-		Metrics:          metrics,
-		ProcessSnapshots: processSnapshots,
-		DockerSnapshots:  dockerSnapshots,
-		AgentTokens:      agentTokens,
-		Settings:         settings,
-		AgentToken:       cfg.AgentToken,
-		PublicURL:        cfg.PublicURL,
-		Interval:         5,
-		StaticDir:        paths.StaticDir,
-		DownloadDir:      paths.DownloadDir,
-		EnableTerminal:   cfg.EnableTerminal,
-		MetricsRetention: cfg.MetricsRetention,
-		AdminAuth:        appAuthConfig(cfg.AdminAuth),
+		Nodes:                nodes,
+		Metrics:              metrics,
+		ProcessSnapshots:     processSnapshots,
+		DockerSnapshots:      dockerSnapshots,
+		AgentTokens:          agentTokens,
+		Settings:             settings,
+		Alerts:               alerts,
+		AgentToken:           cfg.AgentToken,
+		PublicURL:            cfg.PublicURL,
+		Interval:             5,
+		StaticDir:            paths.StaticDir,
+		DownloadDir:          paths.DownloadDir,
+		EnableTerminal:       cfg.EnableTerminal,
+		MetricsRetention:     cfg.MetricsRetention,
+		AlertingEnabled:      cfg.Alerting.Enabled,
+		AlertCheckInterval:   cfg.Alerting.CheckInterval,
+		AdminAuth:            appAuthConfig(cfg.AdminAuth),
 	})
 	log.Printf("MizuPanel server listening on %s", cfg.Listen)
 	log.Fatal(http.ListenAndServe(cfg.Listen, handler))

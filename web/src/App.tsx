@@ -9,6 +9,9 @@ import { NodeDetail } from './pages/NodeDetail'
 import { NodeList } from './pages/NodeList'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { TerminalPage } from './pages/TerminalPage'
+import { K8sClustersPage } from './pages/K8sClustersPage'
+import { K8sClusterDetailPage } from './pages/K8sClusterDetailPage'
+import ConnectK8sClusterModal from './components/ConnectK8sClusterModal'
 import type { DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse, SSHAuthType, SSHProgressEvent } from './types'
 
 function decodeRouteNodeID(value?: string) {
@@ -33,9 +36,11 @@ type AppRoute =
   | { kind: 'settings' }
   | { kind: 'alerts' }
   | { kind: 'logs' }
+  | { kind: 'k8s-clusters' }
+  | { kind: 'k8s-cluster-detail', clusterID: string }
   | { kind: 'dashboard' }
 
-type AppPage = 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs'
+type AppPage = 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' | 'k8s'
 type ThemeMode = 'light' | 'dark'
 
 function currentRoute(): AppRoute {
@@ -45,6 +50,9 @@ function currentRoute(): AppRoute {
   if (execMatch) return { kind: 'container-exec', nodeID: decodeRouteNodeID(execMatch[1]) ?? execMatch[1], containerID: decodeRouteNodeID(execMatch[2]) ?? execMatch[2] }
   const detailMatch = window.location.pathname.match(/^\/nodes\/([^/]+)$/)
   if (detailMatch) return { kind: 'node-detail', nodeID: decodeRouteNodeID(detailMatch[1]) ?? detailMatch[1] }
+  const k8sClusterDetailMatch = window.location.pathname.match(/^\/k8s\/clusters\/([^/]+)$/)
+  if (k8sClusterDetailMatch) return { kind: 'k8s-cluster-detail', clusterID: decodeRouteNodeID(k8sClusterDetailMatch[1]) ?? k8sClusterDetailMatch[1] }
+  if (window.location.pathname === '/k8s/clusters') return { kind: 'k8s-clusters' }
   if (window.location.pathname === '/history') return { kind: 'history' }
   if (window.location.pathname === '/settings') return { kind: 'settings' }
   if (window.location.pathname === '/alerts') return { kind: 'alerts' }
@@ -101,12 +109,14 @@ const pageCopy: Record<AppPage, { title: string, description: string }> = {
   history: { title: '历史记录', description: '按节点和时间范围查看历史指标。' },
   settings: { title: '系统设置', description: '调整 MizuPanel 的全局运行参数。' },
   alerts: { title: '告警规则', description: '配置基于指标的告警规则和通知渠道。' },
-  logs: { title: '日志', description: '日志接口接入前仅提供控制台空状态壳。' }
+  logs: { title: '日志', description: '日志接口接入前仅提供控制台空状态壳。' },
+  k8s: { title: 'Kubernetes 集群', description: '管理通过 Agent 节点连接的 K8s 集群。' }
 }
 
-const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' }> = [
+const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' | 'k8s' }> = [
   { page: 'overview', label: '概览', icon: 'overview' },
   { page: 'hosts', label: '主机列表', icon: 'hosts' },
+  { page: 'k8s', label: 'Kubernetes', icon: 'k8s' },
   { page: 'history', label: '历史记录', icon: 'history' },
   { page: 'alerts', label: '告警规则', icon: 'alerts' },
   { page: 'settings', label: '系统设置', icon: 'settings' },
@@ -115,7 +125,7 @@ const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts'
 
 export default function App() {
   const route = useMemo(() => currentRoute(), [])
-  const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'alerts' ? 'alerts' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : 'hosts')
+  const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'alerts' ? 'alerts' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : route.kind === 'k8s-clusters' || route.kind === 'k8s-cluster-detail' ? 'k8s' : 'hosts')
   const [theme, setTheme] = useState<ThemeMode>(() => storedTheme())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storedSidebarCollapsed())
   const [authEnabled, setAuthEnabled] = useState(false)
@@ -162,6 +172,8 @@ export default function App() {
   const [settingsMessage, setSettingsMessage] = useState<string>()
   const [settingsError, setSettingsError] = useState<string>()
   const [loading, setLoading] = useState(true)
+  const [connectK8sClusterModalOpen, setConnectK8sClusterModalOpen] = useState(false)
+  const [selectedK8sClusterID, setSelectedK8sClusterID] = useState<string>()
   const addHostButtonRef = useRef<HTMLButtonElement>(null)
   const installCommandCodeRef = useRef<HTMLElement>(null)
   const installCommandDialogRef = useRef<HTMLElement>(null)
@@ -530,10 +542,24 @@ export default function App() {
           ? '/alerts'
           : nextPage === 'logs'
             ? '/logs'
-            : selectedNodeID ? nodePath(selectedNodeID) : '/'
+            : nextPage === 'k8s'
+              ? '/k8s/clusters'
+              : selectedNodeID ? nodePath(selectedNodeID) : '/'
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path)
     }
+  }
+
+  const openK8sClusterDetail = (clusterID: string) => {
+    setSelectedK8sClusterID(clusterID)
+    const path = `/k8s/clusters/${encodeURIComponent(clusterID)}`
+    window.history.pushState({}, '', path)
+  }
+
+  const backToK8sClusters = () => {
+    setSelectedK8sClusterID(undefined)
+    const path = '/k8s/clusters'
+    window.history.pushState({}, '', path)
   }
 
   const saveSettings = () => {
@@ -1117,6 +1143,29 @@ export default function App() {
                 <SystemSettingsPage settings={settings} selectedRetention={settingsRetention} saving={settingsSaving} message={settingsMessage} error={settingsError} onSelectRetention={setSettingsRetention} onSave={saveSettings} />
               ) : page === 'alerts' ? (
                 <AlertRulesPage nodes={nodes} />
+              ) : page === 'k8s' ? (
+                route.kind === 'k8s-cluster-detail' ? (
+                  <K8sClusterDetailPage
+                    clusterId={route.clusterID}
+                    onBack={backToK8sClusters}
+                  />
+                ) : (
+                  <>
+                    <K8sClustersPage
+                      onConnectCluster={() => setConnectK8sClusterModalOpen(true)}
+                    />
+                    <ConnectK8sClusterModal
+                      open={connectK8sClusterModalOpen}
+                      nodes={nodes}
+                      onClose={() => setConnectK8sClusterModalOpen(false)}
+                      onSuccess={() => {
+                        setConnectK8sClusterModalOpen(false)
+                        // Trigger page refresh
+                        window.location.reload()
+                      }}
+                    />
+                  </>
+                )
               ) : page === 'logs' ? (
                 <section className="rounded-2xl border border-border bg-card p-5 shadow-glass">
                   <div className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1159,13 +1208,16 @@ function TopStatCard({ title, value, subtitle, tone }: { title: string, value: s
   )
 }
 
-function NavIcon({ name }: { name: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' }) {
+function NavIcon({ name }: { name: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' | 'k8s' }) {
   const common = "h-5 w-5"
   if (name === 'overview') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></svg>
   }
   if (name === 'hosts') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="6" rx="2" /><rect x="4" y="14" width="16" height="6" rx="2" /><path d="M7.5 7h.01M7.5 17h.01M11 7h6M11 17h6" /></svg>
+  }
+  if (name === 'k8s') {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l8.5 4.5v9L12 21l-8.5-4.5v-9L12 3z" /><path d="M12 8v8M8 10l8 4M8 14l8-4" /></svg>
   }
   if (name === 'history') {
     return <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a8 8 0 1 0 2.35-5.65" /><path d="M4 5.5v4h4" /><path d="M12 8v4l2.5 2" /></svg>

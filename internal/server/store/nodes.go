@@ -39,6 +39,11 @@ func NewNodeStoreWithDialect(db *sql.DB, dialect serverdb.Dialect) *NodeStore {
 	return &NodeStore{db: db, dialect: dialect}
 }
 
+// DB 返回底层数据库连接
+func (s *NodeStore) DB() *sql.DB {
+	return s.db
+}
+
 func (s *NodeStore) Upsert(ctx context.Context, node Node) error {
 	now := time.Now().UTC()
 	if node.CreatedAt.IsZero() {

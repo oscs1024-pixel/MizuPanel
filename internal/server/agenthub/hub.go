@@ -193,6 +193,7 @@ type agentConnection struct {
 	pendingContainerStops   map[string]chan protocol.ContainerStopResponse
 	pendingContainerRestarts map[string]chan protocol.ContainerRestartResponse
 	pendingContainerDeletes map[string]chan protocol.ContainerDeleteResponse
+	pendingK8sMessages      map[string]chan json.RawMessage
 }
 
 type browserTerminal struct {
@@ -353,7 +354,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := h.startSession(nodeID)
-	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, supportsAgentManagement: hello.AgentManagement, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse), pendingAgentStatuses: make(map[string]chan protocol.AgentStatusResponse), pendingAgentRestarts: make(map[string]chan protocol.AgentRestartResponse), pendingAgentLogs: make(map[string]chan protocol.AgentLogsResponse), pendingDockerExecs: make(map[string]chan protocol.DockerExecResponse), pendingContainerStarts: make(map[string]chan protocol.ContainerStartResponse), pendingContainerStops: make(map[string]chan protocol.ContainerStopResponse), pendingContainerRestarts: make(map[string]chan protocol.ContainerRestartResponse), pendingContainerDeletes: make(map[string]chan protocol.ContainerDeleteResponse)}
+	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, supportsAgentManagement: hello.AgentManagement, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse), pendingAgentStatuses: make(map[string]chan protocol.AgentStatusResponse), pendingAgentRestarts: make(map[string]chan protocol.AgentRestartResponse), pendingAgentLogs: make(map[string]chan protocol.AgentLogsResponse), pendingDockerExecs: make(map[string]chan protocol.DockerExecResponse), pendingContainerStarts: make(map[string]chan protocol.ContainerStartResponse), pendingContainerStops: make(map[string]chan protocol.ContainerStopResponse), pendingContainerRestarts: make(map[string]chan protocol.ContainerRestartResponse), pendingContainerDeletes: make(map[string]chan protocol.ContainerDeleteResponse), pendingK8sMessages: make(map[string]chan json.RawMessage)}
 	h.registerConnection(agent)
 	defer h.unregisterConnection(agent)
 	defer h.finishSession(context.WithoutCancel(r.Context()), nodeID, sessionID)
@@ -515,6 +516,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				default:
 				}
 			}
+		case protocol.MessageTypeK8sClusterConnectResult,
+			protocol.MessageTypeK8sGetPodsResult,
+			protocol.MessageTypeK8sGetPodLogsResult:
+			var header struct {
+				RequestID string `json:"request_id"`
+			}
+			if err := json.Unmarshal(rawMessage, &header); err != nil {
+				continue
+			}
+			agent.deliverK8sMessage(header.RequestID, rawMessage)
 		}
 	}
 }
@@ -1092,6 +1103,49 @@ func (h *Handler) ContainerDelete(ctx context.Context, nodeID string, containerI
 	}
 }
 
+// IsNodeOnline 检查节点是否在线
+func (h *Handler) IsNodeOnline(nodeID string) bool {
+	return h.connection(nodeID) != nil
+}
+
+// SendToNodeWithTimeout 发送消息到节点并等待响应
+func (h *Handler) SendToNodeWithTimeout(nodeID string, message interface{}, timeout time.Duration) (json.RawMessage, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return nil, errors.New("节点离线")
+	}
+
+	// 生成请求 ID
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建响应通道
+	ch := make(chan json.RawMessage, 1)
+	agent.pendingMu.Lock()
+	agent.pendingK8sMessages[requestID] = ch
+	agent.pendingMu.Unlock()
+
+	defer func() {
+		agent.pendingMu.Lock()
+		delete(agent.pendingK8sMessages, requestID)
+		agent.pendingMu.Unlock()
+	}()
+
+	// 发送消息
+	if err := agent.writeJSON(message); err != nil {
+		return nil, err
+	}
+
+	// 等待响应
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(timeout):
+		return nil, errors.New("请求超时")
+	}
+}
 
 func (h *Handler) AttachLogTail(ctx context.Context, nodeID string, browser *websocket.Conn) error {
 	log.Printf("[LogTail] AttachLogTail called for node %s", nodeID)
@@ -1658,6 +1712,15 @@ func (c *agentConnection) deliverContainerDelete(response protocol.ContainerDele
 	c.pendingMu.Unlock()
 	if ch != nil {
 		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverK8sMessage(requestID string, rawMessage json.RawMessage) {
+	c.pendingMu.Lock()
+	ch := c.pendingK8sMessages[requestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- rawMessage
 	}
 }
 

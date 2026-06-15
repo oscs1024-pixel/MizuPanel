@@ -17,6 +17,7 @@ import (
 	"github.com/mizupanel/mizupanel/internal/server/agenthub"
 	"github.com/mizupanel/mizupanel/internal/server/alerting"
 	"github.com/mizupanel/mizupanel/internal/server/api"
+	"github.com/mizupanel/mizupanel/internal/server/k8s"
 	"github.com/mizupanel/mizupanel/internal/server/sshops"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
@@ -69,8 +70,13 @@ func NewHandler(deps Dependencies) http.Handler {
 		DockerSnapshots:  deps.DockerSnapshots,
 		Interval:         deps.Interval,
 	})
+
+	// K8s 服务层
+	k8sStore := k8s.NewStore(deps.Nodes.DB())
+	k8sService := k8s.NewService(k8sStore, hub)
+
 	auth := api.NewAuthenticator(deps.AdminAuth)
-	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, deps.Alerts, hub, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
+	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, deps.Alerts, hub, k8sService, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
 
 	// Start alerting engine if enabled
 	if deps.AlertingEnabled && deps.Alerts != nil {
@@ -90,6 +96,7 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.Handle("/api/settings", apiRouter)
 	mux.Handle("/api/nodes", apiRouter)
 	mux.Handle("/api/alerts/", apiRouter)
+	mux.Handle("/api/k8s/", apiRouter)
 	mux.HandleFunc("/api/nodes/", auth.Require(func(w http.ResponseWriter, r *http.Request) {
 		if handleSSHUninstallRoute(w, r, deps.Nodes, hub, sshJobs, sshRunner, deps.PublicURL, deps.SSHJobTimeout) {
 			return

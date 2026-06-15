@@ -350,3 +350,64 @@ export type AlertHistoryResponse = {
   history: AlertHistory[]
 }
 
+// K8s 集群管理类型
+
+export type K8sCluster = {
+  id: string
+  name: string
+  node_id: string
+  node_name: string
+  node_ip: string
+  kubeconfig_path: string
+  context?: string
+  status: 'online' | 'offline'
+  cluster_info?: K8sClusterInfo
+  last_seen_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export type K8sClusterInfo = {
+  version: string
+  node_count: number
+  namespace_count: number
+}
+
+export type K8sClustersResponse = {
+  clusters: K8sCluster[]
+}
+
+export type ConnectK8sClusterRequest = {
+  name: string
+  node_id: string
+  kubeconfig_path: string
+  context?: string
+}
+
+export type ConnectK8sClusterResponse = {
+  success: boolean
+  cluster: K8sCluster
+  cluster_info: K8sClusterInfo
+}
+
+export type K8sPod = {
+  name: string
+  namespace: string
+  status: string
+  ready: string
+  restarts: number
+  age: string
+  node: string
+  ip?: string
+}
+
+export type K8sPodsResponse = {
+  success: boolean
+  pods: K8sPod[]
+}
+
+export type K8sPodLogsResponse = {
+  success: boolean
+  logs: string
+}
+

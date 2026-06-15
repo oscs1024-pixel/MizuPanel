@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { fetchK8sCluster, fetchK8sPods } from '../api/k8s'
 import type { K8sCluster, K8sPod } from '../types'
 import { Toast } from '../components/Toast'
+import K8sPodLogsModal from '../components/K8sPodLogsModal'
 
 type K8sClusterDetailPageProps = {
   clusterId: string
@@ -20,6 +21,11 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
   const [podsLoading, setPodsLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [logsModal, setLogsModal] = useState<{ open: boolean; namespace: string; podName: string }>({
+    open: false,
+    namespace: '',
+    podName: '',
+  })
 
   const loadCluster = useCallback(() => {
     setLoading(true)
@@ -114,6 +120,14 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
           onClose={() => setToast(null)}
         />
       )}
+
+      <K8sPodLogsModal
+        clusterId={clusterId}
+        namespace={logsModal.namespace}
+        podName={logsModal.podName}
+        open={logsModal.open}
+        onClose={() => setLogsModal({ open: false, namespace: '', podName: '' })}
+      />
 
       {/* Header */}
       <div className="mb-6">
@@ -279,6 +293,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                         <td className="px-4 py-3">
                           <button
                             type="button"
+                            onClick={() => setLogsModal({ open: true, namespace: pod.namespace, podName: pod.name })}
                             className="rounded-lg border border-border bg-surface px-3 py-1 text-xs font-bold text-foreground transition hover:bg-muted"
                           >
                             查看日志

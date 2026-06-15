@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -174,6 +175,9 @@ type agentConnection struct {
 	sessionMu               sync.Mutex
 	terminals               map[string]*browserTerminal
 	containerExecs          map[string]*browserContainerExec
+	mu                      sync.Mutex
+	logTailSessions         map[string]chan json.RawMessage
+	containerLogsSessions   map[string]chan json.RawMessage
 	pendingMu               sync.Mutex
 	pendingLists            map[string]chan protocol.FileListResponse
 	pendingReads            map[string]chan protocol.FileReadResponse
@@ -184,6 +188,11 @@ type agentConnection struct {
 	pendingAgentStatuses    map[string]chan protocol.AgentStatusResponse
 	pendingAgentRestarts    map[string]chan protocol.AgentRestartResponse
 	pendingAgentLogs        map[string]chan protocol.AgentLogsResponse
+	pendingDockerExecs      map[string]chan protocol.DockerExecResponse
+	pendingContainerStarts  map[string]chan protocol.ContainerStartResponse
+	pendingContainerStops   map[string]chan protocol.ContainerStopResponse
+	pendingContainerRestarts map[string]chan protocol.ContainerRestartResponse
+	pendingContainerDeletes map[string]chan protocol.ContainerDeleteResponse
 }
 
 type browserTerminal struct {
@@ -344,7 +353,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := h.startSession(nodeID)
-	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, supportsAgentManagement: hello.AgentManagement, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse), pendingAgentStatuses: make(map[string]chan protocol.AgentStatusResponse), pendingAgentRestarts: make(map[string]chan protocol.AgentRestartResponse), pendingAgentLogs: make(map[string]chan protocol.AgentLogsResponse)}
+	agent := &agentConnection{nodeID: nodeID, sessionID: sessionID, conn: conn, terminalEnabled: hello.Terminal, supportsAgentManagement: hello.AgentManagement, terminals: make(map[string]*browserTerminal), containerExecs: make(map[string]*browserContainerExec), pendingLists: make(map[string]chan protocol.FileListResponse), pendingReads: make(map[string]chan protocol.FileReadResponse), pendingWrites: make(map[string]chan protocol.FileWriteResponse), pendingUploads: make(map[string]chan protocol.FileUploadResponse), pendingDeletes: make(map[string]chan protocol.FileDeleteResponse), pendingReboots: make(map[string]chan protocol.RebootResponse), pendingAgentStatuses: make(map[string]chan protocol.AgentStatusResponse), pendingAgentRestarts: make(map[string]chan protocol.AgentRestartResponse), pendingAgentLogs: make(map[string]chan protocol.AgentLogsResponse), pendingDockerExecs: make(map[string]chan protocol.DockerExecResponse), pendingContainerStarts: make(map[string]chan protocol.ContainerStartResponse), pendingContainerStops: make(map[string]chan protocol.ContainerStopResponse), pendingContainerRestarts: make(map[string]chan protocol.ContainerRestartResponse), pendingContainerDeletes: make(map[string]chan protocol.ContainerDeleteResponse)}
 	h.registerConnection(agent)
 	defer h.unregisterConnection(agent)
 	defer h.finishSession(context.WithoutCancel(r.Context()), nodeID, sessionID)
@@ -427,6 +436,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			agent.deliverAgentLogs(message)
+		case protocol.MessageTypeDockerExecResponse:
+			var message protocol.DockerExecResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverDockerExec(message)
+		case protocol.MessageTypeContainerStartResponse:
+			var message protocol.ContainerStartResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverContainerStart(message)
+		case protocol.MessageTypeContainerStopResponse:
+			var message protocol.ContainerStopResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverContainerStop(message)
+		case protocol.MessageTypeContainerRestartResponse:
+			var message protocol.ContainerRestartResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverContainerRestart(message)
+		case protocol.MessageTypeContainerDeleteResponse:
+			var message protocol.ContainerDeleteResponse
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				continue
+			}
+			agent.deliverContainerDelete(message)
 		case protocol.MessageTypeTerminalStarted, protocol.MessageTypeTerminalData, protocol.MessageTypeTerminalExit, protocol.MessageTypeTerminalError, protocol.MessageTypeTerminalClose:
 			var message protocol.TerminalMessage
 			if err := json.Unmarshal(rawMessage, &message); err != nil {
@@ -439,6 +478,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			h.routeContainerExecMessage(agent, message)
+		case protocol.MessageTypeLogTailResponse, protocol.MessageTypeLogTailData, protocol.MessageTypeLogTailExit, protocol.MessageTypeLogTailError:
+			var header struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(rawMessage, &header); err != nil {
+				continue
+			}
+			log.Printf("[LogTail] Received message from agent: type=%s session=%s", incoming.Type, header.SessionID)
+			agent.mu.Lock()
+			logChan, exists := agent.logTailSessions[header.SessionID]
+			agent.mu.Unlock()
+			if exists && logChan != nil {
+				select {
+				case logChan <- rawMessage:
+					log.Printf("[LogTail] Message forwarded to session channel")
+				default:
+					log.Printf("[LogTail] Channel full, dropping message")
+				}
+			} else {
+				log.Printf("[LogTail] No session found for session_id=%s", header.SessionID)
+			}
+		case protocol.MessageTypeContainerLogsResponse, protocol.MessageTypeContainerLogsData, protocol.MessageTypeContainerLogsExit, protocol.MessageTypeContainerLogsError:
+			var header struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(rawMessage, &header); err != nil {
+				continue
+			}
+			agent.mu.Lock()
+			logChan, exists := agent.containerLogsSessions[header.SessionID]
+			agent.mu.Unlock()
+			if exists && logChan != nil {
+				select {
+				case logChan <- rawMessage:
+				default:
+				}
+			}
 		}
 	}
 }
@@ -850,6 +926,354 @@ func (h *Handler) AttachContainerExec(ctx context.Context, nodeID string, contai
 	}
 }
 
+func (h *Handler) DockerExec(ctx context.Context, nodeID string, command string) (protocol.DockerExecResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.DockerExecResponse{Type: protocol.MessageTypeDockerExecResponse, Accepted: false, ExitCode: 1, Error: "节点离线，无法执行 Docker 命令。"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.DockerExecResponse{}, err
+	}
+	ch := make(chan protocol.DockerExecResponse, 1)
+	agent.addDockerExecRequest(requestID, ch)
+	defer agent.removeDockerExecRequest(requestID)
+
+	request := protocol.DockerExecRequest{
+		Type:      protocol.MessageTypeDockerExecRequest,
+		RequestID: requestID,
+		NodeID:    nodeID,
+		Command:   command,
+	}
+
+	if err := agent.writeJSON(request); err != nil {
+		return protocol.DockerExecResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(35 * time.Second):
+		return protocol.DockerExecResponse{Type: protocol.MessageTypeDockerExecResponse, Accepted: false, ExitCode: 1, Error: "Docker 命令执行超时。"}, nil
+	case <-ctx.Done():
+		return protocol.DockerExecResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) ContainerStart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStartResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.ContainerStartResponse{Type: protocol.MessageTypeContainerStartResponse, Success: false, Error: "节点离线"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.ContainerStartResponse{}, err
+	}
+	ch := make(chan protocol.ContainerStartResponse, 1)
+	agent.addContainerStartRequest(requestID, ch)
+	defer agent.removeContainerStartRequest(requestID)
+
+	request := protocol.ContainerStartRequest{
+		Type:        protocol.MessageTypeContainerStartRequest,
+		RequestID:   requestID,
+		NodeID:      nodeID,
+		ContainerID: containerID,
+	}
+
+	if err := agent.writeJSON(request); err != nil {
+		return protocol.ContainerStartResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(30 * time.Second):
+		return protocol.ContainerStartResponse{Type: protocol.MessageTypeContainerStartResponse, Success: false, Error: "操作超时"}, nil
+	case <-ctx.Done():
+		return protocol.ContainerStartResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) ContainerStop(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStopResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.ContainerStopResponse{Type: protocol.MessageTypeContainerStopResponse, Success: false, Error: "节点离线"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.ContainerStopResponse{}, err
+	}
+	ch := make(chan protocol.ContainerStopResponse, 1)
+	agent.addContainerStopRequest(requestID, ch)
+	defer agent.removeContainerStopRequest(requestID)
+
+	request := protocol.ContainerStopRequest{
+		Type:        protocol.MessageTypeContainerStopRequest,
+		RequestID:   requestID,
+		NodeID:      nodeID,
+		ContainerID: containerID,
+	}
+
+	if err := agent.writeJSON(request); err != nil {
+		return protocol.ContainerStopResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(30 * time.Second):
+		return protocol.ContainerStopResponse{Type: protocol.MessageTypeContainerStopResponse, Success: false, Error: "操作超时"}, nil
+	case <-ctx.Done():
+		return protocol.ContainerStopResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) ContainerRestart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerRestartResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.ContainerRestartResponse{Type: protocol.MessageTypeContainerRestartResponse, Success: false, Error: "节点离线"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.ContainerRestartResponse{}, err
+	}
+	ch := make(chan protocol.ContainerRestartResponse, 1)
+	agent.addContainerRestartRequest(requestID, ch)
+	defer agent.removeContainerRestartRequest(requestID)
+
+	request := protocol.ContainerRestartRequest{
+		Type:        protocol.MessageTypeContainerRestartRequest,
+		RequestID:   requestID,
+		NodeID:      nodeID,
+		ContainerID: containerID,
+	}
+
+	if err := agent.writeJSON(request); err != nil {
+		return protocol.ContainerRestartResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(30 * time.Second):
+		return protocol.ContainerRestartResponse{Type: protocol.MessageTypeContainerRestartResponse, Success: false, Error: "操作超时"}, nil
+	case <-ctx.Done():
+		return protocol.ContainerRestartResponse{}, ctx.Err()
+	}
+}
+
+func (h *Handler) ContainerDelete(ctx context.Context, nodeID string, containerID string, force bool) (protocol.ContainerDeleteResponse, error) {
+	agent := h.connection(nodeID)
+	if agent == nil {
+		return protocol.ContainerDeleteResponse{Type: protocol.MessageTypeContainerDeleteResponse, Success: false, Error: "节点离线"}, nil
+	}
+	requestID, err := randomTerminalSessionID()
+	if err != nil {
+		return protocol.ContainerDeleteResponse{}, err
+	}
+	ch := make(chan protocol.ContainerDeleteResponse, 1)
+	agent.addContainerDeleteRequest(requestID, ch)
+	defer agent.removeContainerDeleteRequest(requestID)
+
+	request := protocol.ContainerDeleteRequest{
+		Type:        protocol.MessageTypeContainerDeleteRequest,
+		RequestID:   requestID,
+		NodeID:      nodeID,
+		ContainerID: containerID,
+		Force:       force,
+	}
+
+	if err := agent.writeJSON(request); err != nil {
+		return protocol.ContainerDeleteResponse{}, err
+	}
+	select {
+	case response := <-ch:
+		return response, nil
+	case <-time.After(30 * time.Second):
+		return protocol.ContainerDeleteResponse{Type: protocol.MessageTypeContainerDeleteResponse, Success: false, Error: "操作超时"}, nil
+	case <-ctx.Done():
+		return protocol.ContainerDeleteResponse{}, ctx.Err()
+	}
+}
+
+
+func (h *Handler) AttachLogTail(ctx context.Context, nodeID string, browser *websocket.Conn) error {
+	log.Printf("[LogTail] AttachLogTail called for node %s", nodeID)
+	browser.SetReadLimit(maxBrowserInputBytes)
+	agent := h.connection(nodeID)
+	if agent == nil {
+		log.Printf("[LogTail] Agent offline for node %s", nodeID)
+		_ = browser.WriteJSON(protocol.LogTailError{Type: protocol.MessageTypeLogTailError, Error: "节点 Agent 当前不在线"})
+		return errors.New("agent offline")
+	}
+
+	sessionID, err := randomTerminalSessionID()
+	if err != nil {
+		return err
+	}
+	log.Printf("[LogTail] Created session %s for node %s", sessionID, nodeID)
+
+	// Read initial request from browser
+	var request protocol.LogTailRequest
+	if err := browser.ReadJSON(&request); err != nil {
+		log.Printf("[LogTail] Failed to read browser request: %v", err)
+		return err
+	}
+	log.Printf("[LogTail] Received request from browser: path=%s lines=%d", request.Path, request.Lines)
+
+	request.Type = protocol.MessageTypeLogTailRequest
+	request.SessionID = sessionID
+	request.NodeID = nodeID
+
+	// Send request to agent
+	log.Printf("[LogTail] Sending request to agent: %+v", request)
+	if err := agent.writeJSON(request); err != nil {
+		log.Printf("[LogTail] Failed to send to agent: %v", err)
+		return err
+	}
+	log.Printf("[LogTail] Request sent to agent successfully")
+
+	// Create a channel to forward messages from agent to browser
+	logChan := make(chan json.RawMessage, 16)
+	agent.mu.Lock()
+	if agent.logTailSessions == nil {
+		agent.logTailSessions = make(map[string]chan json.RawMessage)
+	}
+	agent.logTailSessions[sessionID] = logChan
+	agent.mu.Unlock()
+
+	defer func() {
+		agent.mu.Lock()
+		delete(agent.logTailSessions, sessionID)
+		agent.mu.Unlock()
+		close(logChan)
+		_ = agent.writeJSON(protocol.LogTailStop{Type: protocol.MessageTypeLogTailStop, SessionID: sessionID, NodeID: nodeID})
+	}()
+
+	// Forward messages between agent and browser
+	errCh := make(chan error, 2)
+
+	// Read from agent and forward to browser
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case msg, ok := <-logChan:
+				if !ok {
+					return
+				}
+				log.Printf("[LogTail] Forwarding message from agent to browser: %s", string(msg))
+				if err := browser.WriteMessage(websocket.TextMessage, msg); err != nil {
+					log.Printf("[LogTail] Failed to write to browser: %v", err)
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
+
+	// Read stop messages from browser
+	go func() {
+		for {
+			var message protocol.LogTailStop
+			if err := browser.ReadJSON(&message); err != nil {
+				errCh <- err
+				return
+			}
+			if message.Type == protocol.MessageTypeLogTailStop {
+				errCh <- nil
+				return
+			}
+		}
+	}()
+
+	return <-errCh
+}
+
+func (h *Handler) AttachContainerLogs(ctx context.Context, nodeID string, containerID string, browser *websocket.Conn) error {
+	browser.SetReadLimit(maxBrowserInputBytes)
+	agent := h.connection(nodeID)
+	if agent == nil {
+		_ = browser.WriteJSON(protocol.ContainerLogsError{Type: protocol.MessageTypeContainerLogsError, Error: "节点 Agent 当前不在线"})
+		return errors.New("agent offline")
+	}
+
+	sessionID, err := randomTerminalSessionID()
+	if err != nil {
+		return err
+	}
+
+	// Read initial request from browser
+	var request protocol.ContainerLogsRequest
+	if err := browser.ReadJSON(&request); err != nil {
+		return err
+	}
+
+	request.Type = protocol.MessageTypeContainerLogsRequest
+	request.SessionID = sessionID
+	request.NodeID = nodeID
+	request.ContainerID = containerID
+
+	// Send request to agent
+	if err := agent.writeJSON(request); err != nil {
+		return err
+	}
+
+	// Create a channel to forward messages from agent to browser
+	logChan := make(chan json.RawMessage, 16)
+	agent.mu.Lock()
+	if agent.containerLogsSessions == nil {
+		agent.containerLogsSessions = make(map[string]chan json.RawMessage)
+	}
+	agent.containerLogsSessions[sessionID] = logChan
+	agent.mu.Unlock()
+
+	defer func() {
+		agent.mu.Lock()
+		delete(agent.containerLogsSessions, sessionID)
+		agent.mu.Unlock()
+		close(logChan)
+		_ = agent.writeJSON(protocol.ContainerLogsStop{Type: protocol.MessageTypeContainerLogsStop, SessionID: sessionID, NodeID: nodeID})
+	}()
+
+	// Forward messages between agent and browser
+	errCh := make(chan error, 2)
+
+	// Read from agent and forward to browser
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case msg, ok := <-logChan:
+				if !ok {
+					return
+				}
+				if err := browser.WriteMessage(websocket.TextMessage, msg); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
+
+	// Read stop messages from browser
+	go func() {
+		for {
+			var message protocol.ContainerLogsStop
+			if err := browser.ReadJSON(&message); err != nil {
+				errCh <- err
+				return
+			}
+			if message.Type == protocol.MessageTypeContainerLogsStop {
+				errCh <- nil
+				return
+			}
+		}
+	}()
+
+	return <-errCh
+}
+
 func (h *Handler) connection(nodeID string) *agentConnection {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1051,6 +1475,66 @@ func (c *agentConnection) removeAgentLogsRequest(requestID string) {
 	delete(c.pendingAgentLogs, requestID)
 }
 
+func (c *agentConnection) addDockerExecRequest(requestID string, ch chan protocol.DockerExecResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingDockerExecs[requestID] = ch
+}
+
+func (c *agentConnection) removeDockerExecRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingDockerExecs, requestID)
+}
+
+func (c *agentConnection) addContainerStartRequest(requestID string, ch chan protocol.ContainerStartResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingContainerStarts[requestID] = ch
+}
+
+func (c *agentConnection) removeContainerStartRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingContainerStarts, requestID)
+}
+
+func (c *agentConnection) addContainerStopRequest(requestID string, ch chan protocol.ContainerStopResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingContainerStops[requestID] = ch
+}
+
+func (c *agentConnection) removeContainerStopRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingContainerStops, requestID)
+}
+
+func (c *agentConnection) addContainerRestartRequest(requestID string, ch chan protocol.ContainerRestartResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingContainerRestarts[requestID] = ch
+}
+
+func (c *agentConnection) removeContainerRestartRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingContainerRestarts, requestID)
+}
+
+func (c *agentConnection) addContainerDeleteRequest(requestID string, ch chan protocol.ContainerDeleteResponse) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	c.pendingContainerDeletes[requestID] = ch
+}
+
+func (c *agentConnection) removeContainerDeleteRequest(requestID string) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	delete(c.pendingContainerDeletes, requestID)
+}
+
 func (c *agentConnection) deliverFileList(response protocol.FileListResponse) {
 	c.pendingMu.Lock()
 	ch := c.pendingLists[response.RequestID]
@@ -1132,6 +1616,51 @@ func (c *agentConnection) deliverAgentLogs(response protocol.AgentLogsResponse) 
 	}
 }
 
+func (c *agentConnection) deliverDockerExec(response protocol.DockerExecResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingDockerExecs[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverContainerStart(response protocol.ContainerStartResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingContainerStarts[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverContainerStop(response protocol.ContainerStopResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingContainerStops[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverContainerRestart(response protocol.ContainerRestartResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingContainerRestarts[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
+func (c *agentConnection) deliverContainerDelete(response protocol.ContainerDeleteResponse) {
+	c.pendingMu.Lock()
+	ch := c.pendingContainerDeletes[response.RequestID]
+	c.pendingMu.Unlock()
+	if ch != nil {
+		ch <- response
+	}
+}
+
 func (c *agentConnection) closePendingOperations(reason string) {
 	c.pendingMu.Lock()
 	lists := c.pendingLists
@@ -1143,6 +1672,11 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	agentStatuses := c.pendingAgentStatuses
 	agentRestarts := c.pendingAgentRestarts
 	agentLogs := c.pendingAgentLogs
+	dockerExecs := c.pendingDockerExecs
+	containerStarts := c.pendingContainerStarts
+	containerStops := c.pendingContainerStops
+	containerRestarts := c.pendingContainerRestarts
+	containerDeletes := c.pendingContainerDeletes
 	c.pendingLists = make(map[string]chan protocol.FileListResponse)
 	c.pendingReads = make(map[string]chan protocol.FileReadResponse)
 	c.pendingWrites = make(map[string]chan protocol.FileWriteResponse)
@@ -1152,6 +1686,11 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	c.pendingAgentStatuses = make(map[string]chan protocol.AgentStatusResponse)
 	c.pendingAgentRestarts = make(map[string]chan protocol.AgentRestartResponse)
 	c.pendingAgentLogs = make(map[string]chan protocol.AgentLogsResponse)
+	c.pendingDockerExecs = make(map[string]chan protocol.DockerExecResponse)
+	c.pendingContainerStarts = make(map[string]chan protocol.ContainerStartResponse)
+	c.pendingContainerStops = make(map[string]chan protocol.ContainerStopResponse)
+	c.pendingContainerRestarts = make(map[string]chan protocol.ContainerRestartResponse)
+	c.pendingContainerDeletes = make(map[string]chan protocol.ContainerDeleteResponse)
 	c.pendingMu.Unlock()
 	for requestID, ch := range lists {
 		ch <- protocol.FileListResponse{Type: protocol.MessageTypeFileListResponse, RequestID: requestID, Code: "offline", Error: reason}
@@ -1179,6 +1718,21 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	}
 	for requestID, ch := range agentLogs {
 		ch <- protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, RequestID: requestID, Code: "offline", Error: reason}
+	}
+	for _, ch := range dockerExecs {
+		ch <- protocol.DockerExecResponse{Type: protocol.MessageTypeDockerExecResponse, Accepted: false, ExitCode: 1, Error: reason}
+	}
+	for _, ch := range containerStarts {
+		ch <- protocol.ContainerStartResponse{Type: protocol.MessageTypeContainerStartResponse, Success: false, Error: reason}
+	}
+	for _, ch := range containerStops {
+		ch <- protocol.ContainerStopResponse{Type: protocol.MessageTypeContainerStopResponse, Success: false, Error: reason}
+	}
+	for _, ch := range containerRestarts {
+		ch <- protocol.ContainerRestartResponse{Type: protocol.MessageTypeContainerRestartResponse, Success: false, Error: reason}
+	}
+	for _, ch := range containerDeletes {
+		ch <- protocol.ContainerDeleteResponse{Type: protocol.MessageTypeContainerDeleteResponse, Success: false, Error: reason}
 	}
 }
 

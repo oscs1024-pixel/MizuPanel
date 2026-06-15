@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -35,6 +36,7 @@ type clientAPI interface {
 	ListContainers(ctx context.Context, limit int) ([]containerListItem, error)
 	InspectContainer(ctx context.Context, id string) (containerInspect, error)
 	ContainerStats(ctx context.Context, id string) (containerStats, error)
+	ContainerLogs(ctx context.Context, id string, tail int, follow bool, timestamps bool) (io.ReadCloser, error)
 }
 
 func NewCollector() *Collector {
@@ -117,9 +119,22 @@ func (c *Collector) Collect() protocol.DockerSnapshot {
 	return snapshot
 }
 
+// ContainerLogs gets logs from a container (delegates to the underlying client)
+func (c *Collector) ContainerLogs(ctx context.Context, id string, tail int, follow bool, timestamps bool) (io.ReadCloser, error) {
+	client := c.client
+	if client == nil {
+		if _, err := os.Stat(c.socketPath); err != nil {
+			return nil, fmt.Errorf("Docker socket unavailable: %w", err)
+		}
+		client = newSocketClient(c.socketPath, c.statsTimeout)
+	}
+	return client.ContainerLogs(ctx, id, tail, follow, timestamps)
+}
+
 type socketClient struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient           *http.Client
+	httpClientNoTimeout  *http.Client
+	baseURL              string
 }
 
 func newSocketClient(socketPath string, timeout time.Duration) *socketClient {
@@ -129,7 +144,18 @@ func newSocketClient(socketPath string, timeout time.Duration) *socketClient {
 			return dialer.DialContext(ctx, "unix", socketPath)
 		},
 	}
-	return &socketClient{httpClient: &http.Client{Transport: transport, Timeout: timeout}, baseURL: "http://docker"}
+	// Clone transport for no-timeout client
+	transportNoTimeout := &http.Transport{
+		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return &socketClient{
+		httpClient:          &http.Client{Transport: transport, Timeout: timeout},
+		httpClientNoTimeout: &http.Client{Transport: transportNoTimeout, Timeout: 0}, // No timeout for streaming
+		baseURL:             "http://docker",
+	}
 }
 
 func (c *socketClient) Version(ctx context.Context) (string, error) {
@@ -171,6 +197,42 @@ func (c *socketClient) ContainerStats(ctx context.Context, id string) (container
 		return containerStats{}, err
 	}
 	return response, nil
+}
+
+func (c *socketClient) ContainerLogs(ctx context.Context, id string, tail int, follow bool, timestamps bool) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/containers/%s/logs?stdout=1&stderr=1", id)
+	if tail > 0 {
+		path += fmt.Sprintf("&tail=%d", tail)
+	} else {
+		path += "&tail=all"
+	}
+	if follow {
+		path += "&follow=1"
+	}
+	if timestamps {
+		path += "&timestamps=1"
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Important: Set Connection: close to prevent HTTP/1.1 keep-alive issues with streaming
+	request.Header.Set("Connection", "close")
+
+	// Use no-timeout client for streaming logs
+	response, err := c.httpClientNoTimeout.Do(request)
+	if err != nil {
+		return nil, err
+	}
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		response.Body.Close()
+		return nil, fmt.Errorf("Docker API status %d", response.StatusCode)
+	}
+
+	return response.Body, nil
 }
 
 func (c *socketClient) getJSON(ctx context.Context, path string, target any) error {

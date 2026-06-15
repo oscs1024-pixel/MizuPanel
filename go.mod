@@ -19,6 +19,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
+	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect

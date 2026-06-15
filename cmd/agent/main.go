@@ -9,6 +9,8 @@ import (
 
 	agentconfig "github.com/mizupanel/mizupanel/internal/agent/config"
 	agentdocker "github.com/mizupanel/mizupanel/internal/agent/docker"
+	agentkubectl "github.com/mizupanel/mizupanel/internal/agent/kubectl"
+	agentlogtail "github.com/mizupanel/mizupanel/internal/agent/logtail"
 	agentmanagement "github.com/mizupanel/mizupanel/internal/agent/management"
 	"github.com/mizupanel/mizupanel/internal/agent/metrics"
 	agentprocess "github.com/mizupanel/mizupanel/internal/agent/process"
@@ -77,6 +79,13 @@ func runAgent(ctx context.Context, configPath string) error {
 	client.SetContainerExecHandlerFactory(func(sender agentws.ContainerExecSender) agentws.ContainerExecHandler {
 		return agentdocker.NewExecManager(cfg.EnableDocker && cfg.EnableTerminal, sender)
 	})
+	client.SetLogTailHandler(agentlogtail.NewHandler())
+	client.SetKubectlHandler(agentkubectl.NewHandler())
+	if dockerCollector != nil {
+		client.SetContainerLogsHandler(agentdocker.NewLogsHandler(dockerCollector))
+		client.SetDockerExecHandler(agentdocker.NewExecHandler())
+		client.SetContainerOperationsHandler(agentdocker.NewOperationsHandler(dockerCollector))
+	}
 	if configPath != "" {
 		client.SetNodeTokenHandler(func(token string) error {
 			return agentconfig.SaveToken(configPath, token)

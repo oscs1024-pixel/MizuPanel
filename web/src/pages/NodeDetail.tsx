@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
 import { formatBytes, formatPercent, formatSpeed } from '../lib/format'
 import { MetricsChart } from '../components/MetricsChart'
+import LogViewer from '../components/LogViewer'
+import ContainerLogsModal from '../components/ContainerLogsModal'
+import CreateContainerModal from '../components/CreateContainerModal'
+import { Toast } from '../components/Toast'
 
 type NodeDetailProps = {
   node?: Node
@@ -22,9 +26,10 @@ type NodeDetailProps = {
   onGetAgentStatus?: (nodeID: string) => Promise<AgentStatusResponse>
   onRestartAgent?: (nodeID: string) => Promise<AgentRestartResponse>
   onGetAgentLogs?: (nodeID: string, lines: number) => Promise<AgentLogsResponse>
+  onRefreshDocker?: (nodeID: string) => Promise<void>
 }
 
-type DetailSection = 'overview' | 'processes' | 'containers' | 'files' | 'agent'
+type DetailSection = 'overview' | 'processes' | 'containers' | 'files' | 'logs' | 'agent'
 type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name'
 type DockerFilter = 'all' | 'running' | 'stopped' | 'abnormal'
 type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
@@ -44,12 +49,18 @@ function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProg
   return next
 }
 
-export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onSSHUninstall, onGetAgentStatus, onRestartAgent, onGetAgentLogs }: NodeDetailProps) {
+export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, monitoringLoading = false, range, onRangeChange, onLoadFiles, onReadFile, onWriteFile, onUploadFile, onDeletePath, onRebootNode, onSSHUninstall, onGetAgentStatus, onRestartAgent, onGetAgentLogs, onRefreshDocker }: NodeDetailProps) {
   const [activeSection, setActiveSection] = useState<DetailSection>('overview')
   const [processSort, setProcessSort] = useState<ProcessSort>('cpu')
   const [processSearch, setProcessSearch] = useState('')
   const [dockerFilter, setDockerFilter] = useState<DockerFilter>('all')
   const [dockerSearch, setDockerSearch] = useState('')
+  const [containerLogsModal, setContainerLogsModal] = useState<{ open: boolean; containerId: string; containerName: string }>({
+    open: false,
+    containerId: '',
+    containerName: '',
+  })
+  const [createContainerModal, setCreateContainerModal] = useState(false)
   const [chartRanges, setChartRanges] = useState<Record<string, ChartRange>>({ cpu: '1h', memory: '1h', disk: '1h', network: '1h', diskIO: '1h', load: '1h' })
   const [fileList, setFileList] = useState<FileListResponse>()
   const [fileRead, setFileRead] = useState<FileReadResponse>()
@@ -78,6 +89,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
   const [agentLoading, setAgentLoading] = useState(false)
   const [agentMessage, setAgentMessage] = useState<string>()
   const [agentError, setAgentError] = useState<string>()
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   useEffect(() => {
     agentRequestSeq.current += 1
@@ -477,6 +489,41 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       .catch((err: unknown) => setAgentError(err instanceof Error ? err.message : 'Agent 重启命令发送失败'))
   }
 
+  const handleCreateContainer = async (nodeId: string, command: string) => {
+    try {
+      setOperationMessage(undefined)
+      const response = await fetch(`/api/nodes/${nodeId}/docker/exec`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ command }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || '执行失败')
+      }
+
+      if (!result.accepted) {
+        throw new Error(result.error || '命令被拒绝')
+      }
+
+      if (result.exit_code !== 0) {
+        setOperationMessage(`容器创建失败 (退出码: ${result.exit_code})\n${result.output || result.error || ''}`)
+        return
+      }
+
+      setOperationMessage(`容器创建成功！\n${result.output || ''}`)
+
+      // Docker data refreshes automatically via snapshot polling
+      setCreateContainerModal(false)
+    } catch (error) {
+      setOperationMessage(`容器创建失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   return (
     <section className="min-w-0 space-y-2">
       <div className="rounded-[14px] border border-border bg-card p-3 shadow-sm">
@@ -525,15 +572,6 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
               <PowerIcon />
               重启
             </button>
-            <button
-              type="button"
-              aria-label="卸载 Agent"
-              title="通过 SSH 卸载远端 Agent"
-              onClick={openSSHUninstallDialog}
-              className="min-h-9 cursor-pointer rounded-xl border border-danger/30 bg-danger/10 px-3 text-xs font-black text-danger shadow-sm transition hover:bg-danger/15 focus:outline-none focus:ring-4 focus:ring-danger/20"
-            >
-              卸载 Agent
-            </button>
           </div>
         </div>
       </div>
@@ -546,6 +584,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           ['processes', '进程信息'],
           ['containers', '容器信息'],
           ['files', '文件管理'],
+          ['logs', '日志查看'],
           ['agent', 'Agent 管理']
         ] as const).map(([section, label]) => (
           <button
@@ -665,6 +704,24 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 placeholder="搜索容器名、镜像或 ID"
                 className="min-h-10 rounded-2xl border border-border bg-card px-4 text-sm font-semibold text-foreground outline-none placeholder:text-muted-foreground focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
               />
+              <button
+                type="button"
+                aria-label="刷新容器列表"
+                onClick={() => node && onRefreshDocker?.(node.id)}
+                disabled={!online}
+                className="min-h-10 rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                ↻ 刷新
+              </button>
+              <button
+                type="button"
+                aria-label="创建容器"
+                onClick={() => setCreateContainerModal(true)}
+                disabled={!online}
+                className="min-h-10 rounded-2xl border border-primary/30 bg-primary/10 px-4 text-xs font-black text-primary transition hover:bg-primary/15 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                + 创建容器
+              </button>
             </div>
           </div>
           {!dockerSnapshot?.available ? (
@@ -673,7 +730,23 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
             </div>
           ) : null}
           {dockerSnapshot?.available ? <MonitoringState loading={monitoringLoading} error={dockerSnapshot.error} empty={!monitoringLoading && filteredContainers.length === 0} emptyText="当前筛选条件下没有容器。" /> : null}
-          {dockerSnapshot?.available && filteredContainers.length > 0 ? <DockerTable nodeID={node.id} containers={filteredContainers} /> : null}
+          {dockerSnapshot?.available && filteredContainers.length > 0 ? (
+            <DockerTable
+              nodeID={node.id}
+              containers={filteredContainers}
+              onOpenLogs={(containerId, containerName) => {
+                setContainerLogsModal({ open: true, containerId, containerName })
+              }}
+              onRefresh={async () => {
+                if (onRefreshDocker) {
+                  await onRefreshDocker(node.id)
+                }
+              }}
+              onShowToast={(message, type) => {
+                setToast({ message, type })
+              }}
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -740,6 +813,21 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         </section>
       ) : null}
 
+      {activeSection === 'logs' ? (
+        <section role="region" aria-label="日志查看" className="h-[600px] overflow-hidden rounded-[28px] border border-border bg-card shadow-sm">
+          <div className="flex h-full flex-col p-4">
+            <div className="mb-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-primary">Log Viewer</p>
+              <h3 className="mt-1 text-lg font-black text-foreground">日志查看</h3>
+              <p className="mt-1 text-xs font-bold text-muted-foreground">实时查看节点日志文件内容</p>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {node ? <LogViewer nodeId={node.id} /> : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {activeSection === 'agent' ? (
         <section role="region" aria-label="Agent 管理" className="overflow-hidden rounded-[28px] border border-border bg-card shadow-sm">
           <div className="flex flex-col gap-3 border-b border-border bg-surface p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -752,6 +840,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
               <button type="button" onClick={loadAgentManagement} disabled={!online || agentLoading} className="min-h-10 rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60">刷新状态</button>
               <button type="button" onClick={refreshAgentLogs} disabled={!online || agentLoading} className="min-h-10 rounded-2xl border border-success/30 bg-success/10 px-4 text-xs font-black text-success transition hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-60">刷新日志</button>
               <button type="button" aria-label="重启 Agent" onClick={restartAgentService} disabled={!online} className="min-h-10 rounded-2xl border border-warning/30 bg-warning/10 px-4 text-xs font-black text-warning transition hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60">重启 Agent</button>
+              <button type="button" aria-label="卸载 Agent" title="通过 SSH 卸载远端 Agent" onClick={openSSHUninstallDialog} className="min-h-10 rounded-2xl border border-danger/30 bg-danger/10 px-4 text-xs font-black text-danger transition hover:bg-danger/15 focus:outline-none focus:ring-4 focus:ring-danger/20">卸载 Agent</button>
             </div>
           </div>
           {agentMessage ? <p className="m-4 rounded-2xl border border-success/30 bg-success/10 px-4 py-3 text-sm font-black text-success">{agentMessage}</p> : null}
@@ -782,13 +871,16 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
 
       {sshUninstallOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
-          <section role="dialog" aria-modal="true" aria-label="卸载 Agent" className="w-full max-w-2xl overflow-hidden rounded-[30px] border border-danger/30 bg-card shadow-2xl outline-none">
-            <div className="border-b border-danger/30 bg-danger/10 px-5 py-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-danger">Root-only SSH</p>
-              <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-foreground">卸载 Agent</h3>
-              <p className="mt-2 text-sm font-bold leading-6 text-danger">通过 SSH 登录 root，停止并删除目标机器上的 MizuPanel Agent。</p>
+          <section role="dialog" aria-modal="true" aria-label="卸载 Agent" className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[30px] border border-danger/30 bg-card shadow-2xl outline-none">
+            <div className="flex items-start justify-between gap-3 border-b border-danger/30 bg-danger/10 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black uppercase tracking-[0.24em] text-danger">Root-only SSH</p>
+                <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-foreground">卸载 Agent</h3>
+                <p className="mt-2 text-sm font-bold leading-6 text-danger">通过 SSH 登录 root，停止并删除目标机器上的 MizuPanel Agent。</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={closeSSHUninstallDialog} className="shrink-0 rounded-2xl border border-danger/30 bg-danger/5 px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/10 focus:outline-none focus:ring-4 focus:ring-danger/20">✕</button>
             </div>
-            <div className="grid gap-3 px-5 py-4 sm:grid-cols-2">
+            <div className="grid gap-3 overflow-y-auto px-5 py-4 sm:grid-cols-2">
               <label className="text-xs font-black text-foreground">SSH Host<input aria-label="SSH Host" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-red-400 focus:ring-4 focus:ring-danger/20" /></label>
               <label className="text-xs font-black text-foreground">SSH 端口<input aria-label="SSH 端口" type="number" value={sshPort} onChange={(event) => setSSHPort(Number(event.target.value) || 22)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-red-400 focus:ring-4 focus:ring-danger/20" /></label>
               <label className="text-xs font-black text-foreground">SSH 用户<input aria-label="SSH 用户" value="root" readOnly className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-muted px-3 text-sm font-black text-muted-foreground" /></label>
@@ -826,10 +918,10 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 </div>
               ) : null}
             </div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-surface px-5 py-4">
-              {sshUninstallEvents.some((event) => event.done) ? (
+            <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-surface px-5 py-4">
+              {sshUninstallMessage || (sshUninstallEvents.length > 0 && sshUninstallEvents.every((e) => e.status === 'success' || e.status === 'failed')) ? (
                 <button type="button" onClick={closeSSHUninstallDialog} className="min-h-11 cursor-pointer rounded-2xl bg-card px-4 text-sm font-black text-foreground shadow-sm transition hover:bg-muted focus:outline-none focus:ring-4 focus:ring-primary/20">
-                  {sshUninstallEvents.some((event) => event.done && event.status === 'success') ? '完成并关闭' : '关闭'}
+                  关闭
                 </button>
               ) : (
                 <>
@@ -861,6 +953,33 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           </div>
         </div>
       ) : null}
+
+      {/* Container Logs Modal */}
+      {node && (
+        <ContainerLogsModal
+          nodeId={node.id}
+          containerId={containerLogsModal.containerId}
+          containerName={containerLogsModal.containerName}
+          open={containerLogsModal.open}
+          onClose={() => setContainerLogsModal({ open: false, containerId: '', containerName: '' })}
+        />
+      )}
+
+      <CreateContainerModal
+        open={createContainerModal}
+        nodeId={node.id}
+        onClose={() => setCreateContainerModal(false)}
+        onCreate={handleCreateContainer}
+      />
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </section>
   )
 }
@@ -972,6 +1091,17 @@ function TerminalIcon() {
       <path d="M4.75 5.75h14.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H4.75a1.5 1.5 0 0 1-1.5-1.5v-9.5a1.5 1.5 0 0 1 1.5-1.5Z" />
       <path d="m7.5 9 2.5 2.5L7.5 14" />
       <path d="M12.5 14h4" />
+    </svg>
+  )
+}
+
+function LogIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.75 5.75h14.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H4.75a1.5 1.5 0 0 1-1.5-1.5v-9.5a1.5 1.5 0 0 1 1.5-1.5Z" />
+      <path d="M7.5 8.5h9" />
+      <path d="M7.5 12h9" />
+      <path d="M7.5 15.5h5" />
     </svg>
   )
 }
@@ -1093,19 +1223,19 @@ function ProcessTable({ processes }: { processes: ProcessInfo[] }) {
   )
 }
 
-function DockerTable({ nodeID, containers }: { nodeID: string, containers: DockerContainer[] }) {
+function DockerTable({ nodeID, containers, onOpenLogs, onRefresh, onShowToast }: { nodeID: string; containers: DockerContainer[]; onOpenLogs: (containerId: string, containerName: string) => void; onRefresh: () => void; onShowToast: (message: string, type: 'success' | 'error') => void }) {
   return (
     <div data-testid="docker-table-scroll" className="min-w-0 max-w-full overflow-x-auto">
       <table className="w-full min-w-0 table-fixed divide-y divide-slate-200 text-left text-sm">
         <thead className="bg-card text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground">
           <tr>
-            <th className="w-[22%] px-4 py-3">容器</th>
-            <th className="w-[22%] px-4 py-3">镜像</th>
-            <th className="w-[16%] px-4 py-3">状态</th>
-            <th className="w-[9%] px-4 py-3">CPU</th>
-            <th className="w-[16%] px-4 py-3">内存</th>
-            <th className="hidden w-[15%] px-4 py-3 2xl:table-cell">网络</th>
-            <th className="hidden w-[14%] px-4 py-3 2xl:table-cell">创建时间</th>
+            <th className="w-[20%] px-4 py-3">容器</th>
+            <th className="w-[20%] px-4 py-3">镜像</th>
+            <th className="w-[14%] px-4 py-3">状态</th>
+            <th className="w-[8%] px-4 py-3">CPU</th>
+            <th className="w-[14%] px-4 py-3">内存</th>
+            <th className="hidden w-[14%] px-4 py-3 2xl:table-cell">网络</th>
+            <th className="hidden w-[12%] px-4 py-3 2xl:table-cell">创建时间</th>
             <th className="w-[10%] px-4 py-3">操作</th>
           </tr>
         </thead>
@@ -1117,22 +1247,25 @@ function DockerTable({ nodeID, containers }: { nodeID: string, containers: Docke
               <tr key={container.id} className="align-top hover:bg-surface">
                 <td className="min-w-0 px-4 py-3"><p className="truncate font-black text-foreground" title={container.name || container.id}>{container.name || container.id}</p><p className="break-all font-mono text-xs font-bold text-muted-foreground" title={container.full_id || container.id}>{container.id}</p></td>
                 <td className="min-w-0 px-4 py-3 font-semibold text-muted-foreground"><p className="line-clamp-2 break-all" title={container.image || '—'}>{container.image || '—'}</p></td>
-                <td className="min-w-0 px-4 py-3"><StatusPill value={container.state || 'unknown'} detail={container.status} /></td>
+                <td className="min-w-0 px-4 py-3">
+                  <div className="truncate">
+                    <StatusPill value={container.state || 'unknown'} detail={container.status} />
+                  </div>
+                </td>
                 <td className="px-4 py-3 font-black text-cyan-600">{formatPercent(container.cpu_usage ?? 0)}</td>
                 <td className="min-w-0 px-4 py-3 font-semibold text-foreground"><p className="line-clamp-2 break-words" title={`${formatBytes(container.memory_usage ?? 0)}${container.memory_limit ? ` / ${formatBytes(container.memory_limit)} (${formatPercent(container.memory_percent ?? 0)})` : ''}`}>{formatBytes(container.memory_usage ?? 0)}{container.memory_limit ? <span className="text-muted-foreground"> / {formatBytes(container.memory_limit)} ({formatPercent(container.memory_percent ?? 0)})</span> : null}</p></td>
                 <td className="hidden min-w-0 px-4 py-3 font-semibold text-muted-foreground 2xl:table-cell"><p className="truncate">↓ {formatBytes(container.network_rx ?? 0)} · ↑ {formatBytes(container.network_tx ?? 0)}</p></td>
                 <td className="hidden px-4 py-3 font-semibold text-muted-foreground 2xl:table-cell">{formatUnixTime(container.created_at)}</td>
                 <td className="px-4 py-3">
-                  <button
-                    type="button"
-                    aria-label={running ? `进入容器 ${container.name || container.id}` : `容器 ${container.name || container.id} 未运行，不能 exec`}
-                    title={running ? '进入容器 exec' : '容器未运行，不能 exec'}
-                    disabled={!running}
-                    onClick={() => openContainerExecPage(nodeID, execID)}
-                    className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-2xl border border-border bg-success text-white transition hover:-translate-y-0.5 hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:hover:translate-y-0"
-                  >
-                    <TerminalIcon />
-                  </button>
+                  <div className="flex items-center justify-center">
+                    <ContainerActionsDropdown
+                      container={container}
+                      nodeID={nodeID}
+                      onRefresh={onRefresh}
+                      onShowToast={onShowToast}
+                      onOpenLogs={onOpenLogs}
+                    />
+                  </div>
                 </td>
               </tr>
             )
@@ -1153,10 +1286,152 @@ function StatusPill({ value, detail }: { value: string, detail?: string }) {
         ? 'bg-warning/10 text-warning ring-warning/20'
         : 'bg-info/10 text-info ring-info/20'
   return (
-    <span className={`inline-flex max-w-[220px] flex-col rounded-2xl px-3 py-1 text-xs font-black ring-1 ${className}`}>
+    <span className={`inline-flex w-full flex-col rounded-2xl px-3 py-1 text-xs font-black ring-1 ${className}`}>
       <span>{value || 'unknown'}</span>
       {detail ? <span className="mt-0.5 truncate font-semibold opacity-75">{detail}</span> : null}
     </span>
+  )
+}
+
+function ContainerActionsDropdown({ container, nodeID, onRefresh, onShowToast, onOpenLogs }: { container: DockerContainer; nodeID: string; onRefresh: () => void; onShowToast: (message: string, type: 'success' | 'error') => void; onOpenLogs: (containerId: string, containerName: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const running = container.state.toLowerCase() === 'running'
+  const execID = container.full_id || container.id
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as HTMLElement)) {
+        setOpen(false)
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [open])
+
+  const handleAction = async (action: 'start' | 'stop' | 'restart' | 'delete' | 'exec' | 'logs') => {
+    setOpen(false)
+
+    // Handle non-API actions
+    if (action === 'exec') {
+      openContainerExecPage(nodeID, execID)
+      return
+    }
+
+    if (action === 'logs') {
+      onOpenLogs(execID, container.name || container.id)
+      return
+    }
+
+    setLoading(true)
+
+    const actionText = action === 'start' ? '启动' : action === 'stop' ? '停止' : action === 'restart' ? '重启' : '删除'
+
+    try {
+      const containerID = container.full_id || container.id
+      let response: Response
+
+      if (action === 'delete') {
+        response = await fetch(`/api/nodes/${nodeID}/containers/${containerID}?force=true`, {
+          method: 'DELETE',
+        })
+      } else {
+        response = await fetch(`/api/nodes/${nodeID}/containers/${containerID}/${action}`, {
+          method: 'POST',
+        })
+      }
+
+      const result = await response.json()
+
+      if (result.success) {
+        onShowToast(`容器${actionText}成功`, 'success')
+        // Refresh docker snapshot
+        onRefresh()
+      } else {
+        onShowToast(`容器${actionText}失败: ${result.error || '未知错误'}`, 'error')
+      }
+    } catch (err) {
+      onShowToast(`容器${actionText}失败: ${err instanceof Error ? err.message : '网络错误'}`, 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        aria-label="容器操作"
+        title="容器操作"
+        onClick={() => setOpen(!open)}
+        disabled={loading}
+        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-2xl border border-border bg-card text-foreground transition hover:-translate-y-0.5 hover:bg-surface focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="8" cy="3" r="1" fill="currentColor" />
+          <circle cx="8" cy="8" r="1" fill="currentColor" />
+          <circle cx="8" cy="13" r="1" fill="currentColor" />
+        </svg>
+      </button>
+      {open && !loading && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-36 rounded-xl border border-border bg-card py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => handleAction('exec')}
+            disabled={!running}
+            className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface disabled:cursor-not-allowed disabled:text-muted-foreground"
+          >
+            进入容器
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAction('logs')}
+            className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
+          >
+            查看日志
+          </button>
+          <div className="my-1 border-t border-border" />
+          {!running && (
+            <button
+              type="button"
+              onClick={() => handleAction('start')}
+              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
+            >
+              启动
+            </button>
+          )}
+          {running && (
+            <button
+              type="button"
+              onClick={() => handleAction('stop')}
+              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
+            >
+              停止
+            </button>
+          )}
+          {running && (
+            <button
+              type="button"
+              onClick={() => handleAction('restart')}
+              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
+            >
+              重启
+            </button>
+          )}
+          <div className="my-1 border-t border-border" />
+          <button
+            type="button"
+            onClick={() => handleAction('delete')}
+            className="w-full px-4 py-2 text-left text-sm font-semibold text-danger transition hover:bg-surface"
+          >
+            删除
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 

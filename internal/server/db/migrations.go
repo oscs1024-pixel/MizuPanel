@@ -131,6 +131,20 @@ func sqliteMigrationStatements() []string {
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_node ON alert_history(node_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_history_resolved ON alert_history(resolved_at);`,
+		`CREATE TABLE IF NOT EXISTS k8s_clusters (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					node_id TEXT NOT NULL,
+					kubeconfig_path TEXT NOT NULL,
+					context TEXT,
+					status TEXT NOT NULL DEFAULT 'online',
+					last_seen_at DATETIME,
+					created_at DATETIME NOT NULL,
+					updated_at DATETIME NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE INDEX IF NOT EXISTS idx_k8s_clusters_node ON k8s_clusters(node_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_k8s_clusters_status ON k8s_clusters(status);`,
 	}
 }
 
@@ -246,6 +260,20 @@ func mysqlMigrationStatements() []string {
 		`CREATE INDEX idx_alert_history_node ON alert_history(node_id);`,
 		`CREATE INDEX idx_alert_history_triggered ON alert_history(triggered_at);`,
 		`CREATE INDEX idx_alert_history_resolved ON alert_history(resolved_at);`,
+		`CREATE TABLE IF NOT EXISTS k8s_clusters (
+					id VARCHAR(191) PRIMARY KEY,
+					name VARCHAR(255) NOT NULL,
+					node_id VARCHAR(191) NOT NULL,
+					kubeconfig_path VARCHAR(512) NOT NULL,
+					context VARCHAR(255),
+					status VARCHAR(32) NOT NULL DEFAULT 'online',
+					last_seen_at VARCHAR(64),
+					created_at VARCHAR(64) NOT NULL,
+					updated_at VARCHAR(64) NOT NULL,
+					FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+				);`,
+		`CREATE INDEX idx_k8s_clusters_node ON k8s_clusters(node_id);`,
+		`CREATE INDEX idx_k8s_clusters_status ON k8s_clusters(status);`,
 	}
 }
 

@@ -1,6 +1,7 @@
 .claude
 .codex
 AGENTS.md
+CLAUDE.md
 
 # Local config
 server.yaml
@@ -32,3 +33,4 @@ web/dist/
 #docks
 docs
 skills-lock.json
+.superpowers

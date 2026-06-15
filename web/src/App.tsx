@@ -272,6 +272,15 @@ export default function App() {
     }
   }, [selectedNodeID, range])
 
+  const refreshDockerSnapshot = async (nodeID: string) => {
+    try {
+      const docker = await getNodeDocker(nodeID)
+      setDockerSnapshot(docker)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Docker 快照刷新失败')
+    }
+  }
+
   useEffect(() => {
     if (!selectedNodeID) {
       setProcessSnapshot(undefined)
@@ -649,25 +658,24 @@ export default function App() {
         aria-live="polite"
         tabIndex={-1}
         onKeyDown={handleInstallCommandKeyDown}
-        className="max-h-[calc(100vh-3rem)] w-full max-w-4xl overflow-x-hidden overflow-y-auto rounded-[28px] border border-border bg-card text-left shadow-2xl outline-none"
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-border bg-card text-left shadow-2xl outline-none"
       >
-      <div className="flex flex-col gap-3 border-b border-border bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-black text-foreground">添加主机</p>
-              <p className="mt-1 text-xs font-semibold text-muted-foreground">通过 SSH 自动安装，或复制手动命令到目标机器执行；SSH 凭据只本次使用，不会保存。</p>
-            </div>
-            <button
-              type="button"
-              aria-label="关闭添加主机"
-              onClick={closeInstallCommand}
-              className="min-h-10 shrink-0 cursor-pointer rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:border-success/50 hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
-            >
-              关闭
-            </button>
-          </div>
-          <div className="mt-3 flex w-fit rounded-2xl border border-border bg-card p-1 shadow-inner" aria-label="选择添加主机方式">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-foreground">添加主机</p>
+          <p className="mt-1 text-xs font-semibold text-muted-foreground">通过 SSH 自动安装，或复制手动命令到目标机器执行；SSH 凭据只本次使用，不会保存。</p>
+        </div>
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={closeInstallCommand}
+          className="shrink-0 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-black text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="overflow-y-auto px-4 py-3">
+          <div className="flex w-fit rounded-2xl border border-border bg-card p-1 shadow-inner" aria-label="选择添加主机方式">
             {([
               ['ssh', 'SSH 自动安装'],
               ['manual', '手动命令安装']
@@ -758,9 +766,9 @@ export default function App() {
                       </li>
                     ))}
                   </ol>
-                  {sshInstallEvents.some((event) => event.done) ? (
+                  {sshInstallEvents.length > 0 && sshInstallEvents.every((e) => e.status === 'success' || e.status === 'failed') ? (
                     <button type="button" onClick={closeInstallCommand} className="mt-3 min-h-10 cursor-pointer rounded-2xl bg-success px-4 text-xs font-black text-primary-foreground shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20">
-                      {sshInstallEvents.some((event) => event.done && event.status === 'success') ? '完成并关闭' : '关闭'}
+                      关闭
                     </button>
                   ) : null}
                 </div>
@@ -868,7 +876,6 @@ export default function App() {
               </div>
             </>
           ) : null}
-        </div>
       </div>
       </section>
     </div>
@@ -950,7 +957,7 @@ export default function App() {
               <span>当前显示 {filteredNodes.length} 台</span>
             </div>
           </section>
-          <NodeDetail node={visibleSelectedNode} metrics={selectedMetrics} processSnapshot={selectedProcessSnapshot} dockerSnapshot={selectedDockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onSSHUninstall={startSSHUninstall} onGetAgentStatus={getAgentStatus} onRestartAgent={restartAgent} onGetAgentLogs={getAgentLogs} />
+          <NodeDetail node={visibleSelectedNode} metrics={selectedMetrics} processSnapshot={selectedProcessSnapshot} dockerSnapshot={selectedDockerSnapshot} monitoringLoading={monitoringLoading} range={range} onRangeChange={setRange} onLoadFiles={getNodeFiles} onReadFile={readNodeFile} onWriteFile={writeNodeFile} onUploadFile={uploadNodeFile} onDeletePath={deleteNodePath} onRebootNode={rebootNode} onSSHUninstall={startSSHUninstall} onGetAgentStatus={getAgentStatus} onRestartAgent={restartAgent} onGetAgentLogs={getAgentLogs} onRefreshDocker={refreshDockerSnapshot} />
         </div>
       )}
     </div>

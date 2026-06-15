@@ -173,6 +173,49 @@ export type DockerSnapshotResponse = {
   containers: DockerContainer[]
 }
 
+export type ContainerLogsRequest = {
+  type: 'container_logs_request'
+  session_id: string
+  node_id: string
+  container_id: string
+  lines: number
+  follow: boolean
+  timestamps: boolean
+}
+
+export type ContainerLogsResponse = {
+  type: 'container_logs_response'
+  session_id: string
+  container_id: string
+  started: boolean
+  error?: string
+}
+
+export type ContainerLogsData = {
+  type: 'container_logs_data'
+  session_id: string
+  data: string
+  stream: 'stdout' | 'stderr'
+}
+
+export type ContainerLogsStop = {
+  type: 'container_logs_stop'
+  session_id: string
+  node_id?: string
+}
+
+export type ContainerLogsExit = {
+  type: 'container_logs_exit'
+  session_id: string
+  error?: string
+}
+
+export type ContainerLogsError = {
+  type: 'container_logs_error'
+  session_id: string
+  error: string
+}
+
 export type FileEntry = {
   name: string
   path: string
@@ -277,7 +320,7 @@ export type AlertRule = {
 }
 
 export type NotificationChannel = {
-  type: 'webhook' | 'dingtalk' | 'feishu' | 'wecom' | 'email'
+  type: 'webhook' | 'dingtalk' | 'feishu' | 'email'
   webhook_url?: string
   secret?: string
   headers?: Record<string, string>

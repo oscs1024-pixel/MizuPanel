@@ -21,6 +21,11 @@ type Client struct {
 	agentManagementHandler      AgentManagementHandler
 	terminalHandlerFactory      TerminalHandlerFactory
 	containerExecHandlerFactory ContainerExecHandlerFactory
+	logTailHandler              LogTailHandler
+	containerLogsHandler        ContainerLogsHandler
+	dockerExecHandler           DockerExecHandler
+	containerOpsHandler         ContainerOperationsHandler
+	kubectlHandler              KubectlHandler
 }
 
 type TerminalSender interface {
@@ -29,6 +34,14 @@ type TerminalSender interface {
 
 type ContainerExecSender interface {
 	SendContainerExec(protocol.ContainerExecMessage) error
+}
+
+type LogTailSender interface {
+	SendLogTail(interface{}) error
+}
+
+type ContainerLogsSender interface {
+	SendContainerLogs(interface{}) error
 }
 
 type AgentManagementHandler interface {
@@ -45,6 +58,33 @@ type TerminalHandler interface {
 type ContainerExecHandler interface {
 	Handle(protocol.ContainerExecMessage)
 	CloseAll()
+}
+
+type LogTailHandler interface {
+	Handle(context.Context, protocol.LogTailRequest, LogTailSender) error
+	Stop(sessionID string)
+	CloseAll()
+}
+
+type ContainerLogsHandler interface {
+	Handle(context.Context, protocol.ContainerLogsRequest, ContainerLogsSender) error
+	Stop(sessionID string)
+	CloseAll()
+}
+
+type DockerExecHandler interface {
+	HandleDockerExec(context.Context, protocol.DockerExecRequest) protocol.DockerExecResponse
+}
+
+type ContainerOperationsHandler interface {
+	HandleContainerStart(context.Context, protocol.ContainerStartRequest) protocol.ContainerStartResponse
+	HandleContainerStop(context.Context, protocol.ContainerStopRequest) protocol.ContainerStopResponse
+	HandleContainerRestart(context.Context, protocol.ContainerRestartRequest) protocol.ContainerRestartResponse
+	HandleContainerDelete(context.Context, protocol.ContainerDeleteRequest) protocol.ContainerDeleteResponse
+}
+
+type KubectlHandler interface {
+	Handle(context.Context, string, json.RawMessage, func(interface{}) error) error
 }
 
 type TerminalHandlerFactory func(TerminalSender) TerminalHandler
@@ -76,6 +116,26 @@ func (c *Client) SetTerminalHandlerFactory(factory TerminalHandlerFactory) {
 
 func (c *Client) SetContainerExecHandlerFactory(factory ContainerExecHandlerFactory) {
 	c.containerExecHandlerFactory = factory
+}
+
+func (c *Client) SetLogTailHandler(handler LogTailHandler) {
+	c.logTailHandler = handler
+}
+
+func (c *Client) SetContainerLogsHandler(handler ContainerLogsHandler) {
+	c.containerLogsHandler = handler
+}
+
+func (c *Client) SetDockerExecHandler(handler DockerExecHandler) {
+	c.dockerExecHandler = handler
+}
+
+func (c *Client) SetContainerOperationsHandler(handler ContainerOperationsHandler) {
+	c.containerOpsHandler = handler
+}
+
+func (c *Client) SetKubectlHandler(handler KubectlHandler) {
+	c.kubectlHandler = handler
 }
 
 func (c *Client) SendHelloAndMetric(ctx context.Context, hello protocol.HelloMessage, metric protocol.MetricsMessage) (protocol.HelloAckMessage, error) {
@@ -111,9 +171,12 @@ func (c *Client) Run(ctx context.Context, hello protocol.HelloMessage, interval 
 		containerExecHandler = c.containerExecHandlerFactory(writer)
 		defer containerExecHandler.CloseAll()
 	}
+	if c.logTailHandler != nil {
+		defer c.logTailHandler.CloseAll()
+	}
 
 	errCh := make(chan error, 1)
-	go c.readLoop(writer, terminalHandler, containerExecHandler, errCh)
+	go c.readLoop(ctx, writer, terminalHandler, containerExecHandler, errCh)
 	if err := c.writeCollectedMetric(writer, ack.NodeID, collect); err != nil {
 		return err
 	}
@@ -177,7 +240,7 @@ func (c *Client) connect(ctx context.Context, hello protocol.HelloMessage) (*web
 	return conn, ack, nil
 }
 
-func (c *Client) readLoop(writer *connectionWriter, terminalHandler TerminalHandler, containerExecHandler ContainerExecHandler, errCh chan<- error) {
+func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, terminalHandler TerminalHandler, containerExecHandler ContainerExecHandler, errCh chan<- error) {
 	for {
 		var raw json.RawMessage
 		if err := writer.conn.ReadJSON(&raw); err != nil {
@@ -301,6 +364,116 @@ func (c *Client) readLoop(writer *connectionWriter, terminalHandler TerminalHand
 				continue
 			}
 			containerExecHandler.Handle(message)
+		case protocol.MessageTypeLogTailRequest:
+			if c.logTailHandler == nil {
+				continue
+			}
+			var request protocol.LogTailRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			go c.logTailHandler.Handle(ctx, request, writer)
+		case protocol.MessageTypeLogTailStop:
+			if c.logTailHandler == nil {
+				continue
+			}
+			var message protocol.LogTailStop
+			if err := json.Unmarshal(raw, &message); err != nil {
+				continue
+			}
+			c.logTailHandler.Stop(message.SessionID)
+		case protocol.MessageTypeContainerLogsRequest:
+			if c.containerLogsHandler == nil {
+				continue
+			}
+			var request protocol.ContainerLogsRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			go c.containerLogsHandler.Handle(ctx, request, writer)
+		case protocol.MessageTypeContainerLogsStop:
+			if c.containerLogsHandler == nil {
+				continue
+			}
+			var message protocol.ContainerLogsStop
+			if err := json.Unmarshal(raw, &message); err != nil {
+				continue
+			}
+			c.containerLogsHandler.Stop(message.SessionID)
+		case protocol.MessageTypeDockerExecRequest:
+			if c.dockerExecHandler == nil {
+				continue
+			}
+			var request protocol.DockerExecRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.dockerExecHandler.HandleDockerExec(ctx, request)
+			response.RequestID = request.RequestID
+			if err := writer.writeJSON(response); err != nil {
+				continue
+			}
+		case protocol.MessageTypeContainerStartRequest:
+			if c.containerOpsHandler == nil {
+				continue
+			}
+			var request protocol.ContainerStartRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.containerOpsHandler.HandleContainerStart(ctx, request)
+			response.RequestID = request.RequestID
+			if err := writer.writeJSON(response); err != nil {
+				continue
+			}
+		case protocol.MessageTypeContainerStopRequest:
+			if c.containerOpsHandler == nil {
+				continue
+			}
+			var request protocol.ContainerStopRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.containerOpsHandler.HandleContainerStop(ctx, request)
+			response.RequestID = request.RequestID
+			if err := writer.writeJSON(response); err != nil {
+				continue
+			}
+		case protocol.MessageTypeContainerRestartRequest:
+			if c.containerOpsHandler == nil {
+				continue
+			}
+			var request protocol.ContainerRestartRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.containerOpsHandler.HandleContainerRestart(ctx, request)
+			response.RequestID = request.RequestID
+			if err := writer.writeJSON(response); err != nil {
+				continue
+			}
+		case protocol.MessageTypeContainerDeleteRequest:
+			if c.containerOpsHandler == nil {
+				continue
+			}
+			var request protocol.ContainerDeleteRequest
+			if err := json.Unmarshal(raw, &request); err != nil {
+				continue
+			}
+			response := c.containerOpsHandler.HandleContainerDelete(ctx, request)
+			response.RequestID = request.RequestID
+			if err := writer.writeJSON(response); err != nil {
+				continue
+			}
+		case protocol.MessageTypeK8sClusterConnect,
+			protocol.MessageTypeK8sGetPods,
+			protocol.MessageTypeK8sGetPodLogs:
+			if c.kubectlHandler == nil {
+				continue
+			}
+			if err := c.kubectlHandler.Handle(ctx, header.Type, raw, writer.writeJSON); err != nil {
+				continue
+			}
 		}
 	}
 }
@@ -320,6 +493,14 @@ func (w *connectionWriter) SendTerminal(message protocol.TerminalMessage) error 
 }
 
 func (w *connectionWriter) SendContainerExec(message protocol.ContainerExecMessage) error {
+	return w.writeJSON(message)
+}
+
+func (w *connectionWriter) SendLogTail(message interface{}) error {
+	return w.writeJSON(message)
+}
+
+func (w *connectionWriter) SendContainerLogs(message interface{}) error {
 	return w.writeJSON(message)
 }
 

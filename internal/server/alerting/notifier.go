@@ -57,8 +57,6 @@ func (n *Notifier) Send(ctx context.Context, channel NotificationChannel, payloa
 		return n.sendDingTalk(ctx, channel, payload)
 	case "feishu":
 		return n.sendFeishu(ctx, channel, payload)
-	case "wecom":
-		return n.sendWeCom(ctx, channel, payload)
 	default:
 		return fmt.Errorf("unsupported notification channel type: %s", channel.Type)
 	}
@@ -285,76 +283,4 @@ func (n *Notifier) feishuSign(timestamp int64, secret string) string {
 	h := hmac.New(sha256.New, []byte(stringToSign))
 	h.Write([]byte(stringToSign))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
-}
-
-// sendWeCom sends a notification to WeCom (企业微信) robot
-func (n *Notifier) sendWeCom(ctx context.Context, channel NotificationChannel, payload AlertPayload) error {
-	// Build markdown message
-	statusEmoji := "🔴"
-	statusText := "告警触发"
-	if payload.Status == "resolved" {
-		statusEmoji = "✅"
-		statusText = "告警解除"
-	}
-
-	markdown := fmt.Sprintf(`### %s %s - %s
-
-**节点**: %s (%s)
-**指标**: %s
-**当前值**: %.2f
-**阈值**: %s %.2f
-**触发时间**: %s`,
-		statusEmoji,
-		statusText,
-		payload.RuleName,
-		payload.NodeName,
-		payload.NodeID,
-		payload.MetricField,
-		payload.MetricValue,
-		payload.Operator,
-		payload.Threshold,
-		payload.TriggeredAt.Format("2006-01-02 15:04:05"),
-	)
-
-	wecomPayload := map[string]interface{}{
-		"msgtype": "markdown",
-		"markdown": map[string]string{
-			"content": markdown,
-		},
-	}
-
-	body, err := json.Marshal(wecomPayload)
-	if err != nil {
-		return fmt.Errorf("marshal wecom payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", channel.WebhookURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("wecom returned status %d", resp.StatusCode)
-	}
-
-	// Check response body for WeCom-specific errors
-	var result struct {
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-		if result.ErrCode != 0 {
-			return fmt.Errorf("wecom error: %s (code %d)", result.ErrMsg, result.ErrCode)
-		}
-	}
-
-	return nil
 }

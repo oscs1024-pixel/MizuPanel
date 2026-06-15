@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +26,8 @@ type TerminalHub interface {
 	NodeTerminalEnabled(nodeID string) bool
 	AttachTerminal(ctx context.Context, nodeID string, browser *websocket.Conn) error
 	AttachContainerExec(ctx context.Context, nodeID string, containerID string, browser *websocket.Conn) error
+	AttachLogTail(ctx context.Context, nodeID string, browser *websocket.Conn) error
+	AttachContainerLogs(ctx context.Context, nodeID string, containerID string, browser *websocket.Conn) error
 }
 
 type NodeOperations interface {
@@ -37,6 +40,11 @@ type NodeOperations interface {
 	AgentStatus(ctx context.Context, nodeID string) (protocol.AgentStatusResponse, error)
 	AgentRestart(ctx context.Context, nodeID string) (protocol.AgentRestartResponse, error)
 	AgentLogs(ctx context.Context, nodeID string, lines int) (protocol.AgentLogsResponse, error)
+	DockerExec(ctx context.Context, nodeID string, command string) (protocol.DockerExecResponse, error)
+	ContainerStart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStartResponse, error)
+	ContainerStop(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStopResponse, error)
+	ContainerRestart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerRestartResponse, error)
+	ContainerDelete(ctx context.Context, nodeID string, containerID string, force bool) (protocol.ContainerDeleteResponse, error)
 }
 
 type NodeDisconnecter interface {
@@ -400,6 +408,10 @@ func (s *Server) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleNodeProcesses(w, r, parts[0])
 		return
 	}
+	if len(parts) == 3 && parts[1] == "docker" && parts[2] == "exec" {
+		s.handleNodeDockerExec(w, r, parts[0])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "docker" {
 		s.handleNodeDocker(w, r, parts[0])
 		return
@@ -446,6 +458,30 @@ func (s *Server) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 5 && parts[1] == "containers" && parts[3] == "exec" && parts[4] == "ws" {
 		s.handleContainerExec(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 5 && parts[1] == "containers" && parts[3] == "logs" && parts[4] == "stream" {
+		s.handleContainerLogs(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[1] == "containers" && parts[3] == "start" {
+		s.handleContainerStart(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[1] == "containers" && parts[3] == "stop" {
+		s.handleContainerStop(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[1] == "containers" && parts[3] == "restart" {
+		s.handleContainerRestart(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "containers" {
+		s.handleContainerDelete(w, r, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "logs" && parts[2] == "tail" {
+		s.handleNodeLogTail(w, r, parts[0])
 		return
 	}
 	if len(parts) == 1 && parts[0] != "" {
@@ -729,6 +765,42 @@ func (s *Server) handleNodeReboot(w http.ResponseWriter, r *http.Request, nodeID
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) handleNodeDockerExec(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorizeBrowserNodeOperation(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations are not available")
+		return
+	}
+	var request struct {
+		Command string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if strings.TrimSpace(request.Command) == "" {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+	response, err := s.agentOps.DockerExec(r.Context(), nodeID, request.Command)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) handleNodeAgentStatus(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -965,6 +1037,69 @@ func (s *Server) handleContainerExec(w http.ResponseWriter, r *http.Request, nod
 	_ = s.terminalHub.AttachContainerExec(r.Context(), nodeID, containerID, conn)
 }
 
+func (s *Server) handleNodeLogTail(w http.ResponseWriter, r *http.Request, nodeID string) {
+	log.Printf("[Route] handleNodeLogTail called for node %s", nodeID)
+	if r.Method != http.MethodGet {
+		log.Printf("[Route] Method not allowed: %s", r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		log.Printf("[Route] Node not found: %s", nodeID)
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if !sameOrigin(r) {
+		log.Printf("[Route] Origin not allowed")
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if s.terminalHub == nil {
+		log.Printf("[Route] Terminal hub is nil")
+		writeError(w, http.StatusServiceUnavailable, "log tail is not available")
+		return
+	}
+	log.Printf("[Route] Upgrading to WebSocket")
+	upgrader := websocket.Upgrader{CheckOrigin: sameOrigin}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[Route] Failed to upgrade: %v", err)
+		return
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxTerminalWebSocketBytes)
+	log.Printf("[Route] Calling AttachLogTail")
+	_ = s.terminalHub.AttachLogTail(r.Context(), nodeID, conn)
+	log.Printf("[Route] AttachLogTail returned")
+}
+
+func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.nodes.Get(r.Context(), nodeID); err != nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
+	if s.terminalHub == nil {
+		writeError(w, http.StatusServiceUnavailable, "container logs is not available")
+		return
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: sameOrigin}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxTerminalWebSocketBytes)
+	_ = s.terminalHub.AttachContainerLogs(r.Context(), nodeID, containerID, conn)
+}
+
 func (s *Server) createTerminalToken(kind string, nodeID string, containerID string) (string, error) {
 	var bytes [24]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
@@ -1064,6 +1199,77 @@ func (s *Server) handleNodeDocker(w http.ResponseWriter, r *http.Request, nodeID
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
+func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations not available")
+		return
+	}
+	response, err := s.agentOps.ContainerStart(r.Context(), nodeID, containerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations not available")
+		return
+	}
+	response, err := s.agentOps.ContainerStop(r.Context(), nodeID, containerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations not available")
+		return
+	}
+	response, err := s.agentOps.ContainerRestart(r.Context(), nodeID, containerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleContainerDelete(w http.ResponseWriter, r *http.Request, nodeID string, containerID string) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.agentOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent operations not available")
+		return
+	}
+	// Parse force parameter from query string
+	force := r.URL.Query().Get("force") == "true"
+	response, err := s.agentOps.ContainerDelete(r.Context(), nodeID, containerID, force)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

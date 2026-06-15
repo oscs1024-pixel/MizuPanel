@@ -156,7 +156,7 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '删除规则失败'))
   }
 
-  const addChannel = (type: 'webhook' | 'dingtalk' | 'feishu' | 'wecom') => {
+  const addChannel = (type: 'webhook' | 'dingtalk' | 'feishu') => {
     setFormChannels((current) => [...current, { type, webhook_url: '' }])
   }
 
@@ -436,13 +436,6 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                     >
                       + 飞书
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => addChannel('wecom')}
-                      className="min-h-8 cursor-pointer rounded-xl border border-border bg-card px-3 text-xs font-black text-foreground transition hover:border-primary/50 focus:outline-none focus:ring-4 focus:ring-primary/20"
-                    >
-                      + 企业微信
-                    </button>
                   </div>
                 </div>
 
@@ -458,9 +451,7 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                               ? 'Webhook'
                               : channel.type === 'dingtalk'
                                 ? 'DingTalk'
-                                : channel.type === 'feishu'
-                                  ? '飞书'
-                                  : '企业微信'}
+                                : '飞书'}
                           </span>
                           <button
                             type="button"
@@ -479,13 +470,11 @@ export function AlertRulesPage({ nodes }: AlertRulesPageProps) {
                               ? 'https://...'
                               : channel.type === 'dingtalk'
                               ? 'https://oapi.dingtalk.com/robot/send?access_token=...'
-                              : channel.type === 'feishu'
-                              ? 'https://open.feishu.cn/open-apis/bot/v2/hook/...'
-                              : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...'
+                              : 'https://open.feishu.cn/open-apis/bot/v2/hook/...'
                           }
                           className="min-h-9 w-full rounded-xl border border-border bg-card px-3 text-xs font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
                         />
-                        {channel.type === 'dingtalk' || channel.type === 'feishu' || channel.type === 'wecom' ? (
+                        {channel.type === 'dingtalk' || channel.type === 'feishu' ? (
                           <input
                             type="text"
                             value={channel.secret || ''}

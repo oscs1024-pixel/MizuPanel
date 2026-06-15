@@ -18,7 +18,7 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
     setError(undefined)
     fetchK8sClusters()
       .then((response) => {
-        setClusters(response.clusters)
+        setClusters(response.clusters || [])
       })
       .catch((err: Error) => {
         setError(err.message)

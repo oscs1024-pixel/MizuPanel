@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/mizupanel/mizupanel/internal/protocol"
+	"github.com/mizupanel/mizupanel/internal/server/k8s"
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
@@ -123,6 +124,7 @@ const (
 func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...any) *http.ServeMux {
 	server := &Server{nodes: nodes, metrics: metrics, defaultMetricsRetention: 6 * time.Hour, terminalTokens: make(map[string]terminalToken), auth: NewAuthenticator(AuthConfig{})}
 	var alertStore *store.AlertStore
+	var k8sService *k8s.Service
 	for _, snapshotStore := range snapshots {
 		switch typed := snapshotStore.(type) {
 		case *store.ProcessSnapshotStore:
@@ -131,6 +133,8 @@ func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...
 			server.docker = typed
 		case *store.AlertStore:
 			alertStore = typed
+		case *k8s.Service:
+			k8sService = typed
 		case TerminalHub:
 			server.terminalHub = typed
 			if ops, ok := snapshotStore.(NodeOperations); ok {
@@ -165,6 +169,10 @@ func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...
 		mux.HandleFunc("/api/alerts/rules", server.requireAuth(server.handleAlertRules(alertStore)))
 		mux.HandleFunc("/api/alerts/rules/", server.requireAuth(server.handleAlertRuleRoutes(alertStore)))
 		mux.HandleFunc("/api/alerts/history", server.requireAuth(server.handleAlertHistory(alertStore)))
+	}
+	if k8sService != nil {
+		mux.HandleFunc("/api/k8s/clusters", server.requireAuth(server.handleK8sClusters(k8sService)))
+		mux.HandleFunc("/api/k8s/clusters/", server.requireAuth(server.handleK8sClusterRoutes(k8sService)))
 	}
 	return mux
 }

@@ -39,6 +39,40 @@ const (
 	MessageTypeContainerExecClose   = "container_exec_close"
 	MessageTypeContainerExecExit    = "container_exec_exit"
 	MessageTypeContainerExecError   = "container_exec_error"
+
+	MessageTypeLogTailRequest  = "log_tail_request"
+	MessageTypeLogTailResponse = "log_tail_response"
+	MessageTypeLogTailData     = "log_tail_data"
+	MessageTypeLogTailStop     = "log_tail_stop"
+	MessageTypeLogTailExit     = "log_tail_exit"
+	MessageTypeLogTailError    = "log_tail_error"
+
+	MessageTypeContainerLogsRequest  = "container_logs_request"
+	MessageTypeContainerLogsResponse = "container_logs_response"
+	MessageTypeContainerLogsData     = "container_logs_data"
+	MessageTypeContainerLogsStop     = "container_logs_stop"
+	MessageTypeContainerLogsExit     = "container_logs_exit"
+	MessageTypeContainerLogsError    = "container_logs_error"
+
+	MessageTypeDockerExecRequest  = "docker_exec_request"
+	MessageTypeDockerExecResponse = "docker_exec_response"
+
+	MessageTypeContainerStartRequest    = "container_start_request"
+	MessageTypeContainerStartResponse   = "container_start_response"
+	MessageTypeContainerStopRequest     = "container_stop_request"
+	MessageTypeContainerStopResponse    = "container_stop_response"
+	MessageTypeContainerRestartRequest  = "container_restart_request"
+	MessageTypeContainerRestartResponse = "container_restart_response"
+	MessageTypeContainerDeleteRequest   = "container_delete_request"
+	MessageTypeContainerDeleteResponse  = "container_delete_response"
+
+	// K8s 集群管理相关消息类型
+	MessageTypeK8sClusterConnect       = "k8s_cluster_connect"
+	MessageTypeK8sClusterConnectResult = "k8s_cluster_connect_result"
+	MessageTypeK8sGetPods              = "k8s_get_pods"
+	MessageTypeK8sGetPodsResult        = "k8s_get_pods_result"
+	MessageTypeK8sGetPodLogs           = "k8s_get_pod_logs"
+	MessageTypeK8sGetPodLogsResult     = "k8s_get_pod_logs_result"
 )
 
 type HelloMessage struct {
@@ -358,3 +392,238 @@ type LoadInfo struct {
 	Load5  float64 `json:"load5"`
 	Load15 float64 `json:"load15"`
 }
+
+type LogTailRequest struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id,omitempty"`
+	Path      string `json:"path"`
+	Lines     int    `json:"lines"` // Initial number of lines to read (like tail -n)
+}
+
+type LogTailResponse struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Started   bool   `json:"started"`
+	Error     string `json:"error,omitempty"`
+}
+
+type LogTailData struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"` // New log lines
+}
+
+type LogTailStop struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
+type LogTailExit struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Error     string `json:"error,omitempty"`
+}
+
+type LogTailError struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Error     string `json:"error"`
+}
+
+// Container Logs messages
+
+type ContainerLogsRequest struct {
+	Type        string `json:"type"`
+	SessionID   string `json:"session_id"`
+	NodeID      string `json:"node_id,omitempty"`
+	ContainerID string `json:"container_id"`
+	Lines       int    `json:"lines"`      // Initial number of lines to read (like tail -n)
+	Follow      bool   `json:"follow"`     // Whether to follow logs (like -f)
+	Timestamps  bool   `json:"timestamps"` // Whether to show timestamps
+}
+
+type ContainerLogsResponse struct {
+	Type        string `json:"type"`
+	SessionID   string `json:"session_id"`
+	ContainerID string `json:"container_id,omitempty"`
+	Started     bool   `json:"started"`
+	Error       string `json:"error,omitempty"`
+}
+
+type ContainerLogsData struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"`   // Log content
+	Stream    string `json:"stream"` // "stdout" or "stderr"
+}
+
+type ContainerLogsStop struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
+type ContainerLogsExit struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ContainerLogsError struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Error     string `json:"error"`
+}
+
+// Docker Exec messages
+
+type DockerExecRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	Command   string `json:"command"` // Full docker command to execute
+}
+
+type DockerExecResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Accepted  bool   `json:"accepted"`
+	Output    string `json:"output,omitempty"` // Command output (stdout + stderr)
+	ExitCode int    `json:"exit_code"`
+	Error    string `json:"error,omitempty"`
+}
+
+type ContainerStartRequest struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"request_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
+	ContainerID string `json:"container_id"`
+}
+
+type ContainerStartResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ContainerStopRequest struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"request_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
+	ContainerID string `json:"container_id"`
+}
+
+type ContainerStopResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ContainerRestartRequest struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"request_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
+	ContainerID string `json:"container_id"`
+}
+
+type ContainerRestartResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ContainerDeleteRequest struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"request_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
+	ContainerID string `json:"container_id"`
+	Force       bool   `json:"force"` // Force delete even if running
+}
+
+type ContainerDeleteResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+}
+
+// K8s 集群连接验证
+
+type K8sClusterConnectRequest struct {
+	Type           string `json:"type"`
+	RequestID      string `json:"request_id"`
+	KubeconfigPath string `json:"kubeconfig_path"`
+	Context        string `json:"context,omitempty"`
+}
+
+type K8sClusterConnectResult struct {
+	Type        string          `json:"type"`
+	RequestID   string          `json:"request_id"`
+	Success     bool            `json:"success"`
+	Error       string          `json:"error,omitempty"`
+	ClusterInfo *K8sClusterInfo `json:"cluster_info,omitempty"`
+}
+
+type K8sClusterInfo struct {
+	Version        string `json:"version"`
+	NodeCount      int    `json:"node_count"`
+	NamespaceCount int    `json:"namespace_count"`
+}
+
+// K8s Pod 查询
+
+type K8sGetPodsRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	ClusterID string `json:"cluster_id"`
+	Namespace string `json:"namespace,omitempty"` // 空表示所有命名空间
+}
+
+type K8sGetPodsResult struct {
+	Type      string   `json:"type"`
+	RequestID string   `json:"request_id"`
+	Success   bool     `json:"success"`
+	Error     string   `json:"error,omitempty"`
+	Pods      []K8sPod `json:"pods,omitempty"`
+}
+
+type K8sPod struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Status    string `json:"status"`   // Running, Pending, Failed, etc.
+	Ready     string `json:"ready"`    // 1/1, 0/1, etc.
+	Restarts  int    `json:"restarts"` // 重启次数
+	Age       string `json:"age"`      // 运行时间
+	Node      string `json:"node"`     // 所在节点
+	IP        string `json:"ip,omitempty"`
+}
+
+// K8s Pod 日志
+
+type K8sGetPodLogsRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	ClusterID string `json:"cluster_id"`
+	Namespace string `json:"namespace"`
+	PodName   string `json:"pod_name"`
+	Container string `json:"container,omitempty"` // 多容器时指定
+	Follow    bool   `json:"follow"`              // 是否实时跟踪
+	TailLines int    `json:"tail_lines"`          // 最后 N 行
+}
+
+type K8sGetPodLogsResult struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+	Logs      string `json:"logs,omitempty"` // 日志内容
+	Stream    bool   `json:"stream"`         // 是否为流式响应
+}
+

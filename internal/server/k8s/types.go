@@ -10,6 +10,9 @@ type Cluster struct {
 	KubeconfigPath string    `json:"kubeconfig_path"`
 	Context        string    `json:"context,omitempty"`
 	Status         string    `json:"status"` // online, offline
+	Version        string    `json:"version,omitempty"`
+	NodeCount      int       `json:"node_count,omitempty"`
+	NamespaceCount int       `json:"namespace_count,omitempty"`
 	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`

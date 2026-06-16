@@ -188,13 +188,13 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
       {activeTab === 'overview' && (
         <div className="space-y-4">
           {/* Cluster Info */}
-          {cluster.cluster_info && (
+          {cluster.version && (
             <div className="rounded-[14px] border border-border bg-card p-5 shadow-sm">
               <h3 className="mb-4 text-base font-black text-foreground">集群信息</h3>
               <div className="grid gap-4 sm:grid-cols-3">
-                <InfoCard label="Kubernetes 版本" value={cluster.cluster_info.version} />
-                <InfoCard label="节点数量" value={cluster.cluster_info.node_count.toString()} />
-                <InfoCard label="命名空间数量" value={cluster.cluster_info.namespace_count.toString()} />
+                <InfoCard label="Kubernetes 版本" value={cluster.version} />
+                <InfoCard label="节点数量" value={cluster.node_count?.toString() || '0'} />
+                <InfoCard label="命名空间数量" value={cluster.namespace_count?.toString() || '0'} />
               </div>
             </div>
           )}

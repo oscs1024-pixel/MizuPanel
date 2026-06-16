@@ -361,7 +361,9 @@ export type K8sCluster = {
   kubeconfig_path: string
   context?: string
   status: 'online' | 'offline'
-  cluster_info?: K8sClusterInfo
+  version?: string
+  node_count?: number
+  namespace_count?: number
   last_seen_at?: string
   created_at: string
   updated_at: string

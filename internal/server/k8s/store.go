@@ -18,8 +18,8 @@ func NewStore(db *sql.DB) *Store {
 
 // CreateCluster 创建集群记录
 func (s *Store) CreateCluster(cluster *Cluster) error {
-	query := `INSERT INTO k8s_clusters (id, name, node_id, kubeconfig_path, context, status, last_seen_at, created_at, updated_at)
-	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO k8s_clusters (id, name, node_id, kubeconfig_path, context, status, version, node_count, namespace_count, last_seen_at, created_at, updated_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		cluster.ID,
 		cluster.Name,
@@ -27,6 +27,9 @@ func (s *Store) CreateCluster(cluster *Cluster) error {
 		cluster.KubeconfigPath,
 		cluster.Context,
 		cluster.Status,
+		cluster.Version,
+		cluster.NodeCount,
+		cluster.NamespaceCount,
 		timeToString(cluster.LastSeenAt),
 		timeToString(cluster.CreatedAt),
 		timeToString(cluster.UpdatedAt),
@@ -36,7 +39,7 @@ func (s *Store) CreateCluster(cluster *Cluster) error {
 
 // GetCluster 获取集群记录
 func (s *Store) GetCluster(id string) (*Cluster, error) {
-	query := `SELECT id, name, node_id, kubeconfig_path, context, status, last_seen_at, created_at, updated_at
+	query := `SELECT id, name, node_id, kubeconfig_path, context, status, version, node_count, namespace_count, last_seen_at, created_at, updated_at
 	          FROM k8s_clusters WHERE id = ?`
 	row := s.db.QueryRow(query, id)
 
@@ -49,6 +52,9 @@ func (s *Store) GetCluster(id string) (*Cluster, error) {
 		&cluster.KubeconfigPath,
 		&cluster.Context,
 		&cluster.Status,
+		&cluster.Version,
+		&cluster.NodeCount,
+		&cluster.NamespaceCount,
 		&lastSeenAt,
 		&createdAt,
 		&updatedAt,
@@ -69,7 +75,7 @@ func (s *Store) GetCluster(id string) (*Cluster, error) {
 
 // ListClusters 获取集群列表
 func (s *Store) ListClusters() ([]*Cluster, error) {
-	query := `SELECT id, name, node_id, kubeconfig_path, context, status, last_seen_at, created_at, updated_at
+	query := `SELECT id, name, node_id, kubeconfig_path, context, status, version, node_count, namespace_count, last_seen_at, created_at, updated_at
 	          FROM k8s_clusters ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -88,6 +94,9 @@ func (s *Store) ListClusters() ([]*Cluster, error) {
 			&cluster.KubeconfigPath,
 			&cluster.Context,
 			&cluster.Status,
+			&cluster.Version,
+			&cluster.NodeCount,
+			&cluster.NamespaceCount,
 			&lastSeenAt,
 			&createdAt,
 			&updatedAt,
@@ -108,7 +117,7 @@ func (s *Store) ListClusters() ([]*Cluster, error) {
 
 // ListClustersWithNodeInfo 获取集群列表（包含节点信息）
 func (s *Store) ListClustersWithNodeInfo() ([]*ClusterWithNode, error) {
-	query := `SELECT c.id, c.name, c.node_id, c.kubeconfig_path, c.context, c.status, c.last_seen_at, c.created_at, c.updated_at,
+	query := `SELECT c.id, c.name, c.node_id, c.kubeconfig_path, c.context, c.status, c.version, c.node_count, c.namespace_count, c.last_seen_at, c.created_at, c.updated_at,
 	                 n.name as node_name, n.ip as node_ip
 	          FROM k8s_clusters c
 	          LEFT JOIN nodes n ON c.node_id = n.id
@@ -130,6 +139,9 @@ func (s *Store) ListClustersWithNodeInfo() ([]*ClusterWithNode, error) {
 			&cluster.KubeconfigPath,
 			&cluster.Context,
 			&cluster.Status,
+			&cluster.Version,
+			&cluster.NodeCount,
+			&cluster.NamespaceCount,
 			&lastSeenAt,
 			&createdAt,
 			&updatedAt,

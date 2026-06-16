@@ -296,6 +296,11 @@ func migrateStatements(db *sql.DB, dialect Dialect, statements []string) error {
 			return err
 		}
 	}
+	for _, statement := range k8sClusterCompatibilityColumnStatements(dialect) {
+		if err := addColumnIfMissing(db, statement); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`UPDATE nodes SET agent_mode = COALESCE(NULLIF(agent_mode, ''), 'normal'), agent_user = COALESCE(agent_user, '')`)
 	return err
 }
@@ -325,6 +330,21 @@ func metricCompatibilityColumnStatements(dialect Dialect) []string {
 		`ALTER TABLE node_metrics ADD COLUMN uptime INTEGER DEFAULT 0`,
 		`ALTER TABLE node_metrics ADD COLUMN disk_read_speed INTEGER DEFAULT 0`,
 		`ALTER TABLE node_metrics ADD COLUMN disk_write_speed INTEGER DEFAULT 0`,
+	}
+}
+
+func k8sClusterCompatibilityColumnStatements(dialect Dialect) []string {
+	if dialect == DialectMySQL {
+		return []string{
+			`ALTER TABLE k8s_clusters ADD COLUMN version VARCHAR(64) DEFAULT ''`,
+			`ALTER TABLE k8s_clusters ADD COLUMN node_count INT DEFAULT 0`,
+			`ALTER TABLE k8s_clusters ADD COLUMN namespace_count INT DEFAULT 0`,
+		}
+	}
+	return []string{
+		`ALTER TABLE k8s_clusters ADD COLUMN version TEXT DEFAULT ''`,
+		`ALTER TABLE k8s_clusters ADD COLUMN node_count INTEGER DEFAULT 0`,
+		`ALTER TABLE k8s_clusters ADD COLUMN namespace_count INTEGER DEFAULT 0`,
 	}
 }
 

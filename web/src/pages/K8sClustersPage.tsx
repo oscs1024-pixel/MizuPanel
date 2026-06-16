@@ -48,6 +48,10 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
       })
   }, [loadClusters])
 
+  const handleViewDetail = useCallback((clusterID: string) => {
+    window.location.href = `/k8s/clusters/${clusterID}`
+  }, [])
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -114,6 +118,7 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
               key={cluster.id}
               cluster={cluster}
               onDelete={handleDeleteCluster}
+              onViewDetail={handleViewDetail}
             />
           ))}
         </div>
@@ -125,9 +130,10 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
 type ClusterCardProps = {
   cluster: K8sCluster
   onDelete: (clusterID: string, clusterName: string) => void
+  onViewDetail?: (clusterID: string) => void
 }
 
-function ClusterCard({ cluster, onDelete }: ClusterCardProps) {
+function ClusterCard({ cluster, onDelete, onViewDetail }: ClusterCardProps) {
   const isOnline = cluster.status === 'online'
 
   return (
@@ -147,17 +153,18 @@ function ClusterCard({ cluster, onDelete }: ClusterCardProps) {
         </span>
       </div>
 
-      {cluster.cluster_info && (
+      {cluster.version && (
         <div className="mb-3 grid grid-cols-3 gap-2">
-          <InfoItem label="版本" value={cluster.cluster_info.version} />
-          <InfoItem label="节点" value={cluster.cluster_info.node_count.toString()} />
-          <InfoItem label="命名空间" value={cluster.cluster_info.namespace_count.toString()} />
+          <InfoItem label="版本" value={cluster.version} />
+          <InfoItem label="节点" value={cluster.node_count?.toString() || '0'} />
+          <InfoItem label="命名空间" value={cluster.namespace_count?.toString() || '0'} />
         </div>
       )}
 
       <div className="flex items-center gap-2">
         <button
           type="button"
+          onClick={() => onViewDetail?.(cluster.id)}
           className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground transition hover:bg-muted"
         >
           查看详情

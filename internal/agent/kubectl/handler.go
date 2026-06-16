@@ -46,10 +46,14 @@ func (h *Handler) handleClusterConnect(ctx context.Context, data json.RawMessage
 	client := NewClient(req.KubeconfigPath, req.Context)
 
 	// 验证连接并获取集群信息
+	log.Printf("[kubectl] 开始获取集群信息...")
 	clusterInfo, err := client.GetClusterInfo(ctx)
 	if err != nil {
+		log.Printf("[kubectl] 获取集群信息失败: %v", err)
 		return h.sendConnectError(req.RequestID, err.Error(), sendFunc)
 	}
+	log.Printf("[kubectl] 获取集群信息成功: version=%s, nodes=%d, namespaces=%d",
+		clusterInfo.Version, clusterInfo.NodeCount, clusterInfo.NamespaceCount)
 
 	// 存储客户端（使用 RequestID 作为临时 clusterID）
 	h.clients[req.RequestID] = client
@@ -65,7 +69,14 @@ func (h *Handler) handleClusterConnect(ctx context.Context, data json.RawMessage
 			NamespaceCount: clusterInfo.NamespaceCount,
 		},
 	}
-	return sendFunc(result)
+	log.Printf("[kubectl] 准备发送响应: requestID=%s", req.RequestID)
+	err = sendFunc(result)
+	if err != nil {
+		log.Printf("[kubectl] 发送响应失败: %v", err)
+	} else {
+		log.Printf("[kubectl] 响应发送成功")
+	}
+	return err
 }
 
 // handleGetPods 处理 Pod 列表查询

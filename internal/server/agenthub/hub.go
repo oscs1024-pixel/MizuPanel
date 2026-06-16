@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -1115,21 +1116,30 @@ func (h *Handler) SendToNodeWithTimeout(nodeID string, message interface{}, time
 		return nil, errors.New("节点离线")
 	}
 
-	// 生成请求 ID
-	requestID, err := randomTerminalSessionID()
+	// 从消息中提取 request_id（K8s 消息已经包含了 RequestID）
+	var header struct {
+		RequestID string `json:"request_id"`
+	}
+	msgBytes, err := json.Marshal(message)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("序列化消息失败: %w", err)
+	}
+	if err := json.Unmarshal(msgBytes, &header); err != nil {
+		return nil, fmt.Errorf("提取 request_id 失败: %w", err)
+	}
+	if header.RequestID == "" {
+		return nil, errors.New("消息缺少 request_id 字段")
 	}
 
 	// 创建响应通道
 	ch := make(chan json.RawMessage, 1)
 	agent.pendingMu.Lock()
-	agent.pendingK8sMessages[requestID] = ch
+	agent.pendingK8sMessages[header.RequestID] = ch
 	agent.pendingMu.Unlock()
 
 	defer func() {
 		agent.pendingMu.Lock()
-		delete(agent.pendingK8sMessages, requestID)
+		delete(agent.pendingK8sMessages, header.RequestID)
 		agent.pendingMu.Unlock()
 	}()
 

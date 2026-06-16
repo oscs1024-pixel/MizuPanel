@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Client kubectl 客户端封装
@@ -46,8 +47,12 @@ func (c *Client) execCommand(ctx context.Context, args ...string) (string, error
 func (c *Client) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
 	info := &ClusterInfo{}
 
+	// 为每个 kubectl 命令设置 5 秒超时（总共最多 15 秒，留给 Server 端 10 秒超时足够时间）
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	// 获取 K8s 版本
-	versionOutput, err := c.execCommand(ctx, "version", "--output=json", "--short")
+	versionOutput, err := c.execCommand(cmdCtx, "version", "--output=json")
 	if err != nil {
 		return nil, fmt.Errorf("获取集群版本失败: %w", err)
 	}
@@ -76,7 +81,9 @@ func (c *Client) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
 	}
 
 	// 获取节点数量
-	nodesOutput, err := c.execCommand(ctx, "get", "nodes", "--output=json")
+	cmdCtx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel2()
+	nodesOutput, err := c.execCommand(cmdCtx2, "get", "nodes", "--output=json")
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
 	}
@@ -90,7 +97,9 @@ func (c *Client) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
 	info.NodeCount = len(nodesList.Items)
 
 	// 获取命名空间数量
-	namespacesOutput, err := c.execCommand(ctx, "get", "namespaces", "--output=json")
+	cmdCtx3, cancel3 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel3()
+	namespacesOutput, err := c.execCommand(cmdCtx3, "get", "namespaces", "--output=json")
 	if err != nil {
 		return nil, fmt.Errorf("获取命名空间列表失败: %w", err)
 	}

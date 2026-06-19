@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,6 +152,9 @@ func (c fakeDockerClient) ContainerStats(ctx context.Context, id string) (contai
 		}
 	}
 	return c.stats[id], c.statsErr
+}
+func (c fakeDockerClient) ContainerLogs(ctx context.Context, id string, tail int, follow bool, timestamps bool) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 var _ clientAPI = fakeDockerClient{}

@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 type Client struct {
 	serverURL                   string
 	token                       string
+	debug                       bool
 	onNodeToken                 func(string) error
 	agentManagementHandler      AgentManagementHandler
 	terminalHandlerFactory      TerminalHandlerFactory
@@ -100,6 +102,10 @@ type connectionWriter struct {
 
 func NewClient(serverURL string, token string) *Client {
 	return &Client{serverURL: serverURL, token: token}
+}
+
+func (c *Client) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 func (c *Client) SetNodeTokenHandler(handler func(string) error) {
@@ -198,8 +204,13 @@ func (c *Client) Run(ctx context.Context, hello protocol.HelloMessage, interval 
 
 func (c *Client) RunForever(ctx context.Context, hello protocol.HelloMessage, interval time.Duration, reconnectDelay time.Duration, collect CollectFunc) error {
 	for {
-		if err := c.Run(ctx, hello, interval, collect); err != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err := c.Run(ctx, hello, interval, collect); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if c.debug {
+				log.Printf("[debug][agent][ws] connection loop ended error=%v", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -248,10 +259,19 @@ func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, termina
 			return
 		}
 		var header struct {
-			Type string `json:"type"`
+			Type      string `json:"type"`
+			RequestID string `json:"request_id"`
+			ClusterID string `json:"cluster_id"`
+			Namespace string `json:"namespace"`
 		}
 		if err := json.Unmarshal(raw, &header); err != nil {
+			if c.debug {
+				log.Printf("[debug][agent][ws] parse message header failed error=%v", err)
+			}
 			continue
+		}
+		if c.debug && header.Type != protocol.MessageTypeTerminalData && header.Type != protocol.MessageTypeContainerExecData {
+			log.Printf("[debug][agent][ws] received type=%s request_id=%s cluster_id=%s namespace=%s", header.Type, header.RequestID, header.ClusterID, header.Namespace)
 		}
 		switch header.Type {
 		case protocol.MessageTypeFileListRequest:
@@ -466,16 +486,43 @@ func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, termina
 				continue
 			}
 		case protocol.MessageTypeK8sClusterConnect,
+			protocol.MessageTypeK8sGetSummary,
+			protocol.MessageTypeK8sGetNamespaces,
+			protocol.MessageTypeK8sGetNodes,
 			protocol.MessageTypeK8sGetPods,
+			protocol.MessageTypeK8sGetDeployments,
+			protocol.MessageTypeK8sGetStatefulSets,
+			protocol.MessageTypeK8sGetDaemonSets,
+			protocol.MessageTypeK8sGetServices,
+			protocol.MessageTypeK8sGetIngresses,
 			protocol.MessageTypeK8sGetPodLogs:
 			if c.kubectlHandler == nil {
+				if c.debug {
+					log.Printf("[debug][agent][k8s] handler missing type=%s request_id=%s cluster_id=%s namespace=%s", header.Type, header.RequestID, header.ClusterID, header.Namespace)
+				}
 				continue
 			}
-			if err := c.kubectlHandler.Handle(ctx, header.Type, raw, writer.writeJSON); err != nil {
+			if c.debug {
+				log.Printf("[debug][agent][k8s] dispatch type=%s request_id=%s cluster_id=%s namespace=%s", header.Type, header.RequestID, header.ClusterID, header.Namespace)
+			}
+			requestCtx, cancel := context.WithTimeout(ctx, k8sRequestTimeout(header.Type))
+			if err := c.kubectlHandler.Handle(requestCtx, header.Type, raw, writer.writeJSON); err != nil {
+				cancel()
+				if c.debug {
+					log.Printf("[debug][agent][k8s] dispatch failed type=%s request_id=%s cluster_id=%s namespace=%s error=%v", header.Type, header.RequestID, header.ClusterID, header.Namespace, err)
+				}
 				continue
 			}
+			cancel()
 		}
 	}
+}
+
+func k8sRequestTimeout(msgType string) time.Duration {
+	if msgType == protocol.MessageTypeK8sClusterConnect || msgType == protocol.MessageTypeK8sGetPodLogs {
+		return 10 * time.Second
+	}
+	return 15 * time.Second
 }
 
 func (c *Client) writeCollectedMetric(writer *connectionWriter, nodeID string, collect CollectFunc) error {

@@ -1,4 +1,19 @@
-import type { K8sClustersResponse, ConnectK8sClusterRequest, ConnectK8sClusterResponse, K8sPodsResponse, K8sPodLogsResponse, K8sCluster } from '../types'
+import type {
+  K8sClustersResponse,
+  ConnectK8sClusterRequest,
+  ConnectK8sClusterResponse,
+  K8sPodsResponse,
+  K8sPodLogsResponse,
+  K8sCluster,
+  K8sSummaryResponse,
+  K8sNamespacesResponse,
+  K8sNodesResponse,
+  K8sDeploymentsResponse,
+  K8sStatefulSetsResponse,
+  K8sDaemonSetsResponse,
+  K8sServicesResponse,
+  K8sIngressesResponse
+} from '../types'
 
 export class K8sAPIError extends Error {
   constructor(public status: number, message = `Request failed: ${status}`) {
@@ -52,9 +67,44 @@ export function deleteK8sCluster(clusterID: string): Promise<void> {
   return requestVoid(`/api/k8s/clusters/${encodeURIComponent(clusterID)}`, { method: 'DELETE' })
 }
 
+function namespaceQuery(namespace?: string): string {
+  return namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''
+}
+
+export function fetchK8sSummary(clusterID: string): Promise<K8sSummaryResponse> {
+  return request<K8sSummaryResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/summary`)
+}
+
+export function fetchK8sNamespaces(clusterID: string): Promise<K8sNamespacesResponse> {
+  return request<K8sNamespacesResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/namespaces`)
+}
+
+export function fetchK8sNodes(clusterID: string): Promise<K8sNodesResponse> {
+  return request<K8sNodesResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/nodes`)
+}
+
+export function fetchK8sDeployments(clusterID: string, namespace?: string): Promise<K8sDeploymentsResponse> {
+  return request<K8sDeploymentsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/deployments${namespaceQuery(namespace)}`)
+}
+
+export function fetchK8sStatefulSets(clusterID: string, namespace?: string): Promise<K8sStatefulSetsResponse> {
+  return request<K8sStatefulSetsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/statefulsets${namespaceQuery(namespace)}`)
+}
+
+export function fetchK8sDaemonSets(clusterID: string, namespace?: string): Promise<K8sDaemonSetsResponse> {
+  return request<K8sDaemonSetsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/daemonsets${namespaceQuery(namespace)}`)
+}
+
+export function fetchK8sServices(clusterID: string, namespace?: string): Promise<K8sServicesResponse> {
+  return request<K8sServicesResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/services${namespaceQuery(namespace)}`)
+}
+
+export function fetchK8sIngresses(clusterID: string, namespace?: string): Promise<K8sIngressesResponse> {
+  return request<K8sIngressesResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/ingresses${namespaceQuery(namespace)}`)
+}
+
 export function fetchK8sPods(clusterID: string, namespace?: string): Promise<K8sPodsResponse> {
-  const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''
-  return request<K8sPodsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/pods${params}`)
+  return request<K8sPodsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/pods${namespaceQuery(namespace)}`)
 }
 
 export function fetchK8sPodLogs(

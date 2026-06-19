@@ -51,6 +51,7 @@ type Dependencies struct {
 	MetricsRetention       time.Duration
 	AlertingEnabled        bool
 	AlertCheckInterval     time.Duration
+	Debug                  bool
 	SSHJobs                *sshops.Manager
 	SSHRunner              sshops.Runner
 	SSHJobTimeout          time.Duration
@@ -69,11 +70,13 @@ func NewHandler(deps Dependencies) http.Handler {
 		ProcessSnapshots: deps.ProcessSnapshots,
 		DockerSnapshots:  deps.DockerSnapshots,
 		Interval:         deps.Interval,
+		Debug:            deps.Debug,
 	})
 
 	// K8s 服务层
 	k8sStore := k8s.NewStore(deps.Nodes.DB())
 	k8sService := k8s.NewService(k8sStore, hub)
+	k8sService.SetDebug(deps.Debug)
 
 	auth := api.NewAuthenticator(deps.AdminAuth)
 	apiRouter := api.NewRouter(deps.Nodes, deps.Metrics, deps.ProcessSnapshots, deps.DockerSnapshots, deps.Alerts, hub, k8sService, api.TerminalConfig{Enabled: deps.EnableTerminal}, api.SettingsConfig{Store: deps.Settings, DefaultMetricsRetention: deps.MetricsRetention}, auth)
@@ -613,4 +616,3 @@ func startAlertingEngine(ctx context.Context, engine *alerting.Engine, interval 
 		}
 	}
 }
-

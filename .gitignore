@@ -34,3 +34,8 @@ web/dist/
 docs
 skills-lock.json
 .superpowers
+
+# KeepM live memory store (plain text, machine-local)
+/.keepm-memory/
+.orbit/
+.agents/

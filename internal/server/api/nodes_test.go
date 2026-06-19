@@ -466,6 +466,12 @@ func (h fakeTerminalHub) AttachTerminal(context.Context, string, *websocket.Conn
 func (h fakeTerminalHub) AttachContainerExec(context.Context, string, string, *websocket.Conn) error {
 	return nil
 }
+func (h fakeTerminalHub) AttachLogTail(context.Context, string, *websocket.Conn) error {
+	return nil
+}
+func (h fakeTerminalHub) AttachContainerLogs(context.Context, string, string, *websocket.Conn) error {
+	return nil
+}
 
 type fakeNodeOperations struct {
 	fileListPath       string
@@ -488,6 +494,12 @@ func (f *fakeNodeOperations) AttachTerminal(context.Context, string, *websocket.
 	return nil
 }
 func (f *fakeNodeOperations) AttachContainerExec(context.Context, string, string, *websocket.Conn) error {
+	return nil
+}
+func (f *fakeNodeOperations) AttachLogTail(context.Context, string, *websocket.Conn) error {
+	return nil
+}
+func (f *fakeNodeOperations) AttachContainerLogs(context.Context, string, string, *websocket.Conn) error {
 	return nil
 }
 
@@ -541,6 +553,26 @@ func (f *fakeNodeOperations) AgentLogs(ctx context.Context, nodeID string, lines
 	f.agentLogsNodeID = nodeID
 	f.agentLogsLines = lines
 	return protocol.AgentLogsResponse{Type: protocol.MessageTypeAgentLogsResponse, NodeID: nodeID, Lines: lines, Content: "mizupanel-agent started", CollectedAt: 1710000001}, nil
+}
+
+func (f *fakeNodeOperations) DockerExec(ctx context.Context, nodeID string, command string) (protocol.DockerExecResponse, error) {
+	return protocol.DockerExecResponse{Type: protocol.MessageTypeDockerExecResponse, Accepted: true}, nil
+}
+
+func (f *fakeNodeOperations) ContainerStart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStartResponse, error) {
+	return protocol.ContainerStartResponse{Type: protocol.MessageTypeContainerStartResponse, Success: true}, nil
+}
+
+func (f *fakeNodeOperations) ContainerStop(ctx context.Context, nodeID string, containerID string) (protocol.ContainerStopResponse, error) {
+	return protocol.ContainerStopResponse{Type: protocol.MessageTypeContainerStopResponse, Success: true}, nil
+}
+
+func (f *fakeNodeOperations) ContainerRestart(ctx context.Context, nodeID string, containerID string) (protocol.ContainerRestartResponse, error) {
+	return protocol.ContainerRestartResponse{Type: protocol.MessageTypeContainerRestartResponse, Success: true}, nil
+}
+
+func (f *fakeNodeOperations) ContainerDelete(ctx context.Context, nodeID string, containerID string, force bool) (protocol.ContainerDeleteResponse, error) {
+	return protocol.ContainerDeleteResponse{Type: protocol.MessageTypeContainerDeleteResponse, Success: true}, nil
 }
 
 func TestNodeFileOperationsForwardToAgentWithoutBrowserAuth(t *testing.T) {

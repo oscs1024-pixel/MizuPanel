@@ -113,6 +113,40 @@ func TestLoadAdminAuthEnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoadDebugFromFileAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	content := []byte("logging:\n  debug: true\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.Debug {
+		t.Fatal("Debug = false, want true from logging.debug")
+	}
+
+	t.Setenv("MIZUPANEL_DEBUG", "false")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error with env override: %v", err)
+	}
+	if cfg.Debug {
+		t.Fatal("Debug = true, want false from MIZUPANEL_DEBUG override")
+	}
+}
+
+func TestLoadRejectsInvalidDebugEnvironment(t *testing.T) {
+	t.Setenv("MIZUPANEL_DEBUG", "not-bool")
+	_, err := Load("")
+	if err == nil || !strings.Contains(err.Error(), "MIZUPANEL_DEBUG") {
+		t.Fatalf("Load error = %v, want MIZUPANEL_DEBUG parse error", err)
+	}
+}
+
 func TestLoadRejectsEnabledAdminAuthWithoutPassword(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server.yaml")
@@ -190,6 +224,9 @@ security:
 	}
 	if cfg.AgentToken != "secret" {
 		t.Fatalf("AgentToken = %q", cfg.AgentToken)
+	}
+	if cfg.Debug {
+		t.Fatal("Debug = true, want false when logging.debug is omitted")
 	}
 	if cfg.PublicURL != "https://panel.example" {
 		t.Fatalf("PublicURL = %q", cfg.PublicURL)
@@ -406,4 +443,3 @@ func TestLoadRejectsInvalidAlertCheckInterval(t *testing.T) {
 		t.Fatalf("Load error = %v, want alerting.check_interval error", err)
 	}
 }
-

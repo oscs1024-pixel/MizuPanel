@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,7 @@ type Config struct {
 	EnableDocker   bool
 	EnableTerminal bool
 	AgentMode      string
+	Debug          bool
 }
 
 type fileConfig struct {
@@ -36,6 +38,9 @@ type fileConfig struct {
 		Docker   *bool `yaml:"docker"`
 		Terminal *bool `yaml:"terminal"`
 	} `yaml:"features"`
+	Logging struct {
+		Debug bool `yaml:"debug"`
+	} `yaml:"logging"`
 
 	ServerURL          string `yaml:"server_url,omitempty"`
 	Token              string `yaml:"token,omitempty"`
@@ -86,6 +91,9 @@ func Load(path string) (Config, error) {
 		cfg.Name = "Mizu Agent"
 	}
 	if path == "" {
+		if err := applyEnvironmentConfig(&cfg); err != nil {
+			return Config{}, err
+		}
 		return cfg, nil
 	}
 
@@ -98,6 +106,9 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	if err := applyFileConfig(&cfg, file); err != nil {
+		return Config{}, err
+	}
+	if err := applyEnvironmentConfig(&cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -119,6 +130,17 @@ func SaveToken(path string, token string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+func applyEnvironmentConfig(cfg *Config) error {
+	if value, ok := os.LookupEnv("MIZUPANEL_DEBUG"); ok {
+		debug, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_DEBUG: %w", err)
+		}
+		cfg.Debug = debug
+	}
+	return nil
 }
 
 func applyFileConfig(cfg *Config, file fileConfig) error {
@@ -183,6 +205,7 @@ func applyFileConfig(cfg *Config, file fileConfig) error {
 	if file.Features.Terminal != nil {
 		cfg.EnableTerminal = *file.Features.Terminal
 	}
+	cfg.Debug = file.Logging.Debug
 	return nil
 }
 

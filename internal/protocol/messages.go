@@ -67,12 +67,28 @@ const (
 	MessageTypeContainerDeleteResponse  = "container_delete_response"
 
 	// K8s 集群管理相关消息类型
-	MessageTypeK8sClusterConnect       = "k8s_cluster_connect"
-	MessageTypeK8sClusterConnectResult = "k8s_cluster_connect_result"
-	MessageTypeK8sGetPods              = "k8s_get_pods"
-	MessageTypeK8sGetPodsResult        = "k8s_get_pods_result"
-	MessageTypeK8sGetPodLogs           = "k8s_get_pod_logs"
-	MessageTypeK8sGetPodLogsResult     = "k8s_get_pod_logs_result"
+	MessageTypeK8sClusterConnect        = "k8s_cluster_connect"
+	MessageTypeK8sClusterConnectResult  = "k8s_cluster_connect_result"
+	MessageTypeK8sGetPods               = "k8s_get_pods"
+	MessageTypeK8sGetPodsResult         = "k8s_get_pods_result"
+	MessageTypeK8sGetPodLogs            = "k8s_get_pod_logs"
+	MessageTypeK8sGetPodLogsResult      = "k8s_get_pod_logs_result"
+	MessageTypeK8sGetSummary            = "k8s_get_summary"
+	MessageTypeK8sGetSummaryResult      = "k8s_get_summary_result"
+	MessageTypeK8sGetNamespaces         = "k8s_get_namespaces"
+	MessageTypeK8sGetNamespacesResult   = "k8s_get_namespaces_result"
+	MessageTypeK8sGetNodes              = "k8s_get_nodes"
+	MessageTypeK8sGetNodesResult        = "k8s_get_nodes_result"
+	MessageTypeK8sGetDeployments        = "k8s_get_deployments"
+	MessageTypeK8sGetDeploymentsResult  = "k8s_get_deployments_result"
+	MessageTypeK8sGetStatefulSets       = "k8s_get_statefulsets"
+	MessageTypeK8sGetStatefulSetsResult = "k8s_get_statefulsets_result"
+	MessageTypeK8sGetDaemonSets         = "k8s_get_daemonsets"
+	MessageTypeK8sGetDaemonSetsResult   = "k8s_get_daemonsets_result"
+	MessageTypeK8sGetServices           = "k8s_get_services"
+	MessageTypeK8sGetServicesResult     = "k8s_get_services_result"
+	MessageTypeK8sGetIngresses          = "k8s_get_ingresses"
+	MessageTypeK8sGetIngressesResult    = "k8s_get_ingresses_result"
 )
 
 type HelloMessage struct {
@@ -493,8 +509,8 @@ type DockerExecResponse struct {
 	RequestID string `json:"request_id,omitempty"`
 	Accepted  bool   `json:"accepted"`
 	Output    string `json:"output,omitempty"` // Command output (stdout + stderr)
-	ExitCode int    `json:"exit_code"`
-	Error    string `json:"error,omitempty"`
+	ExitCode  int    `json:"exit_code"`
+	Error     string `json:"error,omitempty"`
 }
 
 type ContainerStartRequest struct {
@@ -557,10 +573,160 @@ type ContainerDeleteResponse struct {
 // K8s 集群连接验证
 
 type K8sClusterConnectRequest struct {
-	Type           string `json:"type"`
-	RequestID      string `json:"request_id"`
-	KubeconfigPath string `json:"kubeconfig_path"`
-	Context        string `json:"context,omitempty"`
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	KubeconfigPath    string `json:"kubeconfig_path,omitempty"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
+}
+
+type K8sResourceRequest struct {
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	Namespace         string `json:"namespace,omitempty"`
+	KubeconfigContent string `json:"kubeconfig_content"`
+	Context           string `json:"context,omitempty"`
+}
+
+type K8sResourceSummary struct {
+	Version          string `json:"version"`
+	NodeCount        int    `json:"node_count"`
+	NamespaceCount   int    `json:"namespace_count"`
+	PodCount         int    `json:"pod_count"`
+	DeploymentCount  int    `json:"deployment_count"`
+	StatefulSetCount int    `json:"statefulset_count"`
+	DaemonSetCount   int    `json:"daemonset_count"`
+	ServiceCount     int    `json:"service_count"`
+	IngressCount     int    `json:"ingress_count"`
+}
+
+type K8sNamespace struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Age    string `json:"age"`
+}
+
+type K8sNode struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Roles      string `json:"roles"`
+	Version    string `json:"version"`
+	InternalIP string `json:"internal_ip"`
+	PodCIDR    string `json:"pod_cidr,omitempty"`
+	Age        string `json:"age"`
+}
+
+type K8sDeployment struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Ready     string `json:"ready"`
+	UpToDate  int32  `json:"up_to_date"`
+	Available int32  `json:"available"`
+	Age       string `json:"age"`
+}
+
+type K8sStatefulSet struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	Ready       string `json:"ready"`
+	ServiceName string `json:"service_name"`
+	Age         string `json:"age"`
+}
+
+type K8sDaemonSet struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Desired   int32  `json:"desired"`
+	Current   int32  `json:"current"`
+	Ready     int32  `json:"ready"`
+	Available int32  `json:"available"`
+	Age       string `json:"age"`
+}
+
+type K8sService struct {
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	Type       string `json:"type"`
+	ClusterIP  string `json:"cluster_ip"`
+	ExternalIP string `json:"external_ip,omitempty"`
+	Ports      string `json:"ports"`
+	Age        string `json:"age"`
+}
+
+type K8sIngress struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Class     string `json:"class,omitempty"`
+	Hosts     string `json:"hosts"`
+	Address   string `json:"address,omitempty"`
+	Ports     string `json:"ports"`
+	Age       string `json:"age"`
+}
+
+type K8sGetSummaryResult struct {
+	Type      string              `json:"type"`
+	RequestID string              `json:"request_id"`
+	Success   bool                `json:"success"`
+	Error     string              `json:"error,omitempty"`
+	Summary   *K8sResourceSummary `json:"summary,omitempty"`
+}
+
+type K8sGetNamespacesResult struct {
+	Type       string         `json:"type"`
+	RequestID  string         `json:"request_id"`
+	Success    bool           `json:"success"`
+	Error      string         `json:"error,omitempty"`
+	Namespaces []K8sNamespace `json:"namespaces,omitempty"`
+}
+
+type K8sGetNodesResult struct {
+	Type      string    `json:"type"`
+	RequestID string    `json:"request_id"`
+	Success   bool      `json:"success"`
+	Error     string    `json:"error,omitempty"`
+	Nodes     []K8sNode `json:"nodes,omitempty"`
+}
+
+type K8sGetDeploymentsResult struct {
+	Type        string          `json:"type"`
+	RequestID   string          `json:"request_id"`
+	Success     bool            `json:"success"`
+	Error       string          `json:"error,omitempty"`
+	Deployments []K8sDeployment `json:"deployments,omitempty"`
+}
+
+type K8sGetStatefulSetsResult struct {
+	Type         string           `json:"type"`
+	RequestID    string           `json:"request_id"`
+	Success      bool             `json:"success"`
+	Error        string           `json:"error,omitempty"`
+	StatefulSets []K8sStatefulSet `json:"statefulsets,omitempty"`
+}
+
+type K8sGetDaemonSetsResult struct {
+	Type       string         `json:"type"`
+	RequestID  string         `json:"request_id"`
+	Success    bool           `json:"success"`
+	Error      string         `json:"error,omitempty"`
+	DaemonSets []K8sDaemonSet `json:"daemonsets,omitempty"`
+}
+
+type K8sGetServicesResult struct {
+	Type      string       `json:"type"`
+	RequestID string       `json:"request_id"`
+	Success   bool         `json:"success"`
+	Error     string       `json:"error,omitempty"`
+	Services  []K8sService `json:"services,omitempty"`
+}
+
+type K8sGetIngressesResult struct {
+	Type      string       `json:"type"`
+	RequestID string       `json:"request_id"`
+	Success   bool         `json:"success"`
+	Error     string       `json:"error,omitempty"`
+	Ingresses []K8sIngress `json:"ingresses,omitempty"`
 }
 
 type K8sClusterConnectResult struct {
@@ -580,10 +746,13 @@ type K8sClusterInfo struct {
 // K8s Pod 查询
 
 type K8sGetPodsRequest struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	ClusterID string `json:"cluster_id"`
-	Namespace string `json:"namespace,omitempty"` // 空表示所有命名空间
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	Namespace         string `json:"namespace,omitempty"`
+	KubeconfigPath    string `json:"kubeconfig_path,omitempty"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
 }
 
 type K8sGetPodsResult struct {
@@ -608,14 +777,16 @@ type K8sPod struct {
 // K8s Pod 日志
 
 type K8sGetPodLogsRequest struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	ClusterID string `json:"cluster_id"`
-	Namespace string `json:"namespace"`
-	PodName   string `json:"pod_name"`
-	Container string `json:"container,omitempty"` // 多容器时指定
-	Follow    bool   `json:"follow"`              // 是否实时跟踪
-	TailLines int    `json:"tail_lines"`          // 最后 N 行
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	Namespace         string `json:"namespace"`
+	PodName           string `json:"pod_name"`
+	Container         string `json:"container,omitempty"`
+	Follow            bool   `json:"follow"`
+	TailLines         int    `json:"tail_lines"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
 }
 
 type K8sGetPodLogsResult struct {
@@ -626,4 +797,3 @@ type K8sGetPodLogsResult struct {
 	Logs      string `json:"logs,omitempty"` // 日志内容
 	Stream    bool   `json:"stream"`         // 是否为流式响应
 }
-

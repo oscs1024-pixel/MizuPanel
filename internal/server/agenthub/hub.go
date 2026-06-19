@@ -24,6 +24,7 @@ import (
 type Options struct {
 	AgentToken       string
 	Interval         int
+	Debug            bool
 	InstallAuth      *InstallAuthStore
 	AgentTokens      *store.AgentTokenStore
 	ProcessSnapshots *store.ProcessSnapshotStore
@@ -167,34 +168,34 @@ type Handler struct {
 }
 
 type agentConnection struct {
-	nodeID                  string
-	sessionID               string
-	conn                    *websocket.Conn
-	writeMu                 sync.Mutex
-	terminalEnabled         bool
-	supportsAgentManagement bool
-	sessionMu               sync.Mutex
-	terminals               map[string]*browserTerminal
-	containerExecs          map[string]*browserContainerExec
-	mu                      sync.Mutex
-	logTailSessions         map[string]chan json.RawMessage
-	containerLogsSessions   map[string]chan json.RawMessage
-	pendingMu               sync.Mutex
-	pendingLists            map[string]chan protocol.FileListResponse
-	pendingReads            map[string]chan protocol.FileReadResponse
-	pendingWrites           map[string]chan protocol.FileWriteResponse
-	pendingUploads          map[string]chan protocol.FileUploadResponse
-	pendingDeletes          map[string]chan protocol.FileDeleteResponse
-	pendingReboots          map[string]chan protocol.RebootResponse
-	pendingAgentStatuses    map[string]chan protocol.AgentStatusResponse
-	pendingAgentRestarts    map[string]chan protocol.AgentRestartResponse
-	pendingAgentLogs        map[string]chan protocol.AgentLogsResponse
-	pendingDockerExecs      map[string]chan protocol.DockerExecResponse
-	pendingContainerStarts  map[string]chan protocol.ContainerStartResponse
-	pendingContainerStops   map[string]chan protocol.ContainerStopResponse
+	nodeID                   string
+	sessionID                string
+	conn                     *websocket.Conn
+	writeMu                  sync.Mutex
+	terminalEnabled          bool
+	supportsAgentManagement  bool
+	sessionMu                sync.Mutex
+	terminals                map[string]*browserTerminal
+	containerExecs           map[string]*browserContainerExec
+	mu                       sync.Mutex
+	logTailSessions          map[string]chan json.RawMessage
+	containerLogsSessions    map[string]chan json.RawMessage
+	pendingMu                sync.Mutex
+	pendingLists             map[string]chan protocol.FileListResponse
+	pendingReads             map[string]chan protocol.FileReadResponse
+	pendingWrites            map[string]chan protocol.FileWriteResponse
+	pendingUploads           map[string]chan protocol.FileUploadResponse
+	pendingDeletes           map[string]chan protocol.FileDeleteResponse
+	pendingReboots           map[string]chan protocol.RebootResponse
+	pendingAgentStatuses     map[string]chan protocol.AgentStatusResponse
+	pendingAgentRestarts     map[string]chan protocol.AgentRestartResponse
+	pendingAgentLogs         map[string]chan protocol.AgentLogsResponse
+	pendingDockerExecs       map[string]chan protocol.DockerExecResponse
+	pendingContainerStarts   map[string]chan protocol.ContainerStartResponse
+	pendingContainerStops    map[string]chan protocol.ContainerStopResponse
 	pendingContainerRestarts map[string]chan protocol.ContainerRestartResponse
-	pendingContainerDeletes map[string]chan protocol.ContainerDeleteResponse
-	pendingK8sMessages      map[string]chan json.RawMessage
+	pendingContainerDeletes  map[string]chan protocol.ContainerDeleteResponse
+	pendingK8sMessages       map[string]chan json.RawMessage
 }
 
 type browserTerminal struct {
@@ -273,24 +274,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var raw json.RawMessage
 	if err := conn.ReadJSON(&raw); err != nil {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] read first message failed remote=%s error=%v", r.RemoteAddr, err)
+		}
 		return
 	}
 	var header struct {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &header); err != nil || header.Type != protocol.MessageTypeHello {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] first message not hello remote=%s type=%s parse_err=%v", r.RemoteAddr, header.Type, err)
+		}
 		return
 	}
 	var hello protocol.HelloMessage
 	if err := json.Unmarshal(raw, &hello); err != nil {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] hello unmarshal failed remote=%s error=%v", r.RemoteAddr, err)
+		}
 		return
 	}
 
 	nodeID := nodeIDForHello(hello)
 	if nodeID == "" {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] hello missing node_id remote=%s", r.RemoteAddr)
+		}
 		return
 	}
+	if h.options.Debug {
+		log.Printf("[debug][server][agenthub] agent connecting node_id=%s using_agent_token=%v using_persistent=%v install_auth=%v", nodeID, usingAgentToken, usingPersistentNodeToken, h.options.InstallAuth != nil)
+	}
 	if usingAgentToken && h.nodeDeleted(r.Context(), nodeID) {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] agent rejected (node deleted) node_id=%s", nodeID)
+		}
 		return
 	}
 	nodeToken := ""
@@ -298,6 +317,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	installTokenCreatedAt := time.Time{}
 	if usingPersistentNodeToken {
 		if persistentNodeID != nodeID {
+			if h.options.Debug {
+				log.Printf("[debug][server][agenthub] persistent token node_id mismatch token_node=%s hello_node=%s", persistentNodeID, nodeID)
+			}
 			return
 		}
 		nodeToken = suppliedToken
@@ -518,7 +540,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case protocol.MessageTypeK8sClusterConnectResult,
+			protocol.MessageTypeK8sGetSummaryResult,
+			protocol.MessageTypeK8sGetNamespacesResult,
+			protocol.MessageTypeK8sGetNodesResult,
 			protocol.MessageTypeK8sGetPodsResult,
+			protocol.MessageTypeK8sGetDeploymentsResult,
+			protocol.MessageTypeK8sGetStatefulSetsResult,
+			protocol.MessageTypeK8sGetDaemonSetsResult,
+			protocol.MessageTypeK8sGetServicesResult,
+			protocol.MessageTypeK8sGetIngressesResult,
 			protocol.MessageTypeK8sGetPodLogsResult:
 			var header struct {
 				RequestID string `json:"request_id"`
@@ -1118,7 +1148,10 @@ func (h *Handler) SendToNodeWithTimeout(nodeID string, message interface{}, time
 
 	// 从消息中提取 request_id（K8s 消息已经包含了 RequestID）
 	var header struct {
+		Type      string `json:"type"`
 		RequestID string `json:"request_id"`
+		ClusterID string `json:"cluster_id"`
+		Namespace string `json:"namespace"`
 	}
 	msgBytes, err := json.Marshal(message)
 	if err != nil {
@@ -1143,16 +1176,30 @@ func (h *Handler) SendToNodeWithTimeout(nodeID string, message interface{}, time
 		agent.pendingMu.Unlock()
 	}()
 
+	start := time.Now()
+	if h.options.Debug {
+		log.Printf("[debug][server][agenthub] send node_id=%s type=%s request_id=%s cluster_id=%s namespace=%s timeout=%s", nodeID, header.Type, header.RequestID, header.ClusterID, header.Namespace, timeout)
+	}
+
 	// 发送消息
 	if err := agent.writeJSON(message); err != nil {
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] send failed node_id=%s type=%s request_id=%s elapsed=%s error=%v", nodeID, header.Type, header.RequestID, time.Since(start), err)
+		}
 		return nil, err
 	}
 
 	// 等待响应
 	select {
 	case response := <-ch:
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] response node_id=%s type=%s request_id=%s elapsed=%s success=true", nodeID, header.Type, header.RequestID, time.Since(start))
+		}
 		return response, nil
 	case <-time.After(timeout):
+		if h.options.Debug {
+			log.Printf("[debug][server][agenthub] timeout node_id=%s type=%s request_id=%s elapsed=%s", nodeID, header.Type, header.RequestID, time.Since(start))
+		}
 		return nil, errors.New("请求超时")
 	}
 }
@@ -1750,6 +1797,7 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	containerStops := c.pendingContainerStops
 	containerRestarts := c.pendingContainerRestarts
 	containerDeletes := c.pendingContainerDeletes
+	k8sMessages := c.pendingK8sMessages
 	c.pendingLists = make(map[string]chan protocol.FileListResponse)
 	c.pendingReads = make(map[string]chan protocol.FileReadResponse)
 	c.pendingWrites = make(map[string]chan protocol.FileWriteResponse)
@@ -1764,6 +1812,7 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	c.pendingContainerStops = make(map[string]chan protocol.ContainerStopResponse)
 	c.pendingContainerRestarts = make(map[string]chan protocol.ContainerRestartResponse)
 	c.pendingContainerDeletes = make(map[string]chan protocol.ContainerDeleteResponse)
+	c.pendingK8sMessages = make(map[string]chan json.RawMessage)
 	c.pendingMu.Unlock()
 	for requestID, ch := range lists {
 		ch <- protocol.FileListResponse{Type: protocol.MessageTypeFileListResponse, RequestID: requestID, Code: "offline", Error: reason}
@@ -1806,6 +1855,14 @@ func (c *agentConnection) closePendingOperations(reason string) {
 	}
 	for _, ch := range containerDeletes {
 		ch <- protocol.ContainerDeleteResponse{Type: protocol.MessageTypeContainerDeleteResponse, Success: false, Error: reason}
+	}
+	for requestID, ch := range k8sMessages {
+		response := protocol.K8sGetSummaryResult{Type: protocol.MessageTypeK8sGetSummaryResult, RequestID: requestID, Success: false, Error: reason}
+		data, err := json.Marshal(response)
+		if err != nil {
+			continue
+		}
+		ch <- data
 	}
 }
 

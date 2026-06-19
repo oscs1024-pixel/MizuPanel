@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +16,7 @@ import (
 type Service struct {
 	store *Store
 	hub   AgentHub
+	debug bool
 }
 
 // AgentHub Agent 通信接口
@@ -30,33 +33,62 @@ func NewService(store *Store, hub AgentHub) *Service {
 	}
 }
 
+func (s *Service) SetDebug(debug bool) {
+	s.debug = debug
+}
+
 // ConnectClusterRequest 连接集群请求
 type ConnectClusterRequest struct {
-	Name           string `json:"name"`
-	NodeID         string `json:"node_id"`
-	KubeconfigPath string `json:"kubeconfig_path"`
-	Context        string `json:"context,omitempty"`
+	Name              string `json:"name"`
+	NodeID            string `json:"node_id"`
+	KubeconfigPath    string `json:"kubeconfig_path,omitempty"`
+	KubeconfigContent string `json:"kubeconfig_content"`
+	Context           string `json:"context,omitempty"`
 }
 
 // ConnectCluster 连接 K8s 集群
 func (s *Service) ConnectCluster(ctx context.Context, req *ConnectClusterRequest) (*Cluster, *ClusterInfo, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, nil, fmt.Errorf("集群名称不能为空")
+	}
+	if strings.TrimSpace(req.NodeID) == "" {
+		return nil, nil, fmt.Errorf("Agent 节点不能为空")
+	}
+	if strings.TrimSpace(req.KubeconfigContent) == "" {
+		return nil, nil, fmt.Errorf("kubeconfig 内容不能为空")
+	}
+
 	// 1. 验证节点在线
 	if !s.hub.IsNodeOnline(req.NodeID) {
 		return nil, nil, fmt.Errorf("Agent 节点离线，无法连接集群")
 	}
 
-	// 2. 通过 Agent 验证 kubeconfig
+	// 2. 生成 ClusterID
+	clusterID := uuid.New().String()
 	requestID := uuid.New().String()
+
+	// 3. 通过 Agent 验证 kubeconfig
 	agentReq := protocol.K8sClusterConnectRequest{
-		Type:           protocol.MessageTypeK8sClusterConnect,
-		RequestID:      requestID,
-		KubeconfigPath: req.KubeconfigPath,
-		Context:        req.Context,
+		Type:              protocol.MessageTypeK8sClusterConnect,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		KubeconfigContent: req.KubeconfigContent,
+		Context:           req.Context,
 	}
 
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] connect start request_id=%s cluster_id=%s node_id=%s context=%s", requestID, clusterID, req.NodeID, req.Context)
+	}
 	rawResp, err := s.hub.SendToNodeWithTimeout(req.NodeID, agentReq, 10*time.Second)
 	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] connect done request_id=%s cluster_id=%s node_id=%s elapsed=%s error=%v", requestID, clusterID, req.NodeID, time.Since(start), err)
+		}
 		return nil, nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] connect response request_id=%s cluster_id=%s node_id=%s elapsed=%s", requestID, clusterID, req.NodeID, time.Since(start))
 	}
 
 	var agentResp protocol.K8sClusterConnectResult
@@ -65,24 +97,31 @@ func (s *Service) ConnectCluster(ctx context.Context, req *ConnectClusterRequest
 	}
 
 	if !agentResp.Success {
+		if s.debug {
+			log.Printf("[debug][server][k8s] connect done request_id=%s cluster_id=%s node_id=%s elapsed=%s agent_success=false error=%s", requestID, clusterID, req.NodeID, time.Since(start), agentResp.Error)
+		}
 		return nil, nil, fmt.Errorf("连接失败: %s", agentResp.Error)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] connect done request_id=%s cluster_id=%s node_id=%s elapsed=%s success=true", requestID, clusterID, req.NodeID, time.Since(start))
 	}
 
 	// 3. 保存集群信息到数据库
 	now := time.Now()
 	cluster := &Cluster{
-		ID:             uuid.New().String(),
-		Name:           req.Name,
-		NodeID:         req.NodeID,
-		KubeconfigPath: req.KubeconfigPath,
-		Context:        req.Context,
-		Status:         "online",
-		Version:        agentResp.ClusterInfo.Version,
-		NodeCount:      agentResp.ClusterInfo.NodeCount,
-		NamespaceCount: agentResp.ClusterInfo.NamespaceCount,
-		LastSeenAt:     now,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:                clusterID,
+		Name:              req.Name,
+		NodeID:            req.NodeID,
+		KubeconfigPath:    req.KubeconfigPath,
+		KubeconfigContent: req.KubeconfigContent,
+		Context:           req.Context,
+		Status:            "online",
+		Version:           agentResp.ClusterInfo.Version,
+		NodeCount:         agentResp.ClusterInfo.NodeCount,
+		NamespaceCount:    agentResp.ClusterInfo.NamespaceCount,
+		LastSeenAt:        now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	if err := s.store.CreateCluster(cluster); err != nil {
@@ -110,7 +149,7 @@ func (s *Service) ListClusters() ([]*Cluster, error) {
 }
 
 // ListClustersWithNodeInfo 获取集群列表（包含节点信息）
-func (s *Service) ListClustersWithNodeInfo() ([]*ClusterWithNode, error) {
+func (s *Service) ListClustersWithNodeInfo() ([]*PublicClusterWithNode, error) {
 	return s.store.ListClustersWithNodeInfo()
 }
 
@@ -131,19 +170,34 @@ func (s *Service) GetPods(ctx context.Context, clusterID, namespace string) ([]p
 	if !s.hub.IsNodeOnline(cluster.NodeID) {
 		return nil, fmt.Errorf("Agent 节点离线")
 	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return nil, fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
 
 	// 3. 发送查询请求到 Agent
 	requestID := uuid.New().String()
 	agentReq := protocol.K8sGetPodsRequest{
-		Type:      protocol.MessageTypeK8sGetPods,
-		RequestID: requestID,
-		ClusterID: clusterID,
-		Namespace: namespace,
+		Type:              protocol.MessageTypeK8sGetPods,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		Namespace:         namespace,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
 	}
 
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] resource start type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s", agentReq.Type, requestID, clusterID, cluster.NodeID, namespace)
+	}
 	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, 15*time.Second)
 	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] resource done type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s error=%v", agentReq.Type, requestID, clusterID, cluster.NodeID, namespace, time.Since(start), err)
+		}
 		return nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] resource response type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s", agentReq.Type, requestID, clusterID, cluster.NodeID, namespace, time.Since(start))
 	}
 
 	var agentResp protocol.K8sGetPodsResult
@@ -152,7 +206,13 @@ func (s *Service) GetPods(ctx context.Context, clusterID, namespace string) ([]p
 	}
 
 	if !agentResp.Success {
+		if s.debug {
+			log.Printf("[debug][server][k8s] resource done type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s agent_success=false error=%s", agentReq.Type, requestID, clusterID, cluster.NodeID, namespace, time.Since(start), agentResp.Error)
+		}
 		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] resource done type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s success=true", agentReq.Type, requestID, clusterID, cluster.NodeID, namespace, time.Since(start))
 	}
 
 	return agentResp.Pods, nil
@@ -170,18 +230,23 @@ func (s *Service) GetPodLogs(ctx context.Context, clusterID, namespace, podName,
 	if !s.hub.IsNodeOnline(cluster.NodeID) {
 		return "", fmt.Errorf("Agent 节点离线")
 	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return "", fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
 
 	// 3. 发送日志请求到 Agent
 	requestID := uuid.New().String()
 	agentReq := protocol.K8sGetPodLogsRequest{
-		Type:      protocol.MessageTypeK8sGetPodLogs,
-		RequestID: requestID,
-		ClusterID: clusterID,
-		Namespace: namespace,
-		PodName:   podName,
-		Container: container,
-		Follow:    follow,
-		TailLines: tailLines,
+		Type:              protocol.MessageTypeK8sGetPodLogs,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		Namespace:         namespace,
+		PodName:           podName,
+		Container:         container,
+		Follow:            follow,
+		TailLines:         tailLines,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
 	}
 
 	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, 10*time.Second)
@@ -199,4 +264,161 @@ func (s *Service) GetPodLogs(ctx context.Context, clusterID, namespace, podName,
 	}
 
 	return agentResp.Logs, nil
+}
+
+func (s *Service) resourceRequest(ctx context.Context, clusterID, namespace, msgType string, timeout time.Duration) (json.RawMessage, *Cluster, error) {
+	cluster, err := s.store.GetCluster(clusterID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !s.hub.IsNodeOnline(cluster.NodeID) {
+		return nil, nil, fmt.Errorf("Agent 节点离线")
+	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return nil, nil, fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
+	requestID := uuid.New().String()
+	agentReq := protocol.K8sResourceRequest{
+		Type:              msgType,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		Namespace:         namespace,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
+	}
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] resource start type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s", msgType, requestID, clusterID, cluster.NodeID, namespace)
+	}
+	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, timeout)
+	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] resource done type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s error=%v", msgType, requestID, clusterID, cluster.NodeID, namespace, time.Since(start), err)
+		}
+		return nil, nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] resource response type=%s request_id=%s cluster_id=%s node_id=%s namespace=%s elapsed=%s", msgType, requestID, clusterID, cluster.NodeID, namespace, time.Since(start))
+	}
+	return rawResp, cluster, nil
+}
+
+func (s *Service) GetSummary(ctx context.Context, clusterID string) (*protocol.K8sResourceSummary, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, "", protocol.MessageTypeK8sGetSummary, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetSummaryResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Summary, nil
+}
+
+func (s *Service) GetNamespaces(ctx context.Context, clusterID string) ([]protocol.K8sNamespace, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, "", protocol.MessageTypeK8sGetNamespaces, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetNamespacesResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Namespaces, nil
+}
+
+func (s *Service) GetNodes(ctx context.Context, clusterID string) ([]protocol.K8sNode, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, "", protocol.MessageTypeK8sGetNodes, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetNodesResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Nodes, nil
+}
+
+func (s *Service) GetDeployments(ctx context.Context, clusterID, namespace string) ([]protocol.K8sDeployment, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, namespace, protocol.MessageTypeK8sGetDeployments, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetDeploymentsResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Deployments, nil
+}
+
+func (s *Service) GetStatefulSets(ctx context.Context, clusterID, namespace string) ([]protocol.K8sStatefulSet, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, namespace, protocol.MessageTypeK8sGetStatefulSets, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetStatefulSetsResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.StatefulSets, nil
+}
+
+func (s *Service) GetDaemonSets(ctx context.Context, clusterID, namespace string) ([]protocol.K8sDaemonSet, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, namespace, protocol.MessageTypeK8sGetDaemonSets, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetDaemonSetsResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.DaemonSets, nil
+}
+
+func (s *Service) GetServices(ctx context.Context, clusterID, namespace string) ([]protocol.K8sService, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, namespace, protocol.MessageTypeK8sGetServices, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetServicesResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Services, nil
+}
+
+func (s *Service) GetIngresses(ctx context.Context, clusterID, namespace string) ([]protocol.K8sIngress, error) {
+	rawResp, _, err := s.resourceRequest(ctx, clusterID, namespace, protocol.MessageTypeK8sGetIngresses, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var agentResp protocol.K8sGetIngressesResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	return agentResp.Ingresses, nil
 }

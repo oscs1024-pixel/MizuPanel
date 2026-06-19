@@ -5,13 +5,15 @@ import { Toast } from '../components/Toast'
 
 type K8sClustersPageProps = {
   onConnectCluster: () => void
+  onViewDetail?: (clusterID: string) => void
 }
 
-export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
+export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersPageProps) {
   const [clusters, setClusters] = useState<K8sCluster[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [pendingDeleteID, setPendingDeleteID] = useState<string | null>(null)
 
   const loadClusters = useCallback(() => {
     setLoading(true)
@@ -33,24 +35,17 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
     loadClusters()
   }, [loadClusters])
 
-  const handleDeleteCluster = useCallback((clusterID: string, clusterName: string) => {
-    if (!window.confirm(`确定要删除集群 "${clusterName}" 吗？`)) {
-      return
-    }
-
+  const handleDeleteCluster = useCallback((clusterID: string) => {
     deleteK8sCluster(clusterID)
       .then(() => {
         setToast({ message: '集群删除成功', type: 'success' })
+        setPendingDeleteID(null)
         loadClusters()
       })
       .catch((err: Error) => {
         setToast({ message: `集群删除失败: ${err.message}`, type: 'error' })
       })
   }, [loadClusters])
-
-  const handleViewDetail = useCallback((clusterID: string) => {
-    window.location.href = `/k8s/clusters/${clusterID}`
-  }, [])
 
   if (loading) {
     return (
@@ -117,8 +112,11 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
             <ClusterCard
               key={cluster.id}
               cluster={cluster}
-              onDelete={handleDeleteCluster}
-              onViewDetail={handleViewDetail}
+              pendingDelete={pendingDeleteID === cluster.id}
+              onRequestDelete={setPendingDeleteID}
+              onCancelDelete={() => setPendingDeleteID(null)}
+              onConfirmDelete={handleDeleteCluster}
+              onViewDetail={onViewDetail}
             />
           ))}
         </div>
@@ -129,11 +127,14 @@ export function K8sClustersPage({ onConnectCluster }: K8sClustersPageProps) {
 
 type ClusterCardProps = {
   cluster: K8sCluster
-  onDelete: (clusterID: string, clusterName: string) => void
+  pendingDelete: boolean
+  onRequestDelete: (clusterID: string) => void
+  onCancelDelete: () => void
+  onConfirmDelete: (clusterID: string) => void
   onViewDetail?: (clusterID: string) => void
 }
 
-function ClusterCard({ cluster, onDelete, onViewDetail }: ClusterCardProps) {
+function ClusterCard({ cluster, pendingDelete, onRequestDelete, onCancelDelete, onConfirmDelete, onViewDetail }: ClusterCardProps) {
   const isOnline = cluster.status === 'online'
 
   return (
@@ -169,13 +170,20 @@ function ClusterCard({ cluster, onDelete, onViewDetail }: ClusterCardProps) {
         >
           查看详情
         </button>
-        <button
-          type="button"
-          onClick={() => onDelete(cluster.id, cluster.name)}
-          className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20"
-        >
-          删除
-        </button>
+        {pendingDelete ? (
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => onConfirmDelete(cluster.id)} className="rounded-lg bg-destructive px-3 py-2 text-xs font-bold text-destructive-foreground transition hover:bg-destructive/90">
+              确认删除
+            </button>
+            <button type="button" onClick={onCancelDelete} className="rounded-lg border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground transition hover:bg-muted">
+              取消
+            </button>
+          </div>
+        ) : (
+          <button type="button" onClick={() => onRequestDelete(cluster.id)} className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20">
+            删除
+          </button>
+        )}
       </div>
     </div>
   )

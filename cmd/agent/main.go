@@ -58,6 +58,10 @@ func runAgent(ctx context.Context, configPath string) error {
 		initialSnapshot.Hostname = cfg.Name
 	}
 	client := agentws.NewClient(cfg.ServerURL, cfg.Token)
+	client.SetDebug(cfg.Debug)
+	if cfg.Debug {
+		log.Printf("[debug][agent] debug logging enabled")
+	}
 	client.SetAgentManagementHandler(agentmanagement.NewHandler(agentmanagement.Options{
 		Version:         "0.1.0",
 		User:            currentUsername(),
@@ -80,7 +84,9 @@ func runAgent(ctx context.Context, configPath string) error {
 		return agentdocker.NewExecManager(cfg.EnableDocker && cfg.EnableTerminal, sender)
 	})
 	client.SetLogTailHandler(agentlogtail.NewHandler())
-	client.SetKubectlHandler(agentkubectl.NewHandler())
+	kubectlHandler := agentkubectl.NewHandler()
+	kubectlHandler.SetDebug(cfg.Debug)
+	client.SetKubectlHandler(kubectlHandler)
 	if dockerCollector != nil {
 		client.SetContainerLogsHandler(agentdocker.NewLogsHandler(dockerCollector))
 		client.SetDockerExecHandler(agentdocker.NewExecHandler())

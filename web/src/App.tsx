@@ -124,7 +124,8 @@ const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts'
 ]
 
 export default function App() {
-  const route = useMemo(() => currentRoute(), [])
+  const [routeVersion, setRouteVersion] = useState(0)
+  const route = useMemo(() => currentRoute(), [routeVersion])
   const [page, setPage] = useState<AppPage>(route.kind === 'history' ? 'history' : route.kind === 'settings' ? 'settings' : route.kind === 'alerts' ? 'alerts' : route.kind === 'logs' ? 'logs' : route.kind === 'overview' ? 'overview' : route.kind === 'k8s-clusters' || route.kind === 'k8s-cluster-detail' ? 'k8s' : 'hosts')
   const [theme, setTheme] = useState<ThemeMode>(() => storedTheme())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storedSidebarCollapsed())
@@ -554,12 +555,14 @@ export default function App() {
     setSelectedK8sClusterID(clusterID)
     const path = `/k8s/clusters/${encodeURIComponent(clusterID)}`
     window.history.pushState({}, '', path)
+    setRouteVersion(v => v + 1)
   }
 
   const backToK8sClusters = () => {
     setSelectedK8sClusterID(undefined)
     const path = '/k8s/clusters'
     window.history.pushState({}, '', path)
+    setRouteVersion(v => v + 1)
   }
 
   const saveSettings = () => {
@@ -1153,6 +1156,7 @@ export default function App() {
                   <>
                     <K8sClustersPage
                       onConnectCluster={() => setConnectK8sClusterModalOpen(true)}
+                      onViewDetail={openK8sClusterDetail}
                     />
                     <ConnectK8sClusterModal
                       open={connectK8sClusterModalOpen}

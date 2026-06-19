@@ -1,24 +1,76 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchK8sCluster, fetchK8sPods } from '../api/k8s'
-import type { K8sCluster, K8sPod } from '../types'
+import {
+  fetchK8sCluster,
+  fetchK8sSummary,
+  fetchK8sNamespaces,
+  fetchK8sNodes,
+  fetchK8sPods,
+  fetchK8sDeployments,
+  fetchK8sStatefulSets,
+  fetchK8sDaemonSets,
+  fetchK8sServices,
+  fetchK8sIngresses,
+} from '../api/k8s'
+import type {
+  K8sCluster,
+  K8sResourceSummary,
+  K8sNamespace,
+  K8sNode,
+  K8sPod,
+  K8sDeployment,
+  K8sStatefulSet,
+  K8sDaemonSet,
+  K8sService,
+  K8sIngress,
+} from '../types'
 import { Toast } from '../components/Toast'
 import K8sPodLogsModal from '../components/K8sPodLogsModal'
+import { K8sNamespaceTable } from '../components/k8s/K8sNamespaceTable'
+import { K8sNodeTable } from '../components/k8s/K8sNodeTable'
+import { K8sPodTable } from '../components/k8s/K8sPodTable'
+import { K8sWorkloadTable } from '../components/k8s/K8sWorkloadTable'
+import { K8sServiceTable } from '../components/k8s/K8sServiceTable'
+import { K8sIngressTable } from '../components/k8s/K8sIngressTable'
 
 type K8sClusterDetailPageProps = {
   clusterId: string
   onBack: () => void
 }
 
-type DetailTab = 'overview' | 'pods'
+type DetailTab = 'overview' | 'namespaces' | 'nodes' | 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'services' | 'ingresses'
+
+function tabLabel(tab: DetailTab): string {
+  const labels: Record<DetailTab, string> = {
+    overview: '集群概览',
+    namespaces: 'Namespace 列表',
+    nodes: 'Node 列表',
+    pods: 'Pod 列表',
+    deployments: 'Deployment 列表',
+    statefulsets: 'StatefulSet 列表',
+    daemonsets: 'DaemonSet 列表',
+    services: 'Service 列表',
+    ingresses: 'Ingress 列表',
+  }
+  return labels[tab]
+}
 
 export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPageProps) {
   const [cluster, setCluster] = useState<K8sCluster>()
+  const [summary, setSummary] = useState<K8sResourceSummary>()
+  const [namespaces, setNamespaces] = useState<K8sNamespace[]>([])
+  const [nodes, setNodes] = useState<K8sNode[]>([])
   const [pods, setPods] = useState<K8sPod[]>([])
+  const [deployments, setDeployments] = useState<K8sDeployment[]>([])
+  const [statefulsets, setStatefulSets] = useState<K8sStatefulSet[]>([])
+  const [daemonsets, setDaemonSets] = useState<K8sDaemonSet[]>([])
+  const [services, setServices] = useState<K8sService[]>([])
+  const [ingresses, setIngresses] = useState<K8sIngress[]>([])
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
   const [namespace, setNamespace] = useState<string>('')
   const [podSearch, setPodSearch] = useState('')
   const [loading, setLoading] = useState(true)
-  const [podsLoading, setPodsLoading] = useState(false)
+  const [resourcesLoading, setResourcesLoading] = useState(false)
+  const [resourceError, setResourceError] = useState<string>()
   const [error, setError] = useState<string>()
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [logsModal, setLogsModal] = useState<{ open: boolean; namespace: string; podName: string }>({
@@ -43,33 +95,59 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
       })
   }, [clusterId])
 
-  const loadPods = useCallback(() => {
-    setPodsLoading(true)
-    fetchK8sPods(clusterId, namespace || undefined)
-      .then((response) => {
-        if (response.success) {
-          setPods(response.pods)
-        } else {
-          setToast({ message: 'Pod 列表加载失败', type: 'error' })
-        }
-      })
-      .catch((err: Error) => {
-        setToast({ message: `Pod 列表加载失败: ${err.message}`, type: 'error' })
-      })
-      .finally(() => {
-        setPodsLoading(false)
-      })
-  }, [clusterId, namespace])
+  const loadActiveResource = useCallback(() => {
+    if (!cluster || cluster.status !== 'online') return
+    setResourcesLoading(true)
+    setResourceError(undefined)
+
+    const fail = (label: string, err: Error) => {
+      setResourceError(`${label}加载失败: ${err.message}`)
+      setToast({ message: `${label}加载失败: ${err.message}`, type: 'error' })
+    }
+
+    let request: Promise<unknown>
+    switch (activeTab) {
+      case 'overview':
+        request = fetchK8sSummary(clusterId).then((response) => setSummary(response.summary))
+        break
+      case 'namespaces':
+        request = fetchK8sNamespaces(clusterId).then((response) => setNamespaces(response.namespaces))
+        break
+      case 'nodes':
+        request = fetchK8sNodes(clusterId).then((response) => setNodes(response.nodes))
+        break
+      case 'pods':
+        request = fetchK8sPods(clusterId, namespace || undefined).then((response) => setPods(response.pods))
+        break
+      case 'deployments':
+        request = fetchK8sDeployments(clusterId, namespace || undefined).then((response) => setDeployments(response.deployments))
+        break
+      case 'statefulsets':
+        request = fetchK8sStatefulSets(clusterId, namespace || undefined).then((response) => setStatefulSets(response.statefulsets))
+        break
+      case 'daemonsets':
+        request = fetchK8sDaemonSets(clusterId, namespace || undefined).then((response) => setDaemonSets(response.daemonsets))
+        break
+      case 'services':
+        request = fetchK8sServices(clusterId, namespace || undefined).then((response) => setServices(response.services))
+        break
+      case 'ingresses':
+        request = fetchK8sIngresses(clusterId, namespace || undefined).then((response) => setIngresses(response.ingresses))
+        break
+    }
+
+    request.catch((err: Error) => fail(tabLabel(activeTab), err)).finally(() => setResourcesLoading(false))
+  }, [activeTab, cluster, clusterId, namespace])
 
   useEffect(() => {
     loadCluster()
   }, [loadCluster])
 
   useEffect(() => {
-    if (activeTab === 'pods' && cluster?.status === 'online') {
-      loadPods()
+    if (cluster?.status === 'online') {
+      loadActiveResource()
     }
-  }, [activeTab, cluster?.status, loadPods])
+  }, [activeTab, cluster?.status, loadActiveResource])
 
   const filteredPods = pods.filter((pod) => {
     if (!podSearch) return true
@@ -159,43 +237,68 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
       </div>
 
       {/* Tabs */}
-      <div className="mb-6 flex gap-2 border-b border-border">
-        <button
-          type="button"
-          onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 text-sm font-bold transition ${
-            activeTab === 'overview'
-              ? 'border-b-2 border-primary text-primary'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          概览
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('pods')}
-          className={`px-4 py-2 text-sm font-bold transition ${
-            activeTab === 'pods'
-              ? 'border-b-2 border-primary text-primary'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Pod 列表
-        </button>
+      <div className="mb-6 flex gap-2 border-b border-border overflow-x-auto">
+        {(['overview', 'namespaces', 'nodes', 'pods', 'deployments', 'statefulsets', 'daemonsets', 'services', 'ingresses'] as DetailTab[]).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-sm font-bold transition whitespace-nowrap ${
+              activeTab === tab
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tabLabel(tab).replace(' 列表', '')}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
+      {activeTab !== 'overview' && resourceError && isOnline && (
+        <div className="mb-4">
+          <ResourceError message={resourceError} onRetry={loadActiveResource} compact />
+        </div>
+      )}
       {activeTab === 'overview' && (
         <div className="space-y-4">
           {/* Cluster Info */}
-          {cluster.version && (
-            <div className="rounded-[14px] border border-border bg-card p-5 shadow-sm">
-              <h3 className="mb-4 text-base font-black text-foreground">集群信息</h3>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <InfoCard label="Kubernetes 版本" value={cluster.version} />
-                <InfoCard label="节点数量" value={cluster.node_count?.toString() || '0'} />
-                <InfoCard label="命名空间数量" value={cluster.namespace_count?.toString() || '0'} />
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看集群信息</p>
+            </div>
+          ) : resourcesLoading ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <div className="mb-3 inline-block h-6 w-6 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+              <p className="text-sm font-semibold text-muted-foreground">加载集群信息...</p>
+            </div>
+          ) : resourceError ? (
+            <ResourceError message={resourceError} onRetry={loadActiveResource} />
+          ) : summary ? (
+            <>
+              <div className="rounded-[14px] border border-border bg-card p-5 shadow-sm">
+                <h3 className="mb-4 text-base font-black text-foreground">集群信息</h3>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <InfoCard label="Kubernetes 版本" value={summary.version} />
+                  <InfoCard label="节点数量" value={summary.node_count.toString()} />
+                  <InfoCard label="命名空间数量" value={summary.namespace_count.toString()} />
+                </div>
               </div>
+              <div className="rounded-[14px] border border-border bg-card p-5 shadow-sm">
+                <h3 className="mb-4 text-base font-black text-foreground">资源统计</h3>
+                <div className="grid gap-4 sm:grid-cols-3 md:grid-cols-6">
+                  <InfoCard label="Pods" value={summary.pod_count.toString()} />
+                  <InfoCard label="Deployments" value={summary.deployment_count.toString()} />
+                  <InfoCard label="StatefulSets" value={summary.statefulset_count.toString()} />
+                  <InfoCard label="DaemonSets" value={summary.daemonset_count.toString()} />
+                  <InfoCard label="Services" value={summary.service_count.toString()} />
+                  <InfoCard label="Ingresses" value={summary.ingress_count.toString()} />
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">暂无集群信息</p>
             </div>
           )}
 
@@ -203,7 +306,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
           <div className="rounded-[14px] border border-border bg-card p-5 shadow-sm">
             <h3 className="mb-4 text-base font-black text-foreground">连接信息</h3>
             <div className="space-y-3">
-              <InfoRow label="kubeconfig 路径" value={cluster.kubeconfig_path} />
+              {cluster.kubeconfig_path && <InfoRow label="kubeconfig 路径" value={cluster.kubeconfig_path} />}
               {cluster.context && <InfoRow label="Context" value={cluster.context} />}
               <InfoRow label="创建时间" value={new Date(cluster.created_at).toLocaleString('zh-CN')} />
               {cluster.last_seen_at && (
@@ -211,6 +314,50 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'namespaces' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Namespace 列表</p>
+            </div>
+          ) : (
+            <K8sNamespaceTable items={namespaces} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'nodes' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Node 列表</p>
+            </div>
+          ) : (
+            <K8sNodeTable items={nodes} loading={resourcesLoading} />
+          )}
         </div>
       )}
 
@@ -234,11 +381,11 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
             />
             <button
               type="button"
-              onClick={loadPods}
-              disabled={podsLoading || !isOnline}
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
             >
-              {podsLoading ? '加载中...' : '刷新'}
+              {resourcesLoading ? '加载中...' : '刷新'}
             </button>
           </div>
 
@@ -247,67 +394,181 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
             <div className="rounded-[14px] border border-border bg-card p-8 text-center">
               <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Pod 列表</p>
             </div>
-          ) : podsLoading ? (
-            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
-              <div className="mb-3 inline-block h-6 w-6 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-              <p className="text-sm font-semibold text-muted-foreground">加载 Pod 列表...</p>
-            </div>
-          ) : filteredPods.length === 0 ? (
+          ) : filteredPods.length === 0 && !resourcesLoading ? (
             <div className="rounded-[14px] border border-border bg-card p-8 text-center">
               <p className="text-sm font-semibold text-muted-foreground">
                 {pods.length === 0 ? '暂无 Pod' : '没有匹配的 Pod'}
               </p>
             </div>
           ) : (
-            <div className="rounded-[14px] border border-border bg-card shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">名称</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">命名空间</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">状态</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">就绪</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">重启次数</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">节点</th>
-                      <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPods.map((pod, index) => (
-                      <tr key={`${pod.namespace}/${pod.name}`} className={index % 2 === 0 ? 'bg-card' : 'bg-muted/10'}>
-                        <td className="px-4 py-3 text-sm font-semibold text-foreground">{pod.name}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-muted-foreground">{pod.namespace}</td>
-                        <td className="px-4 py-3">
-                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${
-                            pod.status === 'Running' ? 'bg-success/10 text-success' :
-                            pod.status === 'Pending' ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' :
-                            'bg-destructive/10 text-destructive'
-                          }`}>
-                            {pod.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm font-semibold text-muted-foreground">{pod.ready}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-muted-foreground">{pod.restarts}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-muted-foreground">{pod.node}</td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => setLogsModal({ open: true, namespace: pod.namespace, podName: pod.name })}
-                            className="rounded-lg border border-border bg-surface px-3 py-1 text-xs font-bold text-foreground transition hover:bg-muted"
-                          >
-                            查看日志
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <K8sPodTable
+              items={filteredPods}
+              loading={resourcesLoading}
+              onViewLogs={(ns, name) => setLogsModal({ open: true, namespace: ns, podName: name })}
+            />
           )}
         </div>
       )}
+
+      {activeTab === 'deployments' && (
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="命名空间 (留空查看全部)"
+              className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Deployment 列表</p>
+            </div>
+          ) : (
+            <K8sWorkloadTable mode="deployment" items={deployments} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'statefulsets' && (
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="命名空间 (留空查看全部)"
+              className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 StatefulSet 列表</p>
+            </div>
+          ) : (
+            <K8sWorkloadTable mode="statefulset" items={statefulsets} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'daemonsets' && (
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="命名空间 (留空查看全部)"
+              className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 DaemonSet 列表</p>
+            </div>
+          ) : (
+            <K8sWorkloadTable mode="daemonset" items={daemonsets} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'services' && (
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="命名空间 (留空查看全部)"
+              className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Service 列表</p>
+            </div>
+          ) : (
+            <K8sServiceTable items={services} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'ingresses' && (
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="命名空间 (留空查看全部)"
+              className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              onClick={loadActiveResource}
+              disabled={resourcesLoading || !isOnline}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {resourcesLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          {!isOnline ? (
+            <div className="rounded-[14px] border border-border bg-card p-8 text-center">
+              <p className="text-sm font-semibold text-muted-foreground">集群离线，无法查看 Ingress 列表</p>
+            </div>
+          ) : (
+            <K8sIngressTable items={ingresses} loading={resourcesLoading} />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ResourceError({ message, onRetry, compact = false }: { message: string; onRetry: () => void; compact?: boolean }) {
+  return (
+    <div className={`rounded-[14px] border border-destructive/30 bg-destructive/5 text-center ${compact ? 'p-4' : 'p-8'}`}>
+      <p className="text-sm font-bold text-destructive">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+      >
+        重试
+      </button>
     </div>
   )
 }

@@ -52,6 +52,8 @@ runtime:
 features:
   docker: true
   terminal: true
+logging:
+  debug: true
 `)
 	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -75,6 +77,35 @@ features:
 	}
 	if cfg.AgentMode != "ops" {
 		t.Fatalf("AgentMode = %q, want ops", cfg.AgentMode)
+	}
+	if !cfg.Debug {
+		t.Fatal("Debug = false, want true")
+	}
+}
+
+func TestLoadDebugEnvironmentOverridesFile(t *testing.T) {
+	t.Setenv("MIZUPANEL_DEBUG", "false")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	content := []byte("logging:\n  debug: true\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Debug {
+		t.Fatal("Debug = true, want false from MIZUPANEL_DEBUG override")
+	}
+}
+
+func TestLoadRejectsInvalidDebugEnvironment(t *testing.T) {
+	t.Setenv("MIZUPANEL_DEBUG", "not-bool")
+	_, err := Load("")
+	if err == nil || !strings.Contains(err.Error(), "MIZUPANEL_DEBUG") {
+		t.Fatalf("Load error = %v, want MIZUPANEL_DEBUG parse error", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,6 +154,90 @@ func TestRunRespondsToAgentManagementRequests(t *testing.T) {
 	if response.Type != protocol.MessageTypeAgentStatusResponse || response.RequestID != "req-status" || response.User != "root" || response.Mode != "ops" || !response.TerminalEnabled {
 		t.Fatalf("status response = %#v", response)
 	}
+}
+
+func TestRunDispatchesAllK8sResourceRequests(t *testing.T) {
+	k8sTypes := []string{
+		protocol.MessageTypeK8sClusterConnect,
+		protocol.MessageTypeK8sGetSummary,
+		protocol.MessageTypeK8sGetNamespaces,
+		protocol.MessageTypeK8sGetNodes,
+		protocol.MessageTypeK8sGetPods,
+		protocol.MessageTypeK8sGetDeployments,
+		protocol.MessageTypeK8sGetStatefulSets,
+		protocol.MessageTypeK8sGetDaemonSets,
+		protocol.MessageTypeK8sGetServices,
+		protocol.MessageTypeK8sGetIngresses,
+		protocol.MessageTypeK8sGetPodLogs,
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		var hello protocol.HelloMessage
+		if err := conn.ReadJSON(&hello); err != nil {
+			t.Errorf("read hello: %v", err)
+			return
+		}
+		if err := conn.WriteJSON(protocol.HelloAckMessage{Type: protocol.MessageTypeHelloAck, NodeID: "node-1", Interval: 1}); err != nil {
+			t.Errorf("write ack: %v", err)
+			return
+		}
+		var metric protocol.MetricsMessage
+		if err := conn.ReadJSON(&metric); err != nil {
+			t.Errorf("read metric: %v", err)
+			return
+		}
+		for _, msgType := range k8sTypes {
+			request := protocol.K8sResourceRequest{Type: msgType, RequestID: msgType, ClusterID: "cluster-1"}
+			if err := conn.WriteJSON(request); err != nil {
+				t.Errorf("write k8s request: %v", err)
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	dispatched := make(chan string, len(k8sTypes))
+	client := NewClient("ws"+strings.TrimPrefix(server.URL, "http"), "")
+	client.SetKubectlHandler(fakeKubectlHandler{handled: dispatched})
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Run(ctx, protocol.HelloMessage{Type: protocol.MessageTypeHello, Hostname: "oracle-sg"}, time.Hour, func(nodeID string, timestamp int64) (protocol.MetricsMessage, error) {
+			return protocol.MetricsMessage{Type: protocol.MessageTypeMetrics, NodeID: nodeID, Timestamp: timestamp}, nil
+		})
+	}()
+
+	deadline := time.After(2 * time.Second)
+	seen := map[string]bool{}
+	for len(seen) < len(k8sTypes) {
+		select {
+		case msgType := <-dispatched:
+			seen[msgType] = true
+		case <-deadline:
+			t.Fatalf("dispatched types = %#v, want all %#v", seen, k8sTypes)
+		}
+	}
+	cancel()
+	if err := <-done; err != nil && err != context.Canceled && !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("Run returned error: %v", err)
+	}
+}
+
+type fakeKubectlHandler struct {
+	handled chan<- string
+}
+
+func (h fakeKubectlHandler) Handle(_ context.Context, msgType string, _ json.RawMessage, _ func(interface{}) error) error {
+	h.handled <- msgType
+	return nil
 }
 
 type fakeAgentManagementHandler struct{}

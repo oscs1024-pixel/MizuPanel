@@ -52,7 +52,7 @@ func (s *Server) handleConnectK8sCluster(k8sService *k8s.Service, w http.Respons
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
-		"cluster":      cluster,
+		"cluster":      cluster.Public(),
 		"cluster_info": clusterInfo,
 	})
 }
@@ -89,6 +89,35 @@ func (s *Server) handleK8sClusterRoutes(k8sService *k8s.Service) http.HandlerFun
 			return
 		}
 
+		if len(parts) == 2 {
+			switch parts[1] {
+			case "summary":
+				s.handleGetK8sSummary(k8sService, clusterID, w, r)
+				return
+			case "namespaces":
+				s.handleGetK8sNamespaces(k8sService, clusterID, w, r)
+				return
+			case "nodes":
+				s.handleGetK8sNodes(k8sService, clusterID, w, r)
+				return
+			case "deployments":
+				s.handleGetK8sDeployments(k8sService, clusterID, w, r)
+				return
+			case "statefulsets":
+				s.handleGetK8sStatefulSets(k8sService, clusterID, w, r)
+				return
+			case "daemonsets":
+				s.handleGetK8sDaemonSets(k8sService, clusterID, w, r)
+				return
+			case "services":
+				s.handleGetK8sServices(k8sService, clusterID, w, r)
+				return
+			case "ingresses":
+				s.handleGetK8sIngresses(k8sService, clusterID, w, r)
+				return
+			}
+		}
+
 		// /api/k8s/clusters/:id/pods/:namespace/:name/logs
 		if len(parts) == 5 && parts[1] == "pods" && parts[4] == "logs" {
 			namespace := parts[2]
@@ -110,7 +139,7 @@ func (s *Server) handleGetK8sCluster(k8sService *k8s.Service, clusterID string, 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"cluster": cluster,
+		"cluster": cluster.Public(),
 	})
 }
 
@@ -173,4 +202,108 @@ func (s *Server) handleGetK8sPodLogs(k8sService *k8s.Service, clusterID, namespa
 		"success": true,
 		"logs":    logs,
 	})
+}
+
+func (s *Server) handleGetK8sSummary(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	summary, err := k8sService.GetSummary(r.Context(), clusterID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "summary": summary})
+}
+
+func (s *Server) handleGetK8sNamespaces(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	namespaces, err := k8sService.GetNamespaces(r.Context(), clusterID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "namespaces": namespaces})
+}
+
+func (s *Server) handleGetK8sNodes(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	nodes, err := k8sService.GetNodes(r.Context(), clusterID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "nodes": nodes})
+}
+
+func (s *Server) handleGetK8sDeployments(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	deployments, err := k8sService.GetDeployments(r.Context(), clusterID, r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "deployments": deployments})
+}
+
+func (s *Server) handleGetK8sStatefulSets(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	statefulSets, err := k8sService.GetStatefulSets(r.Context(), clusterID, r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "statefulsets": statefulSets})
+}
+
+func (s *Server) handleGetK8sDaemonSets(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	daemonSets, err := k8sService.GetDaemonSets(r.Context(), clusterID, r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "daemonsets": daemonSets})
+}
+
+func (s *Server) handleGetK8sServices(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	services, err := k8sService.GetServices(r.Context(), clusterID, r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "services": services})
+}
+
+func (s *Server) handleGetK8sIngresses(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	ingresses, err := k8sService.GetIngresses(r.Context(), clusterID, r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "ingresses": ingresses})
 }

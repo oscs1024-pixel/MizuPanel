@@ -13,7 +13,7 @@ type ConnectK8sClusterModalProps = {
 export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess }: ConnectK8sClusterModalProps) {
   const [name, setName] = useState('')
   const [nodeId, setNodeId] = useState('')
-  const [kubeconfigPath, setKubeconfigPath] = useState('/root/.kube/config')
+  const [kubeconfigContent, setKubeconfigContent] = useState('')
   const [context, setContext] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string>()
@@ -29,7 +29,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
     if (!open) {
       setName('')
       setNodeId(nodes.length > 0 ? nodes[0].id : '')
-      setKubeconfigPath('/root/.kube/config')
+      setKubeconfigContent('')
       setContext('')
       setConnecting(false)
       setError(undefined)
@@ -45,8 +45,8 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
       setError('请选择 Agent 节点')
       return
     }
-    if (!kubeconfigPath.trim()) {
-      setError('请输入 kubeconfig 文件路径')
+    if (!kubeconfigContent.trim()) {
+      setError('请输入 kubeconfig 内容')
       return
     }
 
@@ -56,7 +56,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
     const request: ConnectK8sClusterRequest = {
       name: name.trim(),
       node_id: nodeId,
-      kubeconfig_path: kubeconfigPath.trim(),
+      kubeconfig_content: kubeconfigContent.trim(),
       context: context.trim() || undefined
     }
 
@@ -101,7 +101,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
           <div className="mb-6 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-black text-foreground">连接 K8s 集群</h2>
-              <p className="mt-1 text-sm text-muted-foreground">通过 Agent 节点上的 kubeconfig 文件连接集群</p>
+              <p className="mt-1 text-sm text-muted-foreground">上传或粘贴 kubeconfig 内容，通过选定 Agent 访问集群</p>
             </div>
             <button
               type="button"
@@ -155,25 +155,25 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
                 </select>
               )}
               <p className="mt-1 text-xs text-muted-foreground">
-                选择安装了 kubectl 并配置了 kubeconfig 的 Agent 节点
+                选择网络可以访问 Kubernetes API Server 的 Agent 节点
               </p>
             </div>
 
-            {/* Kubeconfig Path */}
+            {/* Kubeconfig Content */}
             <div>
-              <label htmlFor="kubeconfig-path" className="mb-2 block text-sm font-bold text-foreground">
-                kubeconfig 文件路径 <span className="text-destructive">*</span>
+              <label htmlFor="kubeconfig-content" className="mb-2 block text-sm font-bold text-foreground">
+                kubeconfig 内容 <span className="text-destructive">*</span>
               </label>
-              <input
-                id="kubeconfig-path"
-                type="text"
-                value={kubeconfigPath}
-                onChange={(e) => setKubeconfigPath(e.target.value)}
-                placeholder="/root/.kube/config"
-                className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              <textarea
+                id="kubeconfig-content"
+                value={kubeconfigContent}
+                onChange={(e) => setKubeconfigContent(e.target.value)}
+                placeholder={"apiVersion: v1\nkind: Config\nclusters:\n  - cluster: ..."}
+                rows={10}
+                className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 font-mono text-xs font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
               <p className="mt-1 text-xs text-muted-foreground">
-                kubeconfig 文件保留在 Agent 节点上，不会上传到 Server
+                kubeconfig 内容会保存在本地 Server 数据库中，不会在页面详情或日志中展示。
               </p>
             </div>
 

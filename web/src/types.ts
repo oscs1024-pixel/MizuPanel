@@ -358,7 +358,7 @@ export type K8sCluster = {
   node_id: string
   node_name: string
   node_ip: string
-  kubeconfig_path: string
+  kubeconfig_path?: string
   context?: string
   status: 'online' | 'offline'
   version?: string
@@ -382,7 +382,7 @@ export type K8sClustersResponse = {
 export type ConnectK8sClusterRequest = {
   name: string
   node_id: string
-  kubeconfig_path: string
+  kubeconfig_content: string
   context?: string
 }
 
@@ -391,6 +391,35 @@ export type ConnectK8sClusterResponse = {
   cluster: K8sCluster
   cluster_info: K8sClusterInfo
 }
+
+export type K8sResourceSummary = {
+  version: string
+  node_count: number
+  namespace_count: number
+  pod_count: number
+  deployment_count: number
+  statefulset_count: number
+  daemonset_count: number
+  service_count: number
+  ingress_count: number
+}
+
+export type K8sNamespace = { name: string; status: string; age: string }
+export type K8sNode = { name: string; status: string; roles: string; version: string; internal_ip: string; pod_cidr?: string; age: string }
+export type K8sDeployment = { name: string; namespace: string; ready: string; up_to_date: number; available: number; age: string }
+export type K8sStatefulSet = { name: string; namespace: string; ready: string; service_name: string; age: string }
+export type K8sDaemonSet = { name: string; namespace: string; desired: number; current: number; ready: number; available: number; age: string }
+export type K8sService = { name: string; namespace: string; type: string; cluster_ip: string; external_ip?: string; ports: string; age: string }
+export type K8sIngress = { name: string; namespace: string; class?: string; hosts: string; address?: string; ports: string; age: string }
+
+export type K8sSummaryResponse = { success: boolean; summary: K8sResourceSummary }
+export type K8sNamespacesResponse = { success: boolean; namespaces: K8sNamespace[] }
+export type K8sNodesResponse = { success: boolean; nodes: K8sNode[] }
+export type K8sDeploymentsResponse = { success: boolean; deployments: K8sDeployment[] }
+export type K8sStatefulSetsResponse = { success: boolean; statefulsets: K8sStatefulSet[] }
+export type K8sDaemonSetsResponse = { success: boolean; daemonsets: K8sDaemonSet[] }
+export type K8sServicesResponse = { success: boolean; services: K8sService[] }
+export type K8sIngressesResponse = { success: boolean; ingresses: K8sIngress[] }
 
 export type K8sPod = {
   name: string

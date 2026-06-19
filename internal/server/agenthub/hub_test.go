@@ -2,6 +2,7 @@ package agenthub
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -100,6 +101,66 @@ func TestAgentCredentialStillValidRejectsRevokedPersistentToken(t *testing.T) {
 	}
 	if handler.agentCredentialStillValid(t.Context(), "node-1", "node-token", "node-token", false, true) {
 		t.Fatal("node token should be invalid after delete")
+	}
+}
+
+func TestDeliverK8sMessageForAllResultTypes(t *testing.T) {
+	resultTypes := []string{
+		protocol.MessageTypeK8sClusterConnectResult,
+		protocol.MessageTypeK8sGetSummaryResult,
+		protocol.MessageTypeK8sGetNamespacesResult,
+		protocol.MessageTypeK8sGetNodesResult,
+		protocol.MessageTypeK8sGetPodsResult,
+		protocol.MessageTypeK8sGetDeploymentsResult,
+		protocol.MessageTypeK8sGetStatefulSetsResult,
+		protocol.MessageTypeK8sGetDaemonSetsResult,
+		protocol.MessageTypeK8sGetServicesResult,
+		protocol.MessageTypeK8sGetIngressesResult,
+		protocol.MessageTypeK8sGetPodLogsResult,
+	}
+	conn := &agentConnection{pendingK8sMessages: make(map[string]chan json.RawMessage)}
+	for _, resultType := range resultTypes {
+		requestID := resultType + "-request"
+		ch := make(chan json.RawMessage, 1)
+		conn.pendingK8sMessages[requestID] = ch
+		raw := json.RawMessage(`{"type":"` + resultType + `","request_id":"` + requestID + `","success":true}`)
+		conn.deliverK8sMessage(requestID, raw)
+		select {
+		case got := <-ch:
+			var header struct {
+				Type      string `json:"type"`
+				RequestID string `json:"request_id"`
+			}
+			if err := json.Unmarshal(got, &header); err != nil {
+				t.Fatalf("unmarshal delivered result: %v", err)
+			}
+			if header.Type != resultType || header.RequestID != requestID {
+				t.Fatalf("delivered header = %#v, want type=%s request_id=%s", header, resultType, requestID)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for %s delivery", resultType)
+		}
+	}
+}
+
+func TestClosePendingOperationsUnblocksK8sMessages(t *testing.T) {
+	conn := &agentConnection{pendingK8sMessages: map[string]chan json.RawMessage{"req-1": make(chan json.RawMessage, 1)}}
+	ch := conn.pendingK8sMessages["req-1"]
+	conn.closePendingOperations("节点离线")
+	select {
+	case raw := <-ch:
+		var response protocol.K8sGetSummaryResult
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatalf("unmarshal offline k8s response: %v", err)
+		}
+		if response.Success || response.RequestID != "req-1" || !strings.Contains(response.Error, "节点离线") {
+			t.Fatalf("offline response = %#v", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for pending k8s message to unblock")
+	}
+	if len(conn.pendingK8sMessages) != 0 {
+		t.Fatalf("pendingK8sMessages length = %d, want 0", len(conn.pendingK8sMessages))
 	}
 }
 

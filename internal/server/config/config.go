@@ -22,6 +22,7 @@ type Config struct {
 	AgentToken       string
 	PublicURL        string
 	EnableTerminal   bool
+	Debug            bool
 	AdminAuth        AdminAuthConfig
 	Alerting         AlertingConfig
 }
@@ -77,6 +78,9 @@ type fileConfig struct {
 		CheckInterval string `yaml:"check_interval"`
 		MaxRules      int    `yaml:"max_rules"`
 	} `yaml:"alerting"`
+	Logging struct {
+		Debug bool `yaml:"debug"`
+	} `yaml:"logging"`
 
 	Listen                  string `yaml:"listen"`
 	DatabasePath            string `yaml:"database_path"`
@@ -258,11 +262,19 @@ func applyFileConfig(cfg *Config, file fileConfig) error {
 	if file.Alerting.MaxRules != 0 {
 		cfg.Alerting.MaxRules = file.Alerting.MaxRules
 	}
+	cfg.Debug = file.Logging.Debug
 	expandStorageEnv(&cfg.Storage)
 	return validateStorageConfig(&cfg.Storage)
 }
 
 func applyEnvironmentConfig(cfg *Config) error {
+	if value, ok := os.LookupEnv("MIZUPANEL_DEBUG"); ok {
+		debug, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse MIZUPANEL_DEBUG: %w", err)
+		}
+		cfg.Debug = debug
+	}
 	if value, ok := os.LookupEnv("MIZUPANEL_AUTH_ENABLED"); ok {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {

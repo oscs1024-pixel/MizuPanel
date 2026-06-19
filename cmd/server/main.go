@@ -50,24 +50,28 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if cfg.Debug {
+		log.Printf("[debug][server] debug logging enabled")
+	}
 	handler := app.NewHandler(app.Dependencies{
-		Nodes:                nodes,
-		Metrics:              metrics,
-		ProcessSnapshots:     processSnapshots,
-		DockerSnapshots:      dockerSnapshots,
-		AgentTokens:          agentTokens,
-		Settings:             settings,
-		Alerts:               alerts,
-		AgentToken:           cfg.AgentToken,
-		PublicURL:            cfg.PublicURL,
-		Interval:             5,
-		StaticDir:            paths.StaticDir,
-		DownloadDir:          paths.DownloadDir,
-		EnableTerminal:       cfg.EnableTerminal,
-		MetricsRetention:     cfg.MetricsRetention,
-		AlertingEnabled:      cfg.Alerting.Enabled,
-		AlertCheckInterval:   cfg.Alerting.CheckInterval,
-		AdminAuth:            appAuthConfig(cfg.AdminAuth),
+		Nodes:              nodes,
+		Metrics:            metrics,
+		ProcessSnapshots:   processSnapshots,
+		DockerSnapshots:    dockerSnapshots,
+		AgentTokens:        agentTokens,
+		Settings:           settings,
+		Alerts:             alerts,
+		AgentToken:         cfg.AgentToken,
+		PublicURL:          cfg.PublicURL,
+		Interval:           5,
+		StaticDir:          paths.StaticDir,
+		DownloadDir:        paths.DownloadDir,
+		EnableTerminal:     cfg.EnableTerminal,
+		MetricsRetention:   cfg.MetricsRetention,
+		AlertingEnabled:    cfg.Alerting.Enabled,
+		AlertCheckInterval: cfg.Alerting.CheckInterval,
+		Debug:              cfg.Debug,
+		AdminAuth:          appAuthConfig(cfg.AdminAuth),
 	})
 	log.Printf("MizuPanel server listening on %s", cfg.Listen)
 	log.Fatal(http.ListenAndServe(cfg.Listen, handler))

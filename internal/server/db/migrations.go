@@ -136,6 +136,7 @@ func sqliteMigrationStatements() []string {
 					name TEXT NOT NULL,
 					node_id TEXT NOT NULL,
 					kubeconfig_path TEXT NOT NULL,
+					kubeconfig_content TEXT NOT NULL DEFAULT '',
 					context TEXT,
 					status TEXT NOT NULL DEFAULT 'online',
 					last_seen_at DATETIME,
@@ -265,6 +266,7 @@ func mysqlMigrationStatements() []string {
 					name VARCHAR(255) NOT NULL,
 					node_id VARCHAR(191) NOT NULL,
 					kubeconfig_path VARCHAR(512) NOT NULL,
+					kubeconfig_content LONGTEXT NOT NULL,
 					context VARCHAR(255),
 					status VARCHAR(32) NOT NULL DEFAULT 'online',
 					last_seen_at VARCHAR(64),
@@ -339,12 +341,14 @@ func k8sClusterCompatibilityColumnStatements(dialect Dialect) []string {
 			`ALTER TABLE k8s_clusters ADD COLUMN version VARCHAR(64) DEFAULT ''`,
 			`ALTER TABLE k8s_clusters ADD COLUMN node_count INT DEFAULT 0`,
 			`ALTER TABLE k8s_clusters ADD COLUMN namespace_count INT DEFAULT 0`,
+			`ALTER TABLE k8s_clusters ADD COLUMN kubeconfig_content LONGTEXT NOT NULL`,
 		}
 	}
 	return []string{
 		`ALTER TABLE k8s_clusters ADD COLUMN version TEXT DEFAULT ''`,
 		`ALTER TABLE k8s_clusters ADD COLUMN node_count INTEGER DEFAULT 0`,
 		`ALTER TABLE k8s_clusters ADD COLUMN namespace_count INTEGER DEFAULT 0`,
+		`ALTER TABLE k8s_clusters ADD COLUMN kubeconfig_content TEXT NOT NULL DEFAULT ''`,
 	}
 }
 

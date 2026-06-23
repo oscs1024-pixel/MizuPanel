@@ -34,6 +34,14 @@ type ProcessSort = 'cpu' | 'memory' | 'pid' | 'name'
 type DockerFilter = 'all' | 'running' | 'stopped' | 'abnormal'
 type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
 type ChartRange = Extract<RangeOption, '1h' | '6h'>
+type PathTreeState = Record<string, {
+  expanded: boolean
+  loading: boolean
+  children: string[]
+  error?: string
+}>
+
+const FILE_TREE_ROOTS = ['/', '/root', '/data', '/usr', '/var', '/tmp', '/home']
 
 function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProgressEvent): SSHProgressEventLog[] {
   const index = current.findIndex((event) => event.step === progress.step)
@@ -67,8 +75,12 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
   const [fileContent, setFileContent] = useState('')
   const [pathInput, setPathInput] = useState('/')
   const [editorOpen, setEditorOpen] = useState(false)
+  const [pathTree, setPathTree] = useState<PathTreeState>({})
+  const [dragActive, setDragActive] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<FileEntry>()
   const fileRequestSeq = useRef(0)
   const agentRequestSeq = useRef(0)
+  const treeRequestSeqByPath = useRef<Record<string, number>>({})
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const [operationMessage, setOperationMessage] = useState<string>()
   const [fileLoading, setFileLoading] = useState(false)
@@ -168,6 +180,92 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
     return fileRequestSeq.current
   }
   const isLatestFileRequest = (requestID: number) => requestID === fileRequestSeq.current
+  const currentFilePath = fileList?.path || pathInput || '/'
+
+  const mergePathTree = (path: string, entries: FileEntry[]) => {
+    const directories = entries
+      .filter((entry) => entry.type === 'directory')
+      .map((entry) => entry.path)
+      .sort((left, right) => left.localeCompare(right))
+
+    setPathTree((current) => ({
+      ...current,
+      [path]: {
+        expanded: current[path]?.expanded ?? false,
+        loading: false,
+        children: directories,
+        error: undefined,
+      }
+    }))
+  }
+
+  const togglePathTree = (path: string) => {
+    if (!online || !onLoadFiles) {
+      setOperationMessage('节点离线，无法加载路径树。')
+      return
+    }
+
+    const current = pathTree[path]
+    if (current?.expanded) {
+      treeRequestSeqByPath.current[path] = (treeRequestSeqByPath.current[path] || 0) + 1
+      setPathTree((tree) => ({ ...tree, [path]: { ...tree[path], expanded: false, loading: false } }))
+      return
+    }
+
+    if (current && current.children.length > 0) {
+      setPathTree((tree) => ({ ...tree, [path]: { ...tree[path], expanded: true } }))
+      return
+    }
+
+    const requestID = (treeRequestSeqByPath.current[path] || 0) + 1
+    treeRequestSeqByPath.current[path] = requestID
+    setPathTree((tree) => ({
+      ...tree,
+      [path]: { expanded: true, loading: true, children: tree[path]?.children || [] }
+    }))
+
+    onLoadFiles(node.id, path)
+      .then((response) => {
+        if (treeRequestSeqByPath.current[path] !== requestID) return
+        if (response.error) {
+          setPathTree((tree) => ({
+            ...tree,
+            [path]: { expanded: true, loading: false, children: [], error: formatOperationError(response.code, response.error || '路径树加载失败') }
+          }))
+          return
+        }
+        const directories = response.entries
+          .filter((entry) => entry.type === 'directory')
+          .map((entry) => entry.path)
+          .sort((left, right) => left.localeCompare(right))
+        setPathTree((tree) => ({
+          ...tree,
+          [path]: { expanded: true, loading: false, children: directories, error: undefined }
+        }))
+      })
+      .catch((err: unknown) => {
+        if (treeRequestSeqByPath.current[path] !== requestID) return
+        setPathTree((tree) => ({
+          ...tree,
+          [path]: { expanded: true, loading: false, children: [], error: err instanceof Error ? err.message : '路径树加载失败' }
+        }))
+      })
+  }
+
+  const uploadFiles = (files?: FileList | File[]) => {
+    const fileArray = Array.from(files || [])
+    if (fileArray.length === 0) return
+    uploadFile(fileArray[0], fileArray.length > 1 ? '暂只支持单文件上传，已选择第一个文件。' : undefined)
+  }
+
+  const confirmDeleteEntry = (entry: FileEntry) => {
+    setPendingDelete(entry)
+    setOperationMessage(undefined)
+  }
+
+  const cancelDeleteEntry = () => {
+    setPendingDelete(undefined)
+  }
 
   const loadFiles = (path: string) => {
     if (!online || !onLoadFiles) {
@@ -185,7 +283,11 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         setFileRead(undefined)
         setFileContent('')
         setEditorOpen(false)
-        if (!response.error) setPathInput(response.path || path)
+        setPendingDelete(undefined)
+        if (!response.error) {
+          setPathInput(response.path || path)
+          mergePathTree(response.path || path, response.entries || [])
+        }
         if (response.error) setOperationMessage(formatOperationError(response.code, response.error))
       })
       .catch((err: unknown) => {
@@ -243,6 +345,8 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
           setFileRead(undefined)
           setFileContent('')
           setEditorOpen(false)
+          setPendingDelete(undefined)
+          mergePathTree(response.path || target, response.entries || [])
           return
         }
         if (response.code === 'not_directory' && onReadFile) {
@@ -275,22 +379,22 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       .catch((err: unknown) => setOperationMessage(err instanceof Error ? err.message : '文件保存失败'))
   }
 
-  const uploadFile = (file?: File) => {
+  const uploadFile = (file?: File, notice?: string) => {
     if (!file || !onUploadFile) return
     if (!online || !onLoadFiles) {
       setOperationMessage('节点离线，无法上传文件。')
       return
     }
-    const directory = fileList?.path || '/'
+    const directory = currentFilePath
     const targetPath = joinRemotePath(directory, file.name)
     const requestID = nextFileRequest()
     setFileLoading(true)
-    setOperationMessage(undefined)
+    setOperationMessage(notice)
     fileToBase64(file)
       .then((contentBase64) => onUploadFile(node.id, targetPath, contentBase64))
       .then((response) => {
         if (!isLatestFileRequest(requestID)) return undefined
-        setOperationMessage(response.uploaded ? '文件已上传。' : formatOperationError(response.code, response.error || '文件上传失败'))
+        setOperationMessage(response.uploaded ? `${notice ? `${notice} ` : ''}文件已上传。` : formatOperationError(response.code, response.error || '文件上传失败'))
         if (!response.uploaded) return undefined
         return onLoadFiles(node.id, directory)
       })
@@ -299,6 +403,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         if (!response.error) {
           setFileList(response)
           setPathInput(response.path || directory)
+          mergePathTree(response.path || directory, response.entries || [])
         } else {
           setOperationMessage(formatOperationError(response.code, response.error))
         }
@@ -313,8 +418,6 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
 
   const deleteEntry = (entry: FileEntry) => {
     if (!onDeletePath || !onLoadFiles) return
-    const confirmed = window.confirm(`确认删除 ${entry.path}？\n仅按当前 Agent 运行用户权限执行；非空目录不会被递归删除。`)
-    if (!confirmed) return
     const directory = fileList?.path || '/'
     const requestID = nextFileRequest()
     setFileLoading(true)
@@ -323,6 +426,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       .then((response) => {
         if (!isLatestFileRequest(requestID)) return undefined
         setOperationMessage(response.deleted ? '文件已删除。' : formatOperationError(response.code, response.error || '文件删除失败'))
+        if (response.deleted) setPendingDelete(undefined)
         if (!response.deleted) return undefined
         return onLoadFiles(node.id, directory)
       })
@@ -331,6 +435,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
         if (!response.error) {
           setFileList(response)
           setPathInput(response.path || directory)
+          mergePathTree(response.path || directory, response.entries || [])
         } else {
           setOperationMessage(formatOperationError(response.code, response.error))
         }
@@ -552,17 +657,6 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
             </button>
             <button
               type="button"
-              aria-label="文件"
-              title="文件管理"
-              disabled={!online}
-              onClick={() => loadFiles(fileList?.path || '/')}
-              className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-black text-success shadow-sm transition hover:border-success/40 hover:bg-success/10 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
-            >
-              <FileIcon />
-              文件
-            </button>
-            <button
-              type="button"
               aria-label="重启"
               title="重启节点"
               disabled={!online}
@@ -580,7 +674,7 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
 
       <div className="flex flex-wrap gap-1 rounded-[14px] border border-border bg-card px-2 py-1.5 shadow-sm" role="group" aria-label="节点详情视图">
         {([
-          ['overview', '监控概览'],
+          ['overview', '主机信息'],
           ['processes', '进程信息'],
           ['containers', '容器信息'],
           ['files', '文件管理'],
@@ -724,6 +818,22 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
               </button>
             </div>
           </div>
+
+          {/* containerd 提示 */}
+          <div className="mx-4 mt-4 rounded-xl border border-warning/30 bg-warning/5 p-3">
+            <div className="flex items-start gap-2">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-warning" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 9v4M12 17h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+              </svg>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-foreground">仅支持 Docker 容器运行时</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  暂不支持 containerd 容器运行时。如需查看 Kubernetes Pod 信息，请前往 K8s 集群详情页面。
+                </p>
+              </div>
+            </div>
+          </div>
+
           {!dockerSnapshot?.available ? (
             <div className="m-4 rounded-2xl border border-dashed border-border bg-surface px-4 py-3 text-sm font-bold text-muted-foreground">
               {formatDockerUnavailableMessage(dockerSnapshot?.error, monitoringLoading)}
@@ -753,10 +863,10 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
       {activeSection === 'files' ? (
         <section role="region" aria-label="文件管理" className="overflow-hidden rounded-[28px] border border-border bg-card shadow-sm">
           <div className="flex flex-col gap-3 border-b border-border bg-surface p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-success">File Manager</p>
               <h3 className="mt-1 text-lg font-black text-foreground">文件管理</h3>
-              <p className="mt-1 text-xs font-bold text-muted-foreground">当前路径：{fileList?.path || '/'}</p>
+              <p className="mt-1 break-all text-xs font-bold text-muted-foreground">当前路径：{currentFilePath}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <input
@@ -766,49 +876,143 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') openPath()
                 }}
-                className="min-h-10 w-48 rounded-2xl border border-border bg-card px-4 text-xs font-bold text-foreground outline-none placeholder:text-muted-foreground focus:border-emerald-400 focus:ring-4 focus:ring-primary/20"
+                className="min-h-10 w-64 rounded-2xl border border-border bg-card px-4 text-xs font-bold text-foreground outline-none placeholder:text-muted-foreground focus:border-emerald-400 focus:ring-4 focus:ring-primary/20"
               />
               <button type="button" onClick={openPath} className="min-h-10 rounded-2xl bg-success px-4 text-xs font-black text-white transition hover:brightness-95">打开路径</button>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                aria-label="上传文件"
-                onChange={(event) => {
-                  uploadFile(event.target.files?.[0])
-                  event.target.value = ''
-                }}
-                className="sr-only"
-              />
-              <button type="button" onClick={() => uploadInputRef.current?.click()} className="min-h-10 rounded-2xl border border-success/30 bg-card px-4 text-xs font-black text-success transition hover:bg-success/10">上传文件</button>
-              <button type="button" onClick={() => loadFiles(parentPath(fileList?.path || '/'))} className="min-h-10 rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:text-foreground">返回上级</button>
-              <button type="button" onClick={() => loadFiles(fileList?.path || '/')} className="min-h-10 rounded-2xl bg-success px-4 text-xs font-black text-white transition hover:brightness-95">刷新</button>
+              <button type="button" onClick={() => loadFiles(parentPath(currentFilePath))} className="min-h-10 rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:text-foreground">返回上级</button>
+              <button type="button" onClick={() => loadFiles(currentFilePath)} className="min-h-10 rounded-2xl bg-success px-4 text-xs font-black text-white transition hover:brightness-95">刷新</button>
             </div>
           </div>
           {operationMessage && !editorOpen ? <p className="m-4 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm font-black text-warning">{operationMessage}</p> : null}
           {fileLoading ? <p className="m-4 rounded-2xl border border-info/30 bg-info/10 px-4 py-3 text-sm font-black text-info">正在加载目录...</p> : null}
-          <div className="min-w-0">
-            {(fileList?.entries ?? []).length === 0 && !fileLoading ? <p className="m-4 rounded-2xl border border-dashed border-border bg-surface px-4 py-3 text-sm font-bold text-muted-foreground">目录为空或暂无文件列表。</p> : null}
-            <ul className="divide-y divide-border">
-              {(fileList?.entries ?? []).map((entry) => (
-                <li key={entry.path || entry.name} className="flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-surface">
+          <input
+            ref={uploadInputRef}
+            type="file"
+            aria-label="上传文件"
+            onChange={(event) => {
+              uploadFiles(event.target.files || undefined)
+              event.target.value = ''
+            }}
+            className="sr-only"
+          />
+          <div className="grid min-w-0 gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="min-w-0 rounded-2xl border border-border bg-surface/70 p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground">Path Tree</p>
+                  <p className="mt-1 text-sm font-black text-foreground">路径树</p>
+                </div>
+                <button type="button" onClick={() => togglePathTree('/')} disabled={!online} className="rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs font-black text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60">展开 /</button>
+              </div>
+              <div className="max-h-[520px] space-y-1 overflow-auto pr-1">
+                {FILE_TREE_ROOTS.map((path) => (
+                  <PathTreeBranch
+                    key={path}
+                    path={path}
+                    level={path === '/' ? 0 : 1}
+                    tree={pathTree}
+                    currentPath={currentFilePath}
+                    disabled={!online}
+                    onOpen={loadFiles}
+                    onToggle={togglePathTree}
+                  />
+                ))}
+              </div>
+            </aside>
+
+            <div className="min-w-0 space-y-4">
+              <button
+                type="button"
+                onClick={() => uploadInputRef.current?.click()}
+                onDragEnter={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (online) setDragActive(true)
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (online) setDragActive(true)
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setDragActive(false)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setDragActive(false)
+                  if (!online) {
+                    setOperationMessage('节点离线，无法上传文件。')
+                    return
+                  }
+                  uploadFiles(event.dataTransfer.files)
+                }}
+                disabled={!online || !onUploadFile}
+                className={`flex min-h-28 w-full cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed px-4 py-5 text-center transition focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60 ${dragActive ? 'border-success bg-success/10' : 'border-success/30 bg-success/5 hover:bg-success/10'}`}
+              >
+                <UploadIcon />
+                <span className="mt-2 text-sm font-black text-foreground">拖拽文件到这里上传</span>
+                <span className="mt-1 text-xs font-bold text-muted-foreground">或点击选择文件，上传到 {currentFilePath}</span>
+              </button>
+
+              <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
                   <div className="min-w-0">
-                    <p className="truncate font-black text-foreground" title={entry.path}>{entry.name}</p>
-                    <p className="mt-1 text-xs font-bold text-muted-foreground">{entry.type}{entry.size ? ` · ${formatBytes(entry.size)}` : ''}</p>
+                    <p className="text-sm font-black text-foreground">目录内容</p>
+                    <p className="mt-0.5 text-xs font-bold text-muted-foreground">{(fileList?.entries ?? []).length} 项 · {currentFilePath}</p>
                   </div>
-                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                    {entry.type === 'directory' ? (
-                      <button type="button" aria-label={`进入目录 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-success px-3 py-2 text-xs font-black text-white">进入</button>
-                    ) : entry.type === 'binary' ? (
-                      <span className="rounded-2xl bg-muted px-3 py-2 text-xs font-black text-muted-foreground">二进制文件不可编辑</span>
-                    ) : (
-                      <button type="button" aria-label={`编辑文件 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-success px-3 py-2 text-xs font-black text-white">编辑</button>
-                    )}
-                    <button type="button" aria-label={`删除 ${entry.name}`} onClick={() => deleteEntry(entry)} className="rounded-2xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/15">删除</button>
+                </div>
+                {(fileList?.entries ?? []).length === 0 && !fileLoading ? (
+                  <div className="m-4 rounded-2xl border border-dashed border-border bg-surface px-4 py-8 text-center">
+                    <FileIcon />
+                    <p className="mt-2 text-sm font-black text-foreground">当前目录为空</p>
+                    <p className="mt-1 text-xs font-bold text-muted-foreground">可以拖拽文件到上方区域上传。</p>
                   </div>
-                </li>
-              ))}
-            </ul>
-            {fileList?.truncated ? <p className="border-t border-warning/30 bg-warning/10 px-4 py-2 text-xs font-bold text-warning">目录过大，仅显示前部分结果。</p> : null}
+                ) : null}
+                <ul className="divide-y divide-border">
+                  {(fileList?.entries ?? []).map((entry) => {
+                    const isPendingDelete = pendingDelete?.path === entry.path
+                    return (
+                      <li key={entry.path || entry.name} className="px-4 py-3 text-sm transition hover:bg-surface">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${entry.type === 'directory' ? 'bg-success/10 text-success' : entry.type === 'binary' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>
+                              {entry.type === 'directory' ? <FolderIcon /> : entry.type === 'binary' ? <LockIcon /> : <DocumentIcon />}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate font-black text-foreground" title={entry.path}>{entry.name}</p>
+                              <p className="mt-1 text-xs font-bold text-muted-foreground">{fileTypeLabel(entry.type)}{entry.size ? ` · ${formatBytes(entry.size)}` : ''}</p>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                            {entry.type === 'directory' ? (
+                              <button type="button" aria-label={`进入目录 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-success px-3 py-2 text-xs font-black text-white transition hover:brightness-95">进入</button>
+                            ) : entry.type === 'binary' ? (
+                              <span className="rounded-2xl bg-muted px-3 py-2 text-xs font-black text-muted-foreground">不可编辑</span>
+                            ) : (
+                              <button type="button" aria-label={`编辑文件 ${entry.name}`} onClick={() => openFileEntry(entry)} className="rounded-2xl bg-primary px-3 py-2 text-xs font-black text-primary-foreground transition hover:brightness-110">编辑</button>
+                            )}
+                            <button type="button" aria-label={`删除 ${entry.name}`} onClick={() => confirmDeleteEntry(entry)} className="rounded-2xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/15">删除</button>
+                          </div>
+                        </div>
+                        {isPendingDelete ? (
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-danger/30 bg-danger/10 px-3 py-2">
+                            <p className="text-xs font-black text-danger">确认删除 {entry.name}？非空目录不会递归删除。</p>
+                            <div className="flex gap-2">
+                              <button type="button" onClick={cancelDeleteEntry} className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-black text-muted-foreground transition hover:text-foreground">取消</button>
+                              <button type="button" onClick={() => deleteEntry(entry)} className="rounded-xl bg-danger px-3 py-1.5 text-xs font-black text-white transition hover:brightness-95">确认删除</button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+                {fileList?.truncated ? <p className="border-t border-warning/30 bg-warning/10 px-4 py-2 text-xs font-bold text-warning">目录过大，仅显示前部分结果。</p> : null}
+              </div>
+            </div>
           </div>
         </section>
       ) : null}
@@ -1085,6 +1289,125 @@ function openContainerExecPage(nodeID: string, containerID: string) {
   window.open(`/nodes/${encodeURIComponent(nodeID)}/containers/${encodeURIComponent(containerID)}/exec`, '_blank', 'noopener,noreferrer')
 }
 
+function PathTreeBranch({
+  path,
+  level,
+  tree,
+  currentPath,
+  disabled,
+  onOpen,
+  onToggle,
+}: {
+  path: string
+  level: number
+  tree: PathTreeState
+  currentPath: string
+  disabled: boolean
+  onOpen: (path: string) => void
+  onToggle: (path: string) => void
+}) {
+  const state = tree[path]
+  const expanded = Boolean(state?.expanded)
+  const loading = Boolean(state?.loading)
+  const active = currentPath === path
+  const ancestor = path !== '/' && currentPath.startsWith(`${path}/`)
+  const segments = path.split('/').filter(Boolean)
+  const label = path === '/' ? '/' : segments[segments.length - 1] || path
+
+  return (
+    <div>
+      <div className={`flex items-center gap-1 rounded-xl px-2 py-1.5 ${active ? 'bg-success/10 text-success' : ancestor ? 'bg-card text-foreground' : 'text-muted-foreground hover:bg-card hover:text-foreground'}`} style={{ paddingLeft: `${8 + level * 14}px` }}>
+        <button
+          type="button"
+          aria-label={`${expanded ? '收起' : '展开'} ${path}`}
+          onClick={() => onToggle(path)}
+          disabled={disabled}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <ChevronIcon expanded={expanded} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpen(path)}
+          disabled={disabled}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-left disabled:cursor-not-allowed disabled:opacity-50"
+          title={path}
+        >
+          <FolderIcon />
+          <span className="truncate text-xs font-black">{label}</span>
+        </button>
+        {loading ? <span className="text-[10px] font-black text-muted-foreground">加载</span> : null}
+      </div>
+      {state?.error ? <p className="ml-8 mt-1 rounded-lg bg-warning/10 px-2 py-1 text-[10px] font-black text-warning">{state.error}</p> : null}
+      {expanded && state?.children?.length ? (
+        <div className="mt-1 space-y-1">
+          {state.children.map((childPath) => (
+            <PathTreeBranch
+              key={childPath}
+              path={childPath}
+              level={level + 1}
+              tree={tree}
+              currentPath={currentPath}
+              disabled={disabled}
+              onOpen={onOpen}
+              onToggle={onToggle}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function fileTypeLabel(type: FileEntry['type']) {
+  if (type === 'directory') return '目录'
+  if (type === 'binary') return '二进制文件'
+  return '文本文件'
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={`h-3.5 w-3.5 transition ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  )
+}
+
+function UploadIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7 text-success" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 16V4" />
+      <path d="m7 9 5-5 5 5" />
+      <path d="M5 16.5v1.75A1.75 1.75 0 0 0 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V16.5" />
+    </svg>
+  )
+}
+
+function FolderIcon() {
+  return <FileIcon className="h-5 w-5" />
+}
+
+function DocumentIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 3.75h7l4 4v12.5h-11z" />
+      <path d="M13.5 3.75V8h4" />
+      <path d="M9 12h6" />
+      <path d="M9 15.5h4" />
+    </svg>
+  )
+}
+
+function LockIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="5" y="10" width="14" height="10" rx="2" />
+      <path d="M8.5 10V7.75a3.5 3.5 0 0 1 7 0V10" />
+      <path d="M12 14v2" />
+    </svg>
+  )
+}
+
 function TerminalIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1106,9 +1429,9 @@ function LogIcon() {
   )
 }
 
-function FileIcon() {
+function FileIcon({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4.75 4.75h5.5l2 2h7a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H4.75a1.5 1.5 0 0 1-1.5-1.5V6.25a1.5 1.5 0 0 1 1.5-1.5Z" />
     </svg>
   )

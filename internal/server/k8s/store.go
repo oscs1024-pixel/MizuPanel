@@ -121,7 +121,7 @@ func (s *Store) ListClusters() ([]*Cluster, error) {
 // ListClustersWithNodeInfo 获取集群列表（包含节点信息）
 func (s *Store) ListClustersWithNodeInfo() ([]*PublicClusterWithNode, error) {
 	query := `SELECT c.id, c.name, c.node_id, c.kubeconfig_path, c.context, c.status, c.version, c.node_count, c.namespace_count, c.last_seen_at, c.created_at, c.updated_at,
-	                 n.name as node_name, n.ip as node_ip
+	                 COALESCE(n.name, '') as node_name, COALESCE(n.ip, '') as node_ip, COALESCE(n.status, 'offline') as node_status
 	          FROM k8s_clusters c
 	          LEFT JOIN nodes n ON c.node_id = n.id
 	          ORDER BY c.created_at DESC`
@@ -150,6 +150,7 @@ func (s *Store) ListClustersWithNodeInfo() ([]*PublicClusterWithNode, error) {
 			&updatedAt,
 			&cluster.NodeName,
 			&cluster.NodeIP,
+			&cluster.NodeStatus,
 		)
 		if err != nil {
 			return nil, err

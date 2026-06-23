@@ -195,7 +195,7 @@ Each extracted package contains:
 ```text
 mizupanel-linux-amd64/
 ├── mizupanel-server
-├── server.example.yaml
+├── server.example.yaml  # copied from examples/ directory
 ├── data/
 ├── scripts/
 │   ├── install-agent.sh
@@ -227,7 +227,7 @@ cd mizupanel-linux-amd64
 cp server.example.yaml server.yaml
 ```
 
-Use `make package-linux-arm64` and `mizupanel-linux-arm64.tar.gz` instead on arm64 servers. `server.example.yaml` is the versioned template. `server.yaml` is your local runtime config, so you can edit it without changing the template. The package includes `data/`, and the default database path writes SQLite data to `./data/mizupanel.db`.
+Use `make package-linux-arm64` and `mizupanel-linux-arm64.tar.gz` instead on arm64 servers. `examples/server.example.yaml` is the versioned template in the source repository, which is copied to the release package root during build. `server.yaml` is your local runtime config, so you can edit it without changing the template. The package includes `data/`, and the default database path writes SQLite data to `./data/mizupanel.db`.
 
 ### 2. Edit `server.yaml`
 

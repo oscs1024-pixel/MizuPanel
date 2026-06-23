@@ -135,7 +135,8 @@ type ClusterCardProps = {
 }
 
 function ClusterCard({ cluster, pendingDelete, onRequestDelete, onCancelDelete, onConfirmDelete, onViewDetail }: ClusterCardProps) {
-  const isOnline = cluster.status === 'online'
+  // 集群在线需要同时满足：1. Agent 节点在线；2. K8s API 连接正常
+  const isOnline = cluster.node_status === 'online' && cluster.status === 'online'
 
   return (
     <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm transition hover:shadow-md">

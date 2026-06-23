@@ -9,13 +9,13 @@ export function K8sIngressTable({ items, loading }: { items: K8sIngress[]; loadi
       emptyText="暂无 Ingress"
       getKey={(item) => `${item.namespace}/${item.name}`}
       columns={[
-        { key: 'name', title: '名称', render: (item) => item.name },
-        { key: 'namespace', title: '命名空间', render: (item) => <span className="text-muted-foreground">{item.namespace}</span> },
+        { key: 'name', title: '名称', render: (item) => <span className="block max-w-[180px] truncate font-black text-foreground" title={item.name}>{item.name}</span> },
+        { key: 'namespace', title: '命名空间', render: (item) => <span className="block max-w-[120px] truncate text-muted-foreground" title={item.namespace}>{item.namespace}</span> },
         { key: 'class', title: 'Class', render: (item) => <span className="text-muted-foreground">{item.class || '-'}</span> },
-        { key: 'hosts', title: 'Hosts', render: (item) => <span className="text-muted-foreground">{item.hosts}</span> },
-        { key: 'address', title: 'Address', render: (item) => <span className="text-muted-foreground">{item.address || '-'}</span> },
+        { key: 'hosts', title: 'Hosts', render: (item) => <span className="block max-w-[260px] truncate text-muted-foreground" title={item.hosts}>{item.hosts}</span> },
+        { key: 'address', title: 'Address', render: (item) => <span className="block max-w-[220px] truncate text-muted-foreground" title={item.address || '-'}>{item.address || '-'}</span> },
         { key: 'ports', title: 'Ports', render: (item) => <span className="text-muted-foreground">{item.ports}</span> },
-        { key: 'age', title: 'Age', render: (item) => item.age },
+        { key: 'age', title: 'Age', render: (item) => <span className="text-muted-foreground">{item.age}</span> },
       ]}
     />
   )

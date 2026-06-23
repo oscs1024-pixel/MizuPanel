@@ -312,11 +312,13 @@ func nodeCompatibilityColumnStatements(dialect Dialect) []string {
 		return []string{
 			`ALTER TABLE nodes ADD COLUMN agent_mode VARCHAR(32) NOT NULL DEFAULT 'normal'`,
 			`ALTER TABLE nodes ADD COLUMN agent_user VARCHAR(255) NOT NULL DEFAULT ''`,
+			`ALTER TABLE nodes ADD COLUMN terminal_enabled BOOLEAN NOT NULL DEFAULT 0`,
 		}
 	}
 	return []string{
 		`ALTER TABLE nodes ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'normal'`,
 		`ALTER TABLE nodes ADD COLUMN agent_user TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN terminal_enabled INTEGER NOT NULL DEFAULT 0`,
 	}
 }
 

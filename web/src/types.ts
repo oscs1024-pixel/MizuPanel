@@ -358,9 +358,10 @@ export type K8sCluster = {
   node_id: string
   node_name: string
   node_ip: string
+  node_status: 'online' | 'offline'  // Agent 节点状态
   kubeconfig_path?: string
   context?: string
-  status: 'online' | 'offline'
+  status: 'online' | 'offline'  // K8s API 连接状态
   version?: string
   node_count?: number
   namespace_count?: number

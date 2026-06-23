@@ -195,7 +195,7 @@ dist/
 ```text
 mizupanel-linux-amd64/
 ├── mizupanel-server
-├── server.example.yaml
+├── server.example.yaml  # 从 examples/ 目录复制而来
 ├── data/
 ├── scripts/
 │   ├── install-agent.sh
@@ -227,7 +227,7 @@ cd mizupanel-linux-amd64
 cp server.example.yaml server.yaml
 ```
 
-arm64 服务器请执行 `make package-linux-arm64` 并改用 `mizupanel-linux-arm64.tar.gz`。`server.example.yaml` 是版本管理里的配置模板。`server.yaml` 是本机运行时配置，复制出来后可以按实际环境修改，不会影响模板文件。发布包已包含 `data/` 目录，默认数据库路径会写入 `./data/mizupanel.db`。
+arm64 服务器请执行 `make package-linux-arm64` 并改用 `mizupanel-linux-arm64.tar.gz`。`examples/server.example.yaml` 是版本管理里的配置模板，打包时会复制到发布包根目录。`server.yaml` 是本机运行时配置，复制出来后可以按实际环境修改，不会影响模板文件。发布包已包含 `data/` 目录，默认数据库路径会写入 `./data/mizupanel.db`。
 
 ### 2. 修改 `server.yaml`
 

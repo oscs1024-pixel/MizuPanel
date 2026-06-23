@@ -10,20 +10,21 @@ import (
 )
 
 type Node struct {
-	ID           string
-	Name         string
-	Hostname     string
-	IP           string
-	OS           string
-	Arch         string
-	Kernel       string
-	AgentVersion string
-	AgentMode    string
-	AgentUser    string
-	Status       string
-	LastSeenAt   time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              string
+	Name            string
+	Hostname        string
+	IP              string
+	OS              string
+	Arch            string
+	Kernel          string
+	AgentVersion    string
+	AgentMode       string
+	AgentUser       string
+	Status          string
+	TerminalEnabled bool // Agent 是否启用终端功能
+	LastSeenAt      time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type NodeStore struct {
@@ -52,15 +53,15 @@ func (s *NodeStore) Upsert(ctx context.Context, node Node) error {
 	if node.UpdatedAt.IsZero() {
 		node.UpdatedAt = now
 	}
-	_, err := s.db.ExecContext(ctx, nodeUpsertSQL(s.dialect), node.ID, node.Name, node.Hostname, node.IP, node.OS, node.Arch, node.Kernel, node.AgentVersion, normalAgentMode(node.AgentMode), node.AgentUser, node.Status, formatTime(node.LastSeenAt), formatTime(node.CreatedAt), formatTime(node.UpdatedAt))
+	_, err := s.db.ExecContext(ctx, nodeUpsertSQL(s.dialect), node.ID, node.Name, node.Hostname, node.IP, node.OS, node.Arch, node.Kernel, node.AgentVersion, normalAgentMode(node.AgentMode), node.AgentUser, node.Status, node.TerminalEnabled, formatTime(node.LastSeenAt), formatTime(node.CreatedAt), formatTime(node.UpdatedAt))
 	return err
 }
 
 func nodeUpsertSQL(dialect serverdb.Dialect) string {
 	if dialect == serverdb.DialectMySQL {
 		return `
-				INSERT INTO nodes (id, name, hostname, ip, os, arch, kernel, agent_version, agent_mode, agent_user, status, last_seen_at, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO nodes (id, name, hostname, ip, os, arch, kernel, agent_version, agent_mode, agent_user, status, terminal_enabled, last_seen_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE
 					name = VALUES(name),
 					hostname = VALUES(hostname),
@@ -72,13 +73,14 @@ func nodeUpsertSQL(dialect serverdb.Dialect) string {
 					agent_mode = VALUES(agent_mode),
 					agent_user = VALUES(agent_user),
 					status = VALUES(status),
+					terminal_enabled = VALUES(terminal_enabled),
 					last_seen_at = VALUES(last_seen_at),
 					updated_at = VALUES(updated_at)
 			`
 	}
 	return `
-				INSERT INTO nodes (id, name, hostname, ip, os, arch, kernel, agent_version, agent_mode, agent_user, status, last_seen_at, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO nodes (id, name, hostname, ip, os, arch, kernel, agent_version, agent_mode, agent_user, status, terminal_enabled, last_seen_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(id) DO UPDATE SET
 					name = excluded.name,
 					hostname = excluded.hostname,
@@ -90,6 +92,7 @@ func nodeUpsertSQL(dialect serverdb.Dialect) string {
 					agent_mode = excluded.agent_mode,
 					agent_user = excluded.agent_user,
 					status = excluded.status,
+					terminal_enabled = excluded.terminal_enabled,
 					last_seen_at = excluded.last_seen_at,
 					updated_at = excluded.updated_at
 			`
@@ -97,7 +100,7 @@ func nodeUpsertSQL(dialect serverdb.Dialect) string {
 
 func (s *NodeStore) Get(ctx context.Context, id string) (Node, error) {
 	row := s.db.QueryRowContext(ctx, `
-			SELECT id, name, hostname, ip, os, arch, kernel, agent_version, COALESCE(agent_mode, 'normal'), COALESCE(agent_user, ''), status, last_seen_at, created_at, updated_at
+			SELECT id, name, hostname, ip, os, arch, kernel, agent_version, COALESCE(agent_mode, 'normal'), COALESCE(agent_user, ''), status, COALESCE(terminal_enabled, 0), last_seen_at, created_at, updated_at
 			FROM nodes WHERE id = ?
 		`, id)
 	return scanNode(row)
@@ -276,7 +279,7 @@ func (s *NodeStore) UpdateSystemInfo(ctx context.Context, id string, hostname st
 
 func (s *NodeStore) List(ctx context.Context) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
-			SELECT id, name, hostname, ip, os, arch, kernel, agent_version, COALESCE(agent_mode, 'normal'), COALESCE(agent_user, ''), status, last_seen_at, created_at, updated_at
+			SELECT id, name, hostname, ip, os, arch, kernel, agent_version, COALESCE(agent_mode, 'normal'), COALESCE(agent_user, ''), status, COALESCE(terminal_enabled, 0), last_seen_at, created_at, updated_at
 			FROM nodes ORDER BY name ASC
 		`)
 	if err != nil {
@@ -302,7 +305,7 @@ type nodeScanner interface {
 func scanNode(scanner nodeScanner) (Node, error) {
 	var node Node
 	var lastSeenAt, createdAt, updatedAt string
-	if err := scanner.Scan(&node.ID, &node.Name, &node.Hostname, &node.IP, &node.OS, &node.Arch, &node.Kernel, &node.AgentVersion, &node.AgentMode, &node.AgentUser, &node.Status, &lastSeenAt, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&node.ID, &node.Name, &node.Hostname, &node.IP, &node.OS, &node.Arch, &node.Kernel, &node.AgentVersion, &node.AgentMode, &node.AgentUser, &node.Status, &node.TerminalEnabled, &lastSeenAt, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, err
 		}

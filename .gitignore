@@ -1,6 +1,4 @@
 .claude
-.codex
-AGENTS.md
 CLAUDE.md
 
 # Local config
@@ -23,7 +21,8 @@ dist/
 
 # Frontend
 web/node_modules/
-web/dist/
+web/dist*/
+web/assets/
 
 # OS/editor
 .DS_Store
@@ -33,7 +32,6 @@ web/dist/
 #docks
 docs
 skills-lock.json
-.superpowers
 
 # KeepM live memory store (plain text, machine-local)
 /.keepm-memory/

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -84,6 +85,9 @@ func NewHandler(deps Dependencies) http.Handler {
 	// Start alerting engine if enabled
 	if deps.AlertingEnabled && deps.Alerts != nil {
 		engine := alerting.NewEngine(deps.Alerts, deps.Metrics, deps.Nodes)
+		if err := engine.Initialize(context.Background()); err != nil {
+			log.Printf("Warning: failed to initialize alerting engine state: %v", err)
+		}
 		go startAlertingEngine(context.Background(), engine, deps.AlertCheckInterval)
 	}
 

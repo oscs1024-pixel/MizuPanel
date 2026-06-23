@@ -153,6 +153,32 @@ func (s *AlertStore) UpdateAlertHistoryResolved(id int64, resolvedAt time.Time) 
 	return err
 }
 
+// UpdateAlertHistoryMetricValue updates the metric_value for an active alert
+func (s *AlertStore) UpdateAlertHistoryMetricValue(id int64, metricValue float64) error {
+	_, err := s.db.Exec(`UPDATE alert_history SET metric_value = ? WHERE id = ?`, metricValue, id)
+	return err
+}
+
+// GetActiveAlertHistory returns all unresolved alerts (resolved_at IS NULL)
+func (s *AlertStore) GetActiveAlertHistory() ([]AlertHistory, error) {
+	query := `SELECT id, rule_id, rule_name, node_id, node_name, metric_field, metric_value, threshold, triggered_at, resolved_at, notification_sent, notification_error, created_at
+		FROM alert_history WHERE resolved_at IS NULL ORDER BY triggered_at DESC`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []AlertHistory
+	for rows.Next() {
+		var h AlertHistory
+		if err := rows.Scan(&h.ID, &h.RuleID, &h.RuleName, &h.NodeID, &h.NodeName, &h.MetricField, &h.MetricValue, &h.Threshold, &h.TriggeredAt, &h.ResolvedAt, &h.NotificationSent, &h.NotificationError, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
 
 func (s *AlertStore) GetAlertRule(id int64) (*AlertRule, error) {
 	var rule AlertRule

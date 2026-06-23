@@ -48,7 +48,7 @@ build-agent-downloads: $(PREPARED)
 stage-linux-amd64: $(PREPARED) build-web build-agent-downloads
 	rm -rf $(AMD64_DIR) $(AMD64_TARBALL)
 	mkdir -p $(AMD64_DIR)/data $(AMD64_DIR)/scripts $(AMD64_DIR)/systemd $(AMD64_DIR)/downloads $(AMD64_DIR)/web
-	cp server.example.yaml $(AMD64_DIR)/server.example.yaml
+	cp examples/server.example.yaml $(AMD64_DIR)/server.example.yaml
 	cp scripts/install-agent.sh $(AMD64_DIR)/scripts/install-agent.sh
 	cp scripts/install-agent.ps1 $(AMD64_DIR)/scripts/install-agent.ps1
 	cp scripts/uninstall-agent.sh $(AMD64_DIR)/scripts/uninstall-agent.sh
@@ -60,7 +60,7 @@ stage-linux-amd64: $(PREPARED) build-web build-agent-downloads
 stage-linux-arm64: $(PREPARED) build-web build-agent-downloads
 	rm -rf $(ARM64_DIR) $(ARM64_TARBALL)
 	mkdir -p $(ARM64_DIR)/data $(ARM64_DIR)/scripts $(ARM64_DIR)/systemd $(ARM64_DIR)/downloads $(ARM64_DIR)/web
-	cp server.example.yaml $(ARM64_DIR)/server.example.yaml
+	cp examples/server.example.yaml $(ARM64_DIR)/server.example.yaml
 	cp scripts/install-agent.sh $(ARM64_DIR)/scripts/install-agent.sh
 	cp scripts/install-agent.ps1 $(ARM64_DIR)/scripts/install-agent.ps1
 	cp scripts/uninstall-agent.sh $(ARM64_DIR)/scripts/uninstall-agent.sh

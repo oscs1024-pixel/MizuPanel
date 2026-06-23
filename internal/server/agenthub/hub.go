@@ -347,18 +347,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		name = hello.Hostname
 	}
 	if err := h.nodes.Upsert(r.Context(), store.Node{
-		ID:           nodeID,
-		Name:         name,
-		Hostname:     hello.Hostname,
-		IP:           hello.IP,
-		OS:           hello.OS,
-		Arch:         hello.Arch,
-		Kernel:       hello.Kernel,
-		AgentVersion: hello.AgentVersion,
-		AgentMode:    hello.AgentMode,
-		AgentUser:    hello.AgentUser,
-		Status:       "online",
-		LastSeenAt:   now,
+		ID:              nodeID,
+		Name:            name,
+		Hostname:        hello.Hostname,
+		IP:              hello.IP,
+		OS:              hello.OS,
+		Arch:            hello.Arch,
+		Kernel:          hello.Kernel,
+		AgentVersion:    hello.AgentVersion,
+		AgentMode:       hello.AgentMode,
+		AgentUser:       hello.AgentUser,
+		Status:          "online",
+		TerminalEnabled: hello.Terminal, // 保存 Agent 的终端功能开关
+		LastSeenAt:      now,
 	}); err != nil {
 		return
 	}

@@ -1,4 +1,4 @@
-import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AlertHistoryResponse, AlertRule, AlertRulesResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AlertHistoryResponse, AlertRule, AlertRulesResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest, K8sClustersResponse } from '../types'
 
 export type SessionTokenResponse = {
   token: string
@@ -208,5 +208,9 @@ export function toggleAlertRule(id: number, enabled: boolean): Promise<AlertRule
 
 export function getAlertHistory(nodeID: string, limit = 100): Promise<AlertHistoryResponse> {
   return request<AlertHistoryResponse>(`/api/alerts/history?node_id=${encodeURIComponent(nodeID)}&limit=${limit}`)
+}
+
+export function getK8sClusters(): Promise<K8sClustersResponse> {
+  return request<K8sClustersResponse>('/api/k8s/clusters')
 }
 

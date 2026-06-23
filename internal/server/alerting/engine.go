@@ -42,6 +42,33 @@ func NewEngine(alerts *store.AlertStore, metrics *store.MetricStore, nodes *stor
 	}
 }
 
+// Initialize loads active alerts from database to restore state after restart
+func (e *Engine) Initialize(ctx context.Context) error {
+	activeAlerts, err := e.alerts.GetActiveAlertHistory()
+	if err != nil {
+		return fmt.Errorf("load active alerts: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, alert := range activeAlerts {
+		stateKey := fmt.Sprintf("%d:%s", alert.RuleID, alert.NodeID)
+		e.states[stateKey] = &AlertState{
+			RuleID:      alert.RuleID,
+			NodeID:      alert.NodeID,
+			ConditionMet: true,
+			Triggered:   true,
+			HistoryID:   alert.ID,
+			FirstMetAt:  alert.TriggeredAt,
+			LastChecked: time.Now(),
+		}
+	}
+
+	return nil
+}
+
+
 // CheckRules evaluates all enabled alert rules against latest metrics
 func (e *Engine) CheckRules(ctx context.Context) error {
 	rules, err := e.alerts.GetEnabledAlertRules()
@@ -92,11 +119,6 @@ func (e *Engine) handleAlert(ctx context.Context, rule *store.AlertRule, node *s
 	state := e.states[stateKey]
 	e.mu.Unlock()
 
-	// Only send notification once
-	if state != nil && state.Triggered {
-		return
-	}
-
 	// Extract metric value
 	metricValue := e.getMetricValue(metric, rule.MetricField)
 	floatValue := 0.0
@@ -106,6 +128,14 @@ func (e *Engine) handleAlert(ctx context.Context, rule *store.AlertRule, node *s
 		} else if v, ok := metricValue.(int64); ok {
 			floatValue = float64(v)
 		}
+	}
+
+	// If alert already triggered, update metric value and return
+	if state != nil && state.Triggered {
+		if state.HistoryID > 0 {
+			_ = e.alerts.UpdateAlertHistoryMetricValue(state.HistoryID, floatValue)
+		}
+		return
 	}
 
 	// Create alert history

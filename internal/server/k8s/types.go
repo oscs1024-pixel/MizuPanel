@@ -56,8 +56,9 @@ func (c *Cluster) Public() PublicCluster {
 // PublicClusterWithNode 集群连同节点信息，不包含 kubeconfig 内容
 type PublicClusterWithNode struct {
 	PublicCluster
-	NodeName string `json:"node_name"`
-	NodeIP   string `json:"node_ip"`
+	NodeName   string `json:"node_name"`
+	NodeIP     string `json:"node_ip"`
+	NodeStatus string `json:"node_status"` // Agent 节点状态：online/offline
 }
 
 // ClusterWithNode 集群连同节点信息

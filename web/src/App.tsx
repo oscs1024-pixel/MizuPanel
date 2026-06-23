@@ -1,12 +1,14 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 
 import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
-import { AlertRulesPage } from './pages/AlertRulesPage'
+import { AlertsPage } from './pages/AlertsPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { NodeDetail } from './pages/NodeDetail'
 import { NodeList } from './pages/NodeList'
+import { OverviewPage } from './pages/OverviewPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { TerminalPage } from './pages/TerminalPage'
 import { K8sClustersPage } from './pages/K8sClustersPage'
@@ -108,7 +110,7 @@ const pageCopy: Record<AppPage, { title: string, description: string }> = {
   hosts: { title: '主机列表', description: '查看节点状态、指标、文件和节点级操作。' },
   history: { title: '历史记录', description: '按节点和时间范围查看历史指标。' },
   settings: { title: '系统设置', description: '调整 MizuPanel 的全局运行参数。' },
-  alerts: { title: '告警规则', description: '配置基于指标的告警规则和通知渠道。' },
+  alerts: { title: '告警', description: '查看告警记录和配置告警规则。' },
   logs: { title: '日志', description: '日志接口接入前仅提供控制台空状态壳。' },
   k8s: { title: 'Kubernetes 集群', description: '管理通过 Agent 节点连接的 K8s 集群。' }
 }
@@ -118,7 +120,7 @@ const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts'
   { page: 'hosts', label: '主机列表', icon: 'hosts' },
   { page: 'k8s', label: 'Kubernetes', icon: 'k8s' },
   { page: 'history', label: '历史记录', icon: 'history' },
-  { page: 'alerts', label: '告警规则', icon: 'alerts' },
+  { page: 'alerts', label: '告警', icon: 'alerts' },
   { page: 'settings', label: '系统设置', icon: 'settings' },
   { page: 'logs', label: '日志', icon: 'logs' }
 ]
@@ -146,6 +148,7 @@ export default function App() {
   const [error, setError] = useState<string>()
   const [search, setSearch] = useState('')
   const [hostFilter, setHostFilter] = useState<HostFilter>('all')
+  const [hostMetricsHistory, setHostMetricsHistory] = useState<Array<{ cpu: number; memory: number; disk: number }>>([])
   const [installPlatform, setInstallPlatform] = useState<InstallPlatform>('linux')
   const [installCommand, setInstallCommand] = useState<string>()
   const [installCommandWarning, setInstallCommandWarning] = useState<string>()
@@ -329,6 +332,54 @@ export default function App() {
     const average = (key: 'cpu_usage' | 'memory_usage' | 'disk_usage') => latest.length === 0 ? 0 : latest.reduce((sum, metric) => sum + metric[key], 0) / latest.length
     return { cpu: average('cpu_usage'), memory: average('memory_usage'), disk: average('disk_usage') }
   }, [nodes])
+
+  // 加载所有在线节点的历史指标平均值，用于主机列表顶部卡片的 sparkline
+  useEffect(() => {
+    if (page !== 'hosts') return
+    const onlineNodeList = nodes.filter((node) => node.status === 'online')
+    if (onlineNodeList.length === 0) {
+      setHostMetricsHistory([])
+      return
+    }
+
+    let cancelled = false
+    Promise.all(
+      onlineNodeList.map((node) => getNodeMetrics(node.id, '1h').catch(() => ({ metrics: [] })))
+    ).then((results) => {
+      if (cancelled) return
+      // 按时间戳聚合各节点指标
+      const timestampMap = new Map<string, { cpu: number[]; memory: number[]; disk: number[] }>()
+      results.forEach((result) => {
+        result.metrics.forEach((metric) => {
+          const ts = metric.created_at
+          if (!timestampMap.has(ts)) {
+            timestampMap.set(ts, { cpu: [], memory: [], disk: [] })
+          }
+          const entry = timestampMap.get(ts)!
+          entry.cpu.push(metric.cpu_usage)
+          entry.memory.push(metric.memory_usage)
+          entry.disk.push(metric.disk_usage)
+        })
+      })
+
+      // 计算每个时间点的平均值并按时间排序
+      const avgHistory = Array.from(timestampMap.entries())
+        .map(([timestamp, values]) => ({
+          timestamp,
+          cpu: values.cpu.reduce((a, b) => a + b, 0) / values.cpu.length,
+          memory: values.memory.reduce((a, b) => a + b, 0) / values.memory.length,
+          disk: values.disk.reduce((a, b) => a + b, 0) / values.disk.length,
+        }))
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        .map(({ cpu, memory, disk }) => ({ cpu, memory, disk }))
+
+      setHostMetricsHistory(avgHistory)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [page, nodes])
 
   const filteredNodes = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -919,9 +970,9 @@ export default function App() {
     <div data-testid="host-page-container" className="mx-auto flex w-full max-w-[1400px] flex-col gap-3">
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <TopStatCard title="节点总数" value={String(nodes.length)} subtitle={`在线 ${onlineNodes} · 离线 ${nodes.length - onlineNodes}`} tone="blue" />
-        <TopStatCard title="平均 CPU" value={formatPercent(averages.cpu)} subtitle="最新采样" tone="green" />
-        <TopStatCard title="平均内存" value={formatPercent(averages.memory)} subtitle="最新采样" tone="green" />
-        <TopStatCard title="平均磁盘" value={formatPercent(averages.disk)} subtitle="最新采样" tone="orange" />
+        <TopStatCard title="平均 CPU" value={formatPercent(averages.cpu)} subtitle="最新采样" tone="green" sparklineData={hostMetricsHistory.map(h => h.cpu)} />
+        <TopStatCard title="平均内存" value={formatPercent(averages.memory)} subtitle="最新采样" tone="green" sparklineData={hostMetricsHistory.map(h => h.memory)} />
+        <TopStatCard title="平均磁盘" value={formatPercent(averages.disk)} subtitle="最新采样" tone="orange" sparklineData={hostMetricsHistory.map(h => h.disk)} />
         <TopStatCard title="异常节点" value={String(nodes.length - onlineNodes)} subtitle="离线或未上报" tone="red" />
       </section>
 
@@ -1096,56 +1147,13 @@ export default function App() {
               {installCommandDialog}
 
               {page === 'overview' ? (
-                <>
-                  <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <MetricCard label="节点总数" value={String(nodes.length)} detail="已注册 Agent" />
-                    <MetricCard label="在线节点" value={String(onlineNodes)} tone="green" detail={`${nodes.length - onlineNodes} 个离线`} />
-                    <MetricCard label="平均 CPU" value={formatPercent(averages.cpu)} tone="amber" detail="最新采样" />
-                    <MetricCard label="平均内存" value={formatPercent(averages.memory)} tone="slate" detail="最新采样" />
-                    <MetricCard label="平均磁盘" value={formatPercent(averages.disk)} tone="amber" detail="最新采样" />
-                    <MetricCard label="平均负载" value={averageLoad.toFixed(2)} detail="Load 1" />
-                    <MetricCard label="下行汇总" value={formatSpeed(networkIn)} tone="green" detail="所有在线采样" />
-                    <MetricCard label="上行汇总" value={formatSpeed(networkOut)} tone="slate" detail="所有在线采样" />
-                  </section>
-                  <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                    <div className="rounded-2xl border border-border bg-card p-5 shadow-glass">
-                      <h2 className="text-lg font-black text-foreground">节点状态摘要</h2>
-                      {nodes.length > 0 ? (
-                        <div className="mt-4 grid gap-3">
-                          {nodes.map((node) => (
-                            <div key={node.id} className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <p className="font-black text-foreground">{node.name}</p>
-                                <p className="mt-1 text-xs font-bold text-muted-foreground">{node.ip} · {node.os} · {node.arch}</p>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 text-xs font-black">
-                                <span className={`rounded-full px-3 py-1 ${node.status === 'online' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>{node.status === 'online' ? '在线' : '离线'}</span>
-                                <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground">CPU {node.latest_metric ? formatPercent(node.latest_metric.cpu_usage) : '—'}</span>
-                                <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground">内存 {node.latest_metric ? formatPercent(node.latest_metric.memory_usage) : '—'}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-4 rounded-xl border border-dashed border-border bg-surface p-8 text-center text-sm font-bold text-muted-foreground">等待节点接入</div>
-                      )}
-                    </div>
-                    <div className="rounded-2xl border border-border bg-card p-5 shadow-glass">
-                      <h2 className="text-lg font-black text-foreground">指标数据状态</h2>
-                      <p className="mt-2 text-sm font-semibold leading-6 text-muted-foreground">概览只聚合现有 Agent 上报数据；无指标的节点不会填充模拟值。</p>
-                      <div className="mt-5 rounded-xl border border-border bg-surface p-4">
-                        <p className="text-3xl font-black text-foreground">{latestMetrics.length}</p>
-                        <p className="mt-1 text-xs font-bold text-muted-foreground">已有最新指标的节点数</p>
-                      </div>
-                    </div>
-                  </section>
-                </>
+                <OverviewPage nodes={nodes} onlineNodes={onlineNodes} />
               ) : page === 'history' ? (
                 <HistoryPage nodes={nodes} selectedNodeID={selectedNodeID} metrics={metrics} range={range} settings={settings} onSelectNode={setSelectedNodeID} onRangeChange={setRange} />
               ) : page === 'settings' ? (
                 <SystemSettingsPage settings={settings} selectedRetention={settingsRetention} saving={settingsSaving} message={settingsMessage} error={settingsError} onSelectRetention={setSettingsRetention} onSave={saveSettings} />
               ) : page === 'alerts' ? (
-                <AlertRulesPage nodes={nodes} />
+                <AlertsPage nodes={nodes} />
               ) : page === 'k8s' ? (
                 route.kind === 'k8s-cluster-detail' ? (
                   <K8sClusterDetailPage
@@ -1198,16 +1206,54 @@ export default function App() {
   )
 }
 
-function TopStatCard({ title, value, subtitle, tone }: { title: string, value: string, subtitle: string, tone: 'blue' | 'green' | 'orange' | 'red' }) {
+function TopStatCard({ title, value, subtitle, tone, sparklineData }: { title: string, value: string, subtitle: string, tone: 'blue' | 'green' | 'orange' | 'red', sparklineData?: number[] }) {
   const dotClass = tone === 'green' ? 'bg-success' : tone === 'orange' ? 'bg-warning' : tone === 'red' ? 'bg-danger' : 'bg-info'
+  const sparklineColors = {
+    blue: '#93c5fd',
+    green: '#6ee7b7',
+    orange: '#fdba74',
+    red: '#fca5a5',
+  }
+  const sparklineColor = sparklineColors[tone]
+  const gradientId = `top-stat-gradient-${tone}`
+  const chartData = sparklineData ? sparklineData.map((v, i) => ({ index: i, value: v })) : []
+  const hasSparkline = sparklineData && sparklineData.length > 0
+
   return (
     <div className="h-[96px] rounded-[14px] border border-border bg-card p-4 shadow-sm">
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="truncate text-xs font-black text-muted-foreground">{title}</p>
         <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
       </div>
-      <p className="font-display text-2xl font-black tracking-tight text-foreground">{value}</p>
-      <p className="mt-1 truncate text-xs font-semibold text-muted-foreground">{subtitle}</p>
+      <div className="flex items-end justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-display text-2xl font-black tracking-tight text-foreground">{value}</p>
+          <p className="mt-1 truncate text-xs font-semibold text-muted-foreground">{subtitle}</p>
+        </div>
+        {hasSparkline && (
+          <div className="h-9 w-24 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={sparklineColor} stopOpacity={0.18} />
+                    <stop offset="95%" stopColor={sparklineColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="natural"
+                  dataKey="value"
+                  stroke={sparklineColor}
+                  strokeWidth={1.2}
+                  fill={`url(#${gradientId})`}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -18,3 +18,19 @@ export function formatSpeed(value?: number | null): string {
   const formatted = formatBytes(value)
   return formatted === '—' ? formatted : `${formatted}/s`
 }
+
+export function formatUptime(seconds?: number | null): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '—'
+
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+
+  if (days > 0) {
+    return `${days} 天 ${hours} 小时`
+  }
+  if (hours > 0) {
+    return `${hours} 小时 ${minutes} 分钟`
+  }
+  return `${minutes} 分钟`
+}

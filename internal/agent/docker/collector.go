@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mizupanel/mizupanel/internal/protocol"
@@ -18,9 +19,10 @@ import (
 
 const (
 	defaultSocketPath        = "/var/run/docker.sock"
-	defaultStatsTimeout      = 2 * time.Second
-	defaultCollectionTimeout = 5 * time.Second
+	defaultStatsTimeout      = 5 * time.Second  // 单容器 stats 超时
+	defaultCollectionTimeout = 30 * time.Second // 整体采集超时（支持并发采集多容器）
 	defaultContainerLimit    = 100
+	maxConcurrentStats       = 10 // 最大并发采集容器数
 )
 
 type Collector struct {
@@ -83,36 +85,77 @@ func (c *Collector) Collect() protocol.DockerSnapshot {
 		snapshot.Error = "Docker containers unavailable: " + err.Error()
 		return snapshot
 	}
-	var errorsSeen []string
-	for _, item := range containers {
-		if ctx.Err() != nil {
-			errorsSeen = appendLimited(errorsSeen, "Docker collection timeout")
-			break
-		}
-		container := protocol.ContainerInfo{
-			ID:        shortID(item.ID),
-			FullID:    item.ID,
-			Name:      cleanName(firstName(item.Names)),
-			Image:     item.Image,
-			State:     item.State,
-			Status:    item.Status,
-			CreatedAt: item.Created,
-		}
-		if inspect, err := client.InspectContainer(ctx, item.ID); err == nil {
-			container.RestartCount = inspect.RestartCount
-			container.StartedAt = parseDockerTime(inspect.State.StartedAt)
-		} else {
-			errorsSeen = appendLimited(errorsSeen, shortID(item.ID)+" inspect: "+err.Error())
-		}
-		if ctx.Err() == nil {
-			if stats, err := client.ContainerStats(ctx, item.ID); err == nil {
-				applyStats(&container, stats)
-			} else {
-				errorsSeen = appendLimited(errorsSeen, shortID(item.ID)+" stats: "+err.Error())
-			}
-		}
-		snapshot.Containers = append(snapshot.Containers, container)
+
+	// 并发采集容器信息
+	type containerResult struct {
+		info protocol.ContainerInfo
+		err  string
 	}
+
+	results := make([]containerResult, len(containers))
+	semaphore := make(chan struct{}, maxConcurrentStats) // 限制并发数
+	var wg sync.WaitGroup
+
+	for i, item := range containers {
+		if ctx.Err() != nil {
+			results[i].err = "Collection timeout"
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, item containerListItem) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // 获取信号量
+			defer func() { <-semaphore }() // 释放信号量
+
+			container := protocol.ContainerInfo{
+				ID:        shortID(item.ID),
+				FullID:    item.ID,
+				Name:      cleanName(firstName(item.Names)),
+				Image:     item.Image,
+				State:     item.State,
+				Status:    item.Status,
+				CreatedAt: item.Created,
+			}
+
+			// Inspect 元数据
+			if inspect, err := client.InspectContainer(ctx, item.ID); err == nil {
+				container.RestartCount = inspect.RestartCount
+				container.StartedAt = parseDockerTime(inspect.State.StartedAt)
+			} else if ctx.Err() == nil {
+				results[idx].err = shortID(item.ID) + " inspect: " + err.Error()
+			}
+
+			// Stats 资源使用（仅运行中的容器）
+			if ctx.Err() == nil && item.State == "running" {
+				if stats, err := client.ContainerStats(ctx, item.ID); err == nil {
+					applyStats(&container, stats)
+				} else {
+					if results[idx].err != "" {
+						results[idx].err += "; "
+					}
+					results[idx].err += shortID(item.ID) + " stats: " + err.Error()
+				}
+			}
+
+			results[idx].info = container
+		}(i, item)
+	}
+
+	wg.Wait()
+
+	// 收集结果和错误
+	var errorsSeen []string
+	for _, result := range results {
+		if result.err != "" {
+			errorsSeen = appendLimited(errorsSeen, result.err)
+		}
+		// 即使有错误也添加容器基础信息
+		if result.info.ID != "" {
+			snapshot.Containers = append(snapshot.Containers, result.info)
+		}
+	}
+
 	if len(errorsSeen) > 0 {
 		snapshot.Error = strings.Join(errorsSeen, "; ")
 	}

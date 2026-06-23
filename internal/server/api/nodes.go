@@ -66,18 +66,19 @@ type DockerSnapshotResponse struct {
 
 func nodeResponse(node store.Node) NodeResponse {
 	return NodeResponse{
-		ID:           node.ID,
-		Name:         node.Name,
-		Hostname:     node.Hostname,
-		IP:           node.IP,
-		OS:           node.OS,
-		Arch:         node.Arch,
-		Kernel:       node.Kernel,
-		AgentVersion: node.AgentVersion,
-		AgentMode:    node.AgentMode,
-		AgentUser:    node.AgentUser,
-		Status:       node.Status,
-		LastSeenAt:   node.LastSeenAt,
+		ID:              node.ID,
+		Name:            node.Name,
+		Hostname:        node.Hostname,
+		IP:              node.IP,
+		OS:              node.OS,
+		Arch:            node.Arch,
+		Kernel:          node.Kernel,
+		AgentVersion:    node.AgentVersion,
+		AgentMode:       node.AgentMode,
+		AgentUser:       node.AgentUser,
+		Status:          node.Status,
+		LastSeenAt:      node.LastSeenAt,
+		TerminalEnabled: node.TerminalEnabled,
 	}
 }
 

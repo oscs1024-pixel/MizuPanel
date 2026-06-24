@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AlertHistory, K8sCluster, Metric, Node, RangeOption } from '../types'
 import { formatBytes, formatPercent, formatUptime } from '../lib/format'
 import { getAlertHistory, getNodeMetrics, getK8sClusters, getAlertRules } from '../api/client'
-import { Plus, Bell, Settings, BarChart3, Server, Box, Cpu, MemoryStick, HardDrive, Monitor, Zap, Home, Clock } from 'lucide-react'
+import { Plus, Bell, Settings, Server, Box, Cpu, MemoryStick, HardDrive, Monitor, Zap, Home, Clock } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Area, AreaChart } from 'recharts'
 
 type OverviewPageProps = {
@@ -363,7 +363,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
             <QuickActionButton icon={<Plus size={24} />} label="添加服务器" color="blue" onClick={() => alert('添加服务器功能待实现')} />
             <QuickActionButton icon={<Bell size={24} />} label="告警规则" color="orange" onClick={() => window.location.href = '/alerts'} />
             <QuickActionButton icon={<Settings size={24} />} label="系统设置" color="green" onClick={() => window.location.href = '/settings'} />
-            <QuickActionButton icon={<BarChart3 size={24} />} label="查看历史" color="purple" onClick={() => window.location.href = '/history'} />
+            <QuickActionButton icon={<Box size={24} />} label="K8s 集群" color="cyan" onClick={() => window.location.href = '/k8s/clusters'} />
           </div>
         </div>
       </section>
@@ -865,6 +865,7 @@ function QuickActionButton({ icon, label, color, onClick }: { icon: React.ReactN
     orange: 'bg-orange-50 hover:bg-orange-100 border-orange-200',
     green: 'bg-green-50 hover:bg-green-100 border-green-200',
     purple: 'bg-purple-50 hover:bg-purple-100 border-purple-200',
+    cyan: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200',
   }
 
   const iconColorClasses = {
@@ -872,6 +873,7 @@ function QuickActionButton({ icon, label, color, onClick }: { icon: React.ReactN
     orange: 'text-orange-600',
     green: 'text-green-600',
     purple: 'text-purple-600',
+    cyan: 'text-cyan-600',
   }
 
   return (

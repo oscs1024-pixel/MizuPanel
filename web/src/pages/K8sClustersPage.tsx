@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Search } from 'lucide-react'
 import { fetchK8sClusters, deleteK8sCluster } from '../api/k8s'
 import type { K8sCluster } from '../types'
 import { Toast } from '../components/Toast'
@@ -14,6 +15,7 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
   const [error, setError] = useState<string>()
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [pendingDeleteID, setPendingDeleteID] = useState<string | null>(null)
+  const [clusterSearch, setClusterSearch] = useState('')
 
   const loadClusters = useCallback(() => {
     setLoading(true)
@@ -46,6 +48,22 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
         setToast({ message: `集群删除失败: ${err.message}`, type: 'error' })
       })
   }, [loadClusters])
+
+  const normalizedSearch = clusterSearch.trim().toLowerCase()
+  const filteredClusters = normalizedSearch
+    ? clusters.filter((cluster) => {
+        const values = [
+          cluster.name,
+          cluster.node_name,
+          cluster.node_ip,
+          cluster.context,
+          cluster.version,
+          cluster.status,
+          cluster.node_status,
+        ]
+        return values.some((value) => String(value ?? '').toLowerCase().includes(normalizedSearch))
+      })
+    : clusters
 
   if (loading) {
     return (
@@ -85,7 +103,7 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
         />
       )}
 
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-foreground">Kubernetes 集群</h1>
           <p className="mt-1 text-sm font-semibold text-muted-foreground">管理通过 Agent 节点连接的 K8s 集群</p>
@@ -107,19 +125,43 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {clusters.map((cluster) => (
-            <ClusterCard
-              key={cluster.id}
-              cluster={cluster}
-              pendingDelete={pendingDeleteID === cluster.id}
-              onRequestDelete={setPendingDeleteID}
-              onCancelDelete={() => setPendingDeleteID(null)}
-              onConfirmDelete={handleDeleteCluster}
-              onViewDetail={onViewDetail}
-            />
-          ))}
-        </div>
+        <>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-3 shadow-sm">
+            <div className="relative min-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <input
+                type="text"
+                value={clusterSearch}
+                onChange={(event) => setClusterSearch(event.target.value)}
+                placeholder="搜索集群、Agent、IP、Context"
+                className="h-11 w-full rounded-xl border border-border bg-surface pl-9 pr-4 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <span className="shrink-0 rounded-full bg-muted px-3 py-1.5 text-xs font-black text-muted-foreground">
+              {filteredClusters.length} / {clusters.length}
+            </span>
+          </div>
+
+          {filteredClusters.length === 0 ? (
+            <div className="flex h-64 items-center justify-center rounded-[14px] border border-dashed border-border bg-card">
+              <p className="text-sm font-semibold text-muted-foreground">没有匹配的集群</p>
+            </div>
+          ) : (
+            <div data-testid="k8s-cluster-grid" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredClusters.map((cluster) => (
+                <ClusterCard
+                  key={cluster.id}
+                  cluster={cluster}
+                  pendingDelete={pendingDeleteID === cluster.id}
+                  onRequestDelete={setPendingDeleteID}
+                  onCancelDelete={() => setPendingDeleteID(null)}
+                  onConfirmDelete={handleDeleteCluster}
+                  onViewDetail={onViewDetail}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )

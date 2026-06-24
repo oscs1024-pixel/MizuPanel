@@ -89,16 +89,15 @@ describe('App history and system settings', () => {
     vi.mocked(updateSettings).mockResolvedValue({ metrics_retention: '7d', metrics_retention_seconds: 604800, max_metrics_retention: '7d' })
   })
 
-  test('opens the history page and switches metric ranges', async () => {
-    render(<App />)
+  test('keeps the legacy history route and switches metric ranges', async () => {
+    window.history.pushState({}, '', '/history')
 
-    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
-    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
+    render(<App />)
 
     expect(await screen.findByRole('heading', { name: '指标历史记录' })).toBeInTheDocument()
     expect(screen.getAllByText('Oracle SG').length).toBeGreaterThan(0)
-    expect(within(screen.getByRole('region', { name: 'CPU 历史' })).getByText('42.0%')).toBeInTheDocument()
-    const loadChart = screen.getByRole('region', { name: 'Load 走势' })
+    expect(within(await screen.findByRole('region', { name: 'CPU 历史' })).getByText('42.0%')).toBeInTheDocument()
+    const loadChart = await screen.findByRole('region', { name: 'Load 走势' })
     expect(within(loadChart).getByText('0.10')).toBeInTheDocument()
     expect(within(loadChart).queryByText('0.10%')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: '最近 24 小时' })).not.toBeDisabled())
@@ -109,10 +108,9 @@ describe('App history and system settings', () => {
 
   test('disables history ranges beyond the configured retention', async () => {
     vi.mocked(getSettings).mockResolvedValue({ metrics_retention: '6h', metrics_retention_seconds: 21600, max_metrics_retention: '7d' })
-    render(<App />)
+    window.history.pushState({}, '', '/history')
 
-    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
-    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
+    render(<App />)
 
     const longRange = await screen.findByRole('button', { name: '最近 24 小时' })
     expect(longRange).toBeDisabled()

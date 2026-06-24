@@ -89,6 +89,10 @@ const (
 	MessageTypeK8sGetServicesResult     = "k8s_get_services_result"
 	MessageTypeK8sGetIngresses          = "k8s_get_ingresses"
 	MessageTypeK8sGetIngressesResult    = "k8s_get_ingresses_result"
+	MessageTypeK8sGetDiagnostics        = "k8s_get_diagnostics"
+	MessageTypeK8sGetDiagnosticsResult  = "k8s_get_diagnostics_result"
+	MessageTypeK8sResourceAction        = "k8s_resource_action"
+	MessageTypeK8sResourceActionResult  = "k8s_resource_action_result"
 )
 
 type HelloMessage struct {
@@ -727,6 +731,87 @@ type K8sGetIngressesResult struct {
 	Success   bool         `json:"success"`
 	Error     string       `json:"error,omitempty"`
 	Ingresses []K8sIngress `json:"ingresses,omitempty"`
+}
+
+type K8sDiagnosticsRequest struct {
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	Kind              string `json:"kind"`
+	Namespace         string `json:"namespace"`
+	Name              string `json:"name"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
+}
+
+type K8sDiagnostics struct {
+	Kind       string               `json:"kind"`
+	Namespace  string               `json:"namespace"`
+	Name       string               `json:"name"`
+	Status     string               `json:"status"`
+	Age        string               `json:"age,omitempty"`
+	Node       string               `json:"node,omitempty"`
+	IP         string               `json:"ip,omitempty"`
+	Metadata   map[string]string    `json:"metadata,omitempty"`
+	Summary    map[string]string    `json:"summary,omitempty"`
+	Containers []K8sContainerDetail `json:"containers,omitempty"`
+	Conditions []K8sCondition       `json:"conditions,omitempty"`
+	Events     []K8sEvent           `json:"events,omitempty"`
+	YAML       string               `json:"yaml"`
+	Describe   string               `json:"describe"`
+}
+
+type K8sContainerDetail struct {
+	Name         string `json:"name"`
+	Image        string `json:"image"`
+	Ready        bool   `json:"ready"`
+	RestartCount int32  `json:"restart_count"`
+	State        string `json:"state,omitempty"`
+}
+
+type K8sCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type K8sEvent struct {
+	Type    string `json:"type"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+	Count   int32  `json:"count"`
+	Age     string `json:"age,omitempty"`
+}
+
+type K8sGetDiagnosticsResult struct {
+	Type        string          `json:"type"`
+	RequestID   string          `json:"request_id"`
+	Success     bool            `json:"success"`
+	Error       string          `json:"error,omitempty"`
+	Diagnostics *K8sDiagnostics `json:"diagnostics,omitempty"`
+}
+
+type K8sResourceActionRequest struct {
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	Kind              string `json:"kind"`
+	Namespace         string `json:"namespace"`
+	Name              string `json:"name"`
+	Action            string `json:"action"`
+	Replicas          *int32 `json:"replicas,omitempty"`
+	YAML              string `json:"yaml,omitempty"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
+}
+
+type K8sResourceActionResult struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 type K8sClusterConnectResult struct {

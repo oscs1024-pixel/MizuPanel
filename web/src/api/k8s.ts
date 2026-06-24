@@ -12,7 +12,11 @@ import type {
   K8sStatefulSetsResponse,
   K8sDaemonSetsResponse,
   K8sServicesResponse,
-  K8sIngressesResponse
+  K8sIngressesResponse,
+  K8sDiagnosticsResponse,
+  K8sResourceActionRequest,
+  K8sResourceActionResponse,
+  K8sResourceKind
 } from '../types'
 
 export class K8sAPIError extends Error {
@@ -105,6 +109,34 @@ export function fetchK8sIngresses(clusterID: string, namespace?: string): Promis
 
 export function fetchK8sPods(clusterID: string, namespace?: string): Promise<K8sPodsResponse> {
   return request<K8sPodsResponse>(`/api/k8s/clusters/${encodeURIComponent(clusterID)}/pods${namespaceQuery(namespace)}`)
+}
+
+export function fetchK8sDiagnostics(
+  clusterID: string,
+  kind: K8sResourceKind,
+  namespace: string,
+  name: string
+): Promise<K8sDiagnosticsResponse> {
+  return request<K8sDiagnosticsResponse>(
+    `/api/k8s/clusters/${encodeURIComponent(clusterID)}/resources/${encodeURIComponent(kind)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/diagnostics`
+  )
+}
+
+export function executeK8sResourceAction(
+  clusterID: string,
+  kind: K8sResourceKind,
+  namespace: string,
+  name: string,
+  req: K8sResourceActionRequest
+): Promise<K8sResourceActionResponse> {
+  return request<K8sResourceActionResponse>(
+    `/api/k8s/clusters/${encodeURIComponent(clusterID)}/resources/${encodeURIComponent(kind)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/actions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req)
+    }
+  )
 }
 
 export function fetchK8sPodLogs(

@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { MoreHorizontal, Play, RotateCw, ScrollText, Square, Terminal, Trash2 } from 'lucide-react'
 
 import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
 import { formatBytes, formatPercent, formatSpeed } from '../lib/format'
@@ -1617,23 +1620,44 @@ function StatusPill({ value, detail }: { value: string, detail?: string }) {
 }
 
 function ContainerActionsDropdown({ container, nodeID, onRefresh, onShowToast, onOpenLogs }: { container: DockerContainer; nodeID: string; onRefresh: () => void; onShowToast: (message: string, type: 'success' | 'error') => void; onOpenLogs: (containerId: string, containerName: string) => void }) {
+  const menuId = useId()
   const [open, setOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number }>()
   const [loading, setLoading] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
   const running = container.state.toLowerCase() === 'running'
   const execID = container.full_id || container.id
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as HTMLElement)) {
-        setOpen(false)
+    if (!open) return
+    const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
+      let element = event.target instanceof HTMLElement ? event.target : null
+      while (element) {
+        if (element.getAttribute('data-container-actions-menu') === menuId) {
+          return
+        }
+        element = element.parentElement
       }
+      setOpen(false)
     }
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+    const timeoutID = window.setTimeout(() => {
+      document.addEventListener('click', closeOnOutsideClick)
+    }, 0)
+    return () => {
+      window.clearTimeout(timeoutID)
+      document.removeEventListener('click', closeOnOutsideClick)
     }
-  }, [open])
+  }, [menuId, open])
+
+  const toggleMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const menuWidth = 176
+    setMenuPosition({
+      top: rect.bottom + 6,
+      left: Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)),
+    })
+    setOpen((value) => !value)
+  }
 
   const handleAction = async (action: 'start' | 'stop' | 'restart' | 'delete' | 'exec' | 'logs') => {
     setOpen(false)
@@ -1684,77 +1708,53 @@ function ContainerActionsDropdown({ container, nodeID, onRefresh, onShowToast, o
   }
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative flex items-center justify-center">
       <button
         type="button"
         aria-label="容器操作"
         title="容器操作"
-        onClick={() => setOpen(!open)}
+        data-container-actions-menu={menuId}
+        onClick={toggleMenu}
         disabled={loading}
-        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-2xl border border-border bg-card text-foreground transition hover:-translate-y-0.5 hover:bg-surface focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl border border-border bg-surface text-muted-foreground shadow-sm transition hover:border-primary/30 hover:bg-primary/10 hover:text-primary focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="8" cy="3" r="1" fill="currentColor" />
-          <circle cx="8" cy="8" r="1" fill="currentColor" />
-          <circle cx="8" cy="13" r="1" fill="currentColor" />
-        </svg>
+        <MoreHorizontal size={16} aria-hidden="true" />
       </button>
-      {open && !loading && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-36 rounded-xl border border-border bg-card py-1 shadow-lg">
-          <button
-            type="button"
-            onClick={() => handleAction('exec')}
-            disabled={!running}
-            className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface disabled:cursor-not-allowed disabled:text-muted-foreground"
-          >
-            进入容器
-          </button>
-          <button
-            type="button"
-            onClick={() => handleAction('logs')}
-            className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
-          >
-            查看日志
-          </button>
-          <div className="my-1 border-t border-border" />
-          {!running && (
-            <button
-              type="button"
-              onClick={() => handleAction('start')}
-              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
-            >
-              启动
-            </button>
-          )}
-          {running && (
-            <button
-              type="button"
-              onClick={() => handleAction('stop')}
-              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
-            >
-              停止
-            </button>
-          )}
-          {running && (
-            <button
-              type="button"
-              onClick={() => handleAction('restart')}
-              className="w-full px-4 py-2 text-left text-sm font-semibold text-foreground transition hover:bg-surface"
-            >
-              重启
-            </button>
-          )}
-          <div className="my-1 border-t border-border" />
-          <button
-            type="button"
-            onClick={() => handleAction('delete')}
-            className="w-full px-4 py-2 text-left text-sm font-semibold text-danger transition hover:bg-surface"
-          >
-            删除
-          </button>
-        </div>
-      )}
+      {open && !loading && menuPosition ? createPortal(
+        <div
+          data-container-actions-menu={menuId}
+          className="fixed z-[70] w-44 rounded-2xl border border-border/80 bg-card/95 p-1.5 text-left shadow-[0_18px_45px_rgb(15_23_42/0.16)] backdrop-blur"
+          style={{ top: menuPosition.top, left: menuPosition.left }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <ContainerActionMenuItem icon={<Terminal size={15} />} label="进入容器" disabled={!running} onClick={() => handleAction('exec')} />
+          <ContainerActionMenuItem icon={<ScrollText size={15} />} label="查看日志" onClick={() => handleAction('logs')} />
+          <div className="my-1 h-px bg-border/70" />
+          {!running ? <ContainerActionMenuItem icon={<Play size={15} />} label="启动" onClick={() => handleAction('start')} /> : null}
+          {running ? <ContainerActionMenuItem icon={<Square size={15} />} label="停止" onClick={() => handleAction('stop')} /> : null}
+          {running ? <ContainerActionMenuItem icon={<RotateCw size={15} />} label="重启" onClick={() => handleAction('restart')} /> : null}
+          <div className="my-1 h-px bg-border/70" />
+          <ContainerActionMenuItem danger icon={<Trash2 size={15} />} label="删除" onClick={() => handleAction('delete')} />
+        </div>,
+        document.body
+      ) : null}
     </div>
+  )
+}
+
+function ContainerActionMenuItem({ icon, label, danger, disabled, onClick }: { icon: ReactNode; label: string; danger?: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-45 ${danger ? 'text-danger hover:bg-danger/10' : 'text-foreground hover:bg-primary/10 hover:text-primary'}`}
+    >
+      <span aria-hidden="true" className="inline-flex h-5 w-5 items-center justify-center rounded-lg bg-surface text-current">
+        {icon}
+      </span>
+      {label}
+    </button>
   )
 }
 

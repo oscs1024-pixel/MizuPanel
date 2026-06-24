@@ -1,12 +1,17 @@
-import type { K8sDeployment, K8sStatefulSet, K8sDaemonSet } from '../../types'
+import type { K8sDeployment, K8sStatefulSet, K8sDaemonSet, K8sResourceKind } from '../../types'
+import { K8sResourceActions } from './K8sResourceActions'
 import { K8sResourceTable } from './K8sResourceTable'
 
 type WorkloadMode = 'deployment' | 'statefulset' | 'daemonset'
 
 type K8sWorkloadTableProps = {
+  clusterId: string
   mode: WorkloadMode
   items: K8sDeployment[] | K8sStatefulSet[] | K8sDaemonSet[]
   loading?: boolean
+  onViewDiagnostics?: (kind: K8sResourceKind, namespace: string, name: string) => void
+  onToast: (message: string, type: 'success' | 'error') => void
+  onResourceChanged?: () => void
 }
 
 function ResourceName({ name }: { name: string }) {
@@ -17,7 +22,12 @@ function NamespaceName({ namespace }: { namespace: string }) {
   return <span className="block max-w-[120px] truncate text-muted-foreground" title={namespace}>{namespace}</span>
 }
 
-export function K8sWorkloadTable({ mode, items, loading }: K8sWorkloadTableProps) {
+function desiredReplicasFromReady(ready: string): number | undefined {
+  const desired = Number.parseInt((ready || '').split('/')[1] || '', 10)
+  return Number.isFinite(desired) && desired >= 0 ? desired : undefined
+}
+
+export function K8sWorkloadTable({ clusterId, mode, items, loading, onViewDiagnostics, onToast, onResourceChanged }: K8sWorkloadTableProps) {
   if (mode === 'deployment') {
     const deployments = items as K8sDeployment[]
     return (
@@ -33,6 +43,23 @@ export function K8sWorkloadTable({ mode, items, loading }: K8sWorkloadTableProps
           { key: 'up_to_date', title: 'Up-to-date', render: (item) => item.up_to_date },
           { key: 'available', title: 'Available', render: (item) => item.available },
           { key: 'age', title: 'Age', render: (item) => <span className="text-muted-foreground">{item.age}</span> },
+          {
+            key: 'actions',
+            title: '操作',
+            align: 'center',
+            render: (item) => (
+              <K8sResourceActions
+                clusterId={clusterId}
+                kind="deployment"
+                namespace={item.namespace}
+                name={item.name}
+                replicas={desiredReplicasFromReady(item.ready)}
+                onViewDiagnostics={onViewDiagnostics}
+                onToast={onToast}
+                onResourceChanged={onResourceChanged}
+              />
+            )
+          },
         ]}
       />
     )
@@ -52,6 +79,23 @@ export function K8sWorkloadTable({ mode, items, loading }: K8sWorkloadTableProps
           { key: 'ready', title: 'Ready', render: (item) => item.ready },
           { key: 'service_name', title: 'Service', render: (item) => <span className="text-muted-foreground">{item.service_name}</span> },
           { key: 'age', title: 'Age', render: (item) => <span className="text-muted-foreground">{item.age}</span> },
+          {
+            key: 'actions',
+            title: '操作',
+            align: 'center',
+            render: (item) => (
+              <K8sResourceActions
+                clusterId={clusterId}
+                kind="statefulset"
+                namespace={item.namespace}
+                name={item.name}
+                replicas={desiredReplicasFromReady(item.ready)}
+                onViewDiagnostics={onViewDiagnostics}
+                onToast={onToast}
+                onResourceChanged={onResourceChanged}
+              />
+            )
+          },
         ]}
       />
     )
@@ -72,6 +116,22 @@ export function K8sWorkloadTable({ mode, items, loading }: K8sWorkloadTableProps
         { key: 'ready', title: 'Ready', render: (item) => item.ready },
         { key: 'available', title: 'Available', render: (item) => item.available },
         { key: 'age', title: 'Age', render: (item) => <span className="text-muted-foreground">{item.age}</span> },
+        {
+          key: 'actions',
+          title: '操作',
+          align: 'center',
+          render: (item) => (
+            <K8sResourceActions
+              clusterId={clusterId}
+              kind="daemonset"
+              namespace={item.namespace}
+              name={item.name}
+              onViewDiagnostics={onViewDiagnostics}
+              onToast={onToast}
+              onResourceChanged={onResourceChanged}
+            />
+          )
+        },
       ]}
     />
   )

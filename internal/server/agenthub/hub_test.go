@@ -116,6 +116,7 @@ func TestDeliverK8sMessageForAllResultTypes(t *testing.T) {
 		protocol.MessageTypeK8sGetDaemonSetsResult,
 		protocol.MessageTypeK8sGetServicesResult,
 		protocol.MessageTypeK8sGetIngressesResult,
+		protocol.MessageTypeK8sGetDiagnosticsResult,
 		protocol.MessageTypeK8sGetPodLogsResult,
 	}
 	conn := &agentConnection{pendingK8sMessages: make(map[string]chan json.RawMessage)}

@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest'
 
+import indexHTML from '../index.html?raw'
+import faviconSVG from '../public/favicon.svg?raw'
 import config from '../vite.config'
 
 test('api proxy preserves browser host for same-origin protected operations', () => {
@@ -20,4 +22,9 @@ test('dev proxy serves backend script and download assets used by SSH install', 
 
   expect(scriptProxy).toMatchObject({ target: 'http://localhost:8080', changeOrigin: false })
   expect(downloadProxy).toMatchObject({ target: 'http://localhost:8080', changeOrigin: false })
+})
+
+test('index uses the MizuPanel svg favicon asset', () => {
+  expect(indexHTML).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg" />')
+  expect(faviconSVG).toContain('MizuPanel')
 })

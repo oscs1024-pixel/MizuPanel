@@ -2,6 +2,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 
 import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
+import { BrandLogo } from './components/BrandLogo'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
 import { AlertsPage } from './pages/AlertsPage'
@@ -43,6 +44,7 @@ type AppRoute =
   | { kind: 'dashboard' }
 
 type AppPage = 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' | 'k8s'
+type NavPage = Exclude<AppPage, 'history' | 'logs'>
 type ThemeMode = 'light' | 'dark'
 
 function currentRoute(): AppRoute {
@@ -107,7 +109,7 @@ function storedSidebarCollapsed() {
 
 const pageCopy: Record<AppPage, { title: string, description: string }> = {
   overview: { title: '概览', description: '用现有节点和指标数据汇总当前面板状态。' },
-  hosts: { title: '主机列表', description: '查看节点状态、指标、文件和节点级操作。' },
+  hosts: { title: '主机', description: '查看节点状态、指标、文件和节点级操作。' },
   history: { title: '历史记录', description: '按节点和时间范围查看历史指标。' },
   settings: { title: '系统设置', description: '调整 MizuPanel 的全局运行参数。' },
   alerts: { title: '告警', description: '查看告警记录和配置告警规则。' },
@@ -115,14 +117,12 @@ const pageCopy: Record<AppPage, { title: string, description: string }> = {
   k8s: { title: 'Kubernetes 集群', description: '管理通过 Agent 节点连接的 K8s 集群。' }
 }
 
-const navItems: Array<{ page: AppPage, label: string, icon: 'overview' | 'hosts' | 'history' | 'settings' | 'alerts' | 'logs' | 'k8s' }> = [
+const navItems: Array<{ page: NavPage, label: string, icon: 'overview' | 'hosts' | 'settings' | 'alerts' | 'k8s' }> = [
   { page: 'overview', label: '概览', icon: 'overview' },
-  { page: 'hosts', label: '主机列表', icon: 'hosts' },
+  { page: 'hosts', label: '主机', icon: 'hosts' },
   { page: 'k8s', label: 'Kubernetes', icon: 'k8s' },
-  { page: 'history', label: '历史记录', icon: 'history' },
   { page: 'alerts', label: '告警', icon: 'alerts' },
-  { page: 'settings', label: '系统设置', icon: 'settings' },
-  { page: 'logs', label: '日志', icon: 'logs' }
+  { page: 'settings', label: '系统设置', icon: 'settings' }
 ]
 
 export default function App() {
@@ -333,7 +333,7 @@ export default function App() {
     return { cpu: average('cpu_usage'), memory: average('memory_usage'), disk: average('disk_usage') }
   }, [nodes])
 
-  // 加载所有在线节点的历史指标平均值，用于主机列表顶部卡片的 sparkline
+  // 加载所有在线节点的历史指标平均值，用于主机页顶部卡片的 sparkline
   useEffect(() => {
     if (page !== 'hosts') return
     const onlineNodeList = nodes.filter((node) => node.status === 'online')
@@ -886,7 +886,7 @@ export default function App() {
                     <span className="mt-0.5 h-3 w-3 rounded-full bg-code" />
                     <span className="min-w-0">
                       <span className="block text-xs font-black text-foreground">Agent 已连接，安装成功</span>
-                      <span className="block text-xs font-bold text-muted-foreground">上线后就可以在主机列表看到节点。</span>
+                      <span className="block text-xs font-bold text-muted-foreground">上线后就可以在主机看到节点。</span>
                     </span>
                   </li>
                 </ol>
@@ -995,8 +995,8 @@ export default function App() {
         <div data-testid="host-main-grid" className="grid min-w-0 gap-3 xl:grid-cols-[320px_minmax(0,1fr)] xl:items-start">
           <section data-testid="host-list-panel" className="min-w-0 rounded-[14px] border border-border bg-card p-3 shadow-sm xl:w-[320px]">
             <div className="mb-3 min-w-0">
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">主机列表</p>
-              <h2 className="mt-1 text-lg font-black tracking-tight text-foreground">主机列表</h2>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">主机</p>
+              <h2 className="mt-1 text-lg font-black tracking-tight text-foreground">主机</h2>
             </div>
             <label htmlFor="host-search" className="sr-only">搜索主机</label>
             <input
@@ -1054,7 +1054,7 @@ export default function App() {
           >
             <div className={`flex h-16 items-center border-b border-sidebar-border transition-[padding,justify-content] duration-300 ease-in-out motion-reduce:transition-none ${sidebarCollapsed ? 'justify-center px-2' : 'justify-start px-4'}`}>
               <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-black text-primary-foreground">M</div>
+                <BrandLogo className="h-9 w-9 shrink-0 drop-shadow-sm" />
                 <div className={`min-w-0 overflow-hidden transition-[max-width,opacity,transform] duration-300 ease-in-out motion-reduce:transition-none ${sidebarCollapsed ? 'max-w-0 -translate-x-2 opacity-0' : 'max-w-[120px] translate-x-0 opacity-100'}`}>
                   <p className="truncate text-sm font-black text-sidebar-foreground">MizuPanel</p>
                   <p className="truncate text-[11px] font-bold text-muted-foreground">自托管监控面板</p>

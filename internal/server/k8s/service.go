@@ -143,6 +143,11 @@ func (s *Service) GetCluster(id string) (*Cluster, error) {
 	return s.store.GetCluster(id)
 }
 
+// GetClusterWithNodeInfo 获取集群详情（包含节点信息）
+func (s *Service) GetClusterWithNodeInfo(id string) (*PublicClusterWithNode, error) {
+	return s.store.GetClusterWithNodeInfo(id)
+}
+
 // ListClusters 获取集群列表
 func (s *Service) ListClusters() ([]*Cluster, error) {
 	return s.store.ListClusters()
@@ -421,4 +426,172 @@ func (s *Service) GetIngresses(ctx context.Context, clusterID, namespace string)
 		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
 	}
 	return agentResp.Ingresses, nil
+}
+
+func supportedDiagnosticsKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "pod", "deployment", "statefulset", "daemonset":
+		return true
+	default:
+		return false
+	}
+}
+
+type ResourceActionRequest struct {
+	Action   string `json:"action"`
+	Replicas *int32 `json:"replicas,omitempty"`
+	YAML     string `json:"yaml,omitempty"`
+}
+
+type ResourceActionResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+func supportedResourceAction(kind, action string) bool {
+	switch action {
+	case "delete":
+		return kind == "pod"
+	case "restart":
+		return kind == "deployment" || kind == "statefulset" || kind == "daemonset"
+	case "scale":
+		return kind == "deployment" || kind == "statefulset"
+	case "dry_run_apply", "apply":
+		return supportedDiagnosticsKind(kind)
+	default:
+		return false
+	}
+}
+
+func (s *Service) GetDiagnostics(ctx context.Context, clusterID, kind, namespace, name string) (*protocol.K8sDiagnostics, error) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if !supportedDiagnosticsKind(kind) {
+		return nil, fmt.Errorf("不支持的资源类型: %s", kind)
+	}
+	if namespace == "" {
+		return nil, fmt.Errorf("命名空间不能为空")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("资源名称不能为空")
+	}
+
+	cluster, err := s.store.GetCluster(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.hub.IsNodeOnline(cluster.NodeID) {
+		return nil, fmt.Errorf("Agent 节点离线")
+	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return nil, fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
+
+	requestID := uuid.New().String()
+	agentReq := protocol.K8sDiagnosticsRequest{
+		Type:              protocol.MessageTypeK8sGetDiagnostics,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		Kind:              kind,
+		Namespace:         namespace,
+		Name:              name,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
+	}
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] diagnostics start request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s", requestID, clusterID, cluster.NodeID, kind, namespace, name)
+	}
+	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, 15*time.Second)
+	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] diagnostics done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s elapsed=%s error=%v", requestID, clusterID, cluster.NodeID, kind, namespace, name, time.Since(start), err)
+		}
+		return nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	var agentResp protocol.K8sGetDiagnosticsResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		if s.debug {
+			log.Printf("[debug][server][k8s] diagnostics done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s elapsed=%s agent_success=false error=%s", requestID, clusterID, cluster.NodeID, kind, namespace, name, time.Since(start), agentResp.Error)
+		}
+		return nil, fmt.Errorf("查询失败: %s", agentResp.Error)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] diagnostics done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s elapsed=%s success=true", requestID, clusterID, cluster.NodeID, kind, namespace, name, time.Since(start))
+	}
+	return agentResp.Diagnostics, nil
+}
+
+func (s *Service) ExecuteResourceAction(ctx context.Context, clusterID, kind, namespace, name string, req ResourceActionRequest) (*ResourceActionResult, error) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if !supportedResourceAction(kind, action) {
+		return nil, fmt.Errorf("不支持的资源操作: %s/%s", kind, action)
+	}
+	if namespace == "" {
+		return nil, fmt.Errorf("命名空间不能为空")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("资源名称不能为空")
+	}
+	if action == "scale" && req.Replicas == nil {
+		return nil, fmt.Errorf("副本数不能为空")
+	}
+
+	cluster, err := s.store.GetCluster(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.hub.IsNodeOnline(cluster.NodeID) {
+		return nil, fmt.Errorf("Agent 节点离线")
+	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return nil, fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
+
+	requestID := uuid.New().String()
+	agentReq := protocol.K8sResourceActionRequest{
+		Type:              protocol.MessageTypeK8sResourceAction,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		Kind:              kind,
+		Namespace:         namespace,
+		Name:              name,
+		Action:            action,
+		Replicas:          req.Replicas,
+		YAML:              req.YAML,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
+	}
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] action start request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s action=%s", requestID, clusterID, cluster.NodeID, kind, namespace, name, action)
+	}
+	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, 20*time.Second)
+	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] action done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s action=%s elapsed=%s error=%v", requestID, clusterID, cluster.NodeID, kind, namespace, name, action, time.Since(start), err)
+		}
+		return nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	var agentResp protocol.K8sResourceActionResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		if s.debug {
+			log.Printf("[debug][server][k8s] action done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s action=%s elapsed=%s agent_success=false error=%s", requestID, clusterID, cluster.NodeID, kind, namespace, name, action, time.Since(start), agentResp.Error)
+		}
+		return nil, fmt.Errorf("操作失败: %s", agentResp.Error)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] action done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s action=%s elapsed=%s success=true", requestID, clusterID, cluster.NodeID, kind, namespace, name, action, time.Since(start))
+	}
+	return &ResourceActionResult{Success: true, Message: agentResp.Message}, nil
 }

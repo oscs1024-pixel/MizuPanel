@@ -131,7 +131,7 @@ describe('node monitoring detail', () => {
     expect(await screen.findByRole('heading', { name: 'Oracle SG' })).toBeInTheDocument()
     await waitFor(() => expect(getNodeProcesses).toHaveBeenCalledWith('node-1'))
     expect(getNodeDocker).toHaveBeenCalledWith('node-1')
-    expect(screen.getByRole('button', { name: '监控概览' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '主机信息' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('基础信息')).toBeInTheDocument()
     expect(screen.getByText('操作系统')).toBeInTheDocument()
     expect(screen.getByText('内核版本')).toBeInTheDocument()

@@ -550,6 +550,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			protocol.MessageTypeK8sGetDaemonSetsResult,
 			protocol.MessageTypeK8sGetServicesResult,
 			protocol.MessageTypeK8sGetIngressesResult,
+			protocol.MessageTypeK8sGetDiagnosticsResult,
+			protocol.MessageTypeK8sResourceActionResult,
 			protocol.MessageTypeK8sGetPodLogsResult:
 			var header struct {
 				RequestID string `json:"request_id"`

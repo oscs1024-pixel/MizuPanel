@@ -121,7 +121,7 @@ func (s *Store) ListClusters() ([]*Cluster, error) {
 // ListClustersWithNodeInfo 获取集群列表（包含节点信息）
 func (s *Store) ListClustersWithNodeInfo() ([]*PublicClusterWithNode, error) {
 	query := `SELECT c.id, c.name, c.node_id, c.kubeconfig_path, c.context, c.status, c.version, c.node_count, c.namespace_count, c.last_seen_at, c.created_at, c.updated_at,
-	                 COALESCE(n.name, '') as node_name, COALESCE(n.ip, '') as node_ip, COALESCE(n.status, 'offline') as node_status
+	                 COALESCE(n.name, '') as node_name, COALESCE(n.ip, '') as node_ip, COALESCE(n.status, 'offline') as node_status, COALESCE(n.last_seen_at, '') as node_last_seen_at
 	          FROM k8s_clusters c
 	          LEFT JOIN nodes n ON c.node_id = n.id
 	          ORDER BY c.created_at DESC`
@@ -133,37 +133,70 @@ func (s *Store) ListClustersWithNodeInfo() ([]*PublicClusterWithNode, error) {
 
 	var clusters []*PublicClusterWithNode
 	for rows.Next() {
-		var cluster PublicClusterWithNode
-		var lastSeenAt, createdAt, updatedAt sql.NullString
-		err := rows.Scan(
-			&cluster.ID,
-			&cluster.Name,
-			&cluster.NodeID,
-			&cluster.KubeconfigPath,
-			&cluster.Context,
-			&cluster.Status,
-			&cluster.Version,
-			&cluster.NodeCount,
-			&cluster.NamespaceCount,
-			&lastSeenAt,
-			&createdAt,
-			&updatedAt,
-			&cluster.NodeName,
-			&cluster.NodeIP,
-			&cluster.NodeStatus,
-		)
+		cluster, err := scanPublicClusterWithNode(rows)
 		if err != nil {
 			return nil, err
 		}
 
-		cluster.LastSeenAt = stringToTime(lastSeenAt.String)
-		cluster.CreatedAt = stringToTime(createdAt.String)
-		cluster.UpdatedAt = stringToTime(updatedAt.String)
-
-		clusters = append(clusters, &cluster)
+		clusters = append(clusters, cluster)
 	}
 
 	return clusters, nil
+}
+
+// GetClusterWithNodeInfo 获取单个集群详情（包含节点信息）
+func (s *Store) GetClusterWithNodeInfo(id string) (*PublicClusterWithNode, error) {
+	query := `SELECT c.id, c.name, c.node_id, c.kubeconfig_path, c.context, c.status, c.version, c.node_count, c.namespace_count, c.last_seen_at, c.created_at, c.updated_at,
+	                 COALESCE(n.name, '') as node_name, COALESCE(n.ip, '') as node_ip, COALESCE(n.status, 'offline') as node_status, COALESCE(n.last_seen_at, '') as node_last_seen_at
+	          FROM k8s_clusters c
+	          LEFT JOIN nodes n ON c.node_id = n.id
+	          WHERE c.id = ?`
+
+	cluster, err := scanPublicClusterWithNode(s.db.QueryRow(query, id))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("集群不存在")
+		}
+		return nil, err
+	}
+	return cluster, nil
+}
+
+type publicClusterWithNodeScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPublicClusterWithNode(scanner publicClusterWithNodeScanner) (*PublicClusterWithNode, error) {
+	var cluster PublicClusterWithNode
+	var lastSeenAt, createdAt, updatedAt, nodeLastSeenAt sql.NullString
+	err := scanner.Scan(
+		&cluster.ID,
+		&cluster.Name,
+		&cluster.NodeID,
+		&cluster.KubeconfigPath,
+		&cluster.Context,
+		&cluster.Status,
+		&cluster.Version,
+		&cluster.NodeCount,
+		&cluster.NamespaceCount,
+		&lastSeenAt,
+		&createdAt,
+		&updatedAt,
+		&cluster.NodeName,
+		&cluster.NodeIP,
+		&cluster.NodeStatus,
+		&nodeLastSeenAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	cluster.LastSeenAt = stringToTime(lastSeenAt.String)
+	cluster.CreatedAt = stringToTime(createdAt.String)
+	cluster.UpdatedAt = stringToTime(updatedAt.String)
+	cluster.NodeLastSeenAt = stringToTime(nodeLastSeenAt.String)
+
+	return &cluster, nil
 }
 
 // UpdateClusterStatus 更新集群状态

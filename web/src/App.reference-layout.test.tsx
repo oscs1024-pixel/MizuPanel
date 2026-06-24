@@ -149,14 +149,18 @@ describe('reference-style dashboard layout', () => {
 
     const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
     expect(within(sidebarNavigation).getByRole('button', { name: '概览' })).toBeInTheDocument()
-    expect(within(sidebarNavigation).getByRole('button', { name: '主机列表' })).toBeInTheDocument()
-    expect(within(sidebarNavigation).getByRole('button', { name: '历史记录' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '主机' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: '历史记录' })).not.toBeInTheDocument()
+    expect(within(sidebarNavigation).getByRole('button', { name: '告警' })).toBeInTheDocument()
     expect(within(sidebarNavigation).getByRole('button', { name: '系统设置' })).toBeInTheDocument()
-    expect(within(sidebarNavigation).getByRole('button', { name: '日志' })).toBeInTheDocument()
+    expect(within(sidebarNavigation).queryByRole('button', { name: '日志' })).not.toBeInTheDocument()
+    const mobileNavigation = screen.getByRole('navigation', { name: '移动端导航' })
+    expect(within(mobileNavigation).queryByRole('button', { name: '历史记录' })).not.toBeInTheDocument()
+    expect(within(mobileNavigation).queryByRole('button', { name: '日志' })).not.toBeInTheDocument()
     expect(within(sidebarNavigation).queryByRole('button', { name: 'Docker' })).not.toBeInTheDocument()
     expect(within(sidebarNavigation).queryByRole('button', { name: '文件管理' })).not.toBeInTheDocument()
     expect(within(sidebarNavigation).queryByRole('button', { name: '终端' })).not.toBeInTheDocument()
-    expect(within(sidebarNavigation).queryByRole('button', { name: '告警' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('complementary', { name: 'MizuPanel 侧边栏' })).getByLabelText('MizuPanel logo')).toHaveAttribute('data-testid', 'mizupanel-logo-mark')
     expect(await screen.findByRole('button', { name: '打开终端' })).toBeEnabled()
     expect(screen.queryByText('MizuPanel Console')).not.toBeInTheDocument()
     expect(screen.queryByText('轻量级自托管服务器监控面板')).not.toBeInTheDocument()
@@ -224,9 +228,9 @@ describe('reference-style dashboard layout', () => {
     const expandSidebarButton = screen.getByRole('button', { name: '展开侧边栏' })
     expect(sidebar).not.toContainElement(expandSidebarButton)
     expect(expandSidebarButton).toHaveClass('absolute', 'right-0', 'translate-x-1/2')
-    expect(within(sidebar).getByText('M')).toBeInTheDocument()
-    const collapsedHostButton = within(screen.getByRole('navigation', { name: '侧边导航' })).getByRole('button', { name: '主机列表' })
-    expect(collapsedHostButton).toHaveAttribute('title', '主机列表')
+    expect(within(sidebar).getByLabelText('MizuPanel logo')).toHaveAttribute('data-testid', 'mizupanel-logo-mark')
+    const collapsedHostButton = within(screen.getByRole('navigation', { name: '侧边导航' })).getByRole('button', { name: '主机' })
+    expect(collapsedHostButton).toHaveAttribute('title', '主机')
     expect(collapsedHostButton).toHaveClass('px-0')
     expect(screen.getAllByTestId('sidebar-nav-label')[0]).toHaveClass('opacity-0', 'max-w-0')
 
@@ -248,11 +252,10 @@ describe('reference-style dashboard layout', () => {
     expect(screen.queryByRole('button', { name: '切换到深色主题' })).not.toBeInTheDocument()
   })
 
-  test('shows logs as a real empty-state shell without fake log entries', async () => {
-    render(<App />)
+  test('keeps the legacy logs route as a direct empty-state shell', async () => {
+    window.history.pushState({}, '', '/logs')
 
-    const sidebarNavigation = await screen.findByRole('navigation', { name: '侧边导航' })
-    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '日志' }))
+    render(<App />)
 
     expect(await screen.findByRole('heading', { name: '日志' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索日志...')).toBeInTheDocument()
@@ -266,10 +269,10 @@ describe('reference-style dashboard layout', () => {
     await screen.findByText('全部 2')
     const sidebarNavigation = screen.getByRole('navigation', { name: '侧边导航' })
     fireEvent.change(screen.getByPlaceholderText('搜索主机...'), { target: { value: 'oracle' } })
-    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '历史记录' }))
-    expect(await screen.findByRole('heading', { name: '指标历史记录' })).toBeInTheDocument()
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '系统设置' }))
+    expect(await screen.findByRole('region', { name: '系统设置' })).toBeInTheDocument()
 
-    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '主机列表' }))
+    fireEvent.click(within(sidebarNavigation).getByRole('button', { name: '主机' }))
 
     expect(screen.getByPlaceholderText('搜索主机...')).toHaveValue('oracle')
     expect(screen.getByRole('button', { name: /Oracle SG/ })).toBeInTheDocument()

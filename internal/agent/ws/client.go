@@ -495,6 +495,8 @@ func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, termina
 			protocol.MessageTypeK8sGetDaemonSets,
 			protocol.MessageTypeK8sGetServices,
 			protocol.MessageTypeK8sGetIngresses,
+			protocol.MessageTypeK8sGetDiagnostics,
+			protocol.MessageTypeK8sResourceAction,
 			protocol.MessageTypeK8sGetPodLogs:
 			if c.kubectlHandler == nil {
 				if c.debug {

@@ -126,20 +126,38 @@ func (s *Server) handleK8sClusterRoutes(k8sService *k8s.Service) http.HandlerFun
 			return
 		}
 
+		// /api/k8s/clusters/:id/resources/:kind/:namespace/:name/diagnostics
+		if len(parts) == 6 && parts[1] == "resources" && parts[5] == "diagnostics" {
+			kind := parts[2]
+			namespace := parts[3]
+			name := parts[4]
+			s.handleGetK8sDiagnostics(k8sService, clusterID, kind, namespace, name, w, r)
+			return
+		}
+
+		// /api/k8s/clusters/:id/resources/:kind/:namespace/:name/actions
+		if len(parts) == 6 && parts[1] == "resources" && parts[5] == "actions" {
+			kind := parts[2]
+			namespace := parts[3]
+			name := parts[4]
+			s.handleK8sResourceAction(k8sService, clusterID, kind, namespace, name, w, r)
+			return
+		}
+
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
 // handleGetK8sCluster 获取集群详情
 func (s *Server) handleGetK8sCluster(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
-	cluster, err := k8sService.GetCluster(clusterID)
+	cluster, err := k8sService.GetClusterWithNodeInfo(clusterID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "集群不存在")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"cluster": cluster.Public(),
+		"cluster": cluster,
 	})
 }
 
@@ -306,4 +324,35 @@ func (s *Server) handleGetK8sIngresses(k8sService *k8s.Service, clusterID string
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "ingresses": ingresses})
+}
+
+func (s *Server) handleGetK8sDiagnostics(k8sService *k8s.Service, clusterID, kind, namespace, name string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	diagnostics, err := k8sService.GetDiagnostics(r.Context(), clusterID, kind, namespace, name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "diagnostics": diagnostics})
+}
+
+func (s *Server) handleK8sResourceAction(k8sService *k8s.Service, clusterID, kind, namespace, name string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req k8s.ResourceActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	result, err := k8sService.ExecuteResourceAction(r.Context(), clusterID, kind, namespace, name, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": result.Message})
 }

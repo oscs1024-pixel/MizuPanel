@@ -57,6 +57,19 @@ func newTestService(t *testing.T, kubeconfigContent, kubeContext string, hub *re
 	return NewService(store, hub)
 }
 
+func TestGetClusterWithNodeInfoReturnsAgentFields(t *testing.T) {
+	hub := &recordingHub{online: true}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	cluster, err := service.GetClusterWithNodeInfo("cluster-1")
+	if err != nil {
+		t.Fatalf("get cluster with node info: %v", err)
+	}
+	if cluster.NodeName != "test-node" || cluster.NodeIP != "127.0.0.1" || cluster.NodeStatus != "online" {
+		t.Fatalf("expected joined node info, got name=%q ip=%q status=%q", cluster.NodeName, cluster.NodeIP, cluster.NodeStatus)
+	}
+}
+
 func TestGetPodsRequiresStoredKubeconfigContent(t *testing.T) {
 	hub := &recordingHub{online: true, resp: json.RawMessage(`{"success":true,"pods":[]}`)}
 	service := newTestService(t, "   ", "ctx-a", hub)
@@ -100,5 +113,78 @@ func TestGetPodLogsSendsStoredKubeconfigContentAndContext(t *testing.T) {
 	}
 	if req.Context != "ctx-a" {
 		t.Fatalf("expected context ctx-a, got %q", req.Context)
+	}
+}
+
+func TestGetDiagnosticsSendsStoredKubeconfigContentContextAndResourceIdentity(t *testing.T) {
+	hub := &recordingHub{online: true, resp: json.RawMessage(`{"success":true,"diagnostics":{"kind":"pod","namespace":"default","name":"nginx","status":"Running","yaml":"kind: Pod\n","describe":"Name: nginx\n"}}`)}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	diagnostics, err := service.GetDiagnostics(context.Background(), "cluster-1", "pod", "default", "nginx")
+	if err != nil {
+		t.Fatalf("get diagnostics: %v", err)
+	}
+	if diagnostics == nil || diagnostics.Kind != "pod" || diagnostics.Name != "nginx" {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
+	}
+	req, ok := hub.lastMsg.(protocol.K8sDiagnosticsRequest)
+	if !ok {
+		t.Fatalf("expected K8sDiagnosticsRequest, got %#v", hub.lastMsg)
+	}
+	if req.KubeconfigContent != "apiVersion: v1\nkind: Config\n" || req.Context != "ctx-a" {
+		t.Fatalf("expected stored kubeconfig/context, got content=%q context=%q", req.KubeconfigContent, req.Context)
+	}
+	if req.Kind != "pod" || req.Namespace != "default" || req.Name != "nginx" {
+		t.Fatalf("unexpected resource identity: %#v", req)
+	}
+}
+
+func TestGetDiagnosticsRejectsUnsupportedKindBeforeAgentRequest(t *testing.T) {
+	hub := &recordingHub{online: true}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	_, err := service.GetDiagnostics(context.Background(), "cluster-1", "service", "default", "nginx")
+	if err == nil || !strings.Contains(err.Error(), "不支持的资源类型") {
+		t.Fatalf("expected unsupported kind error, got %v", err)
+	}
+	if hub.lastMsg != nil {
+		t.Fatalf("expected no agent request, got %#v", hub.lastMsg)
+	}
+}
+
+func TestExecuteResourceActionSendsStoredKubeconfigContextAndAction(t *testing.T) {
+	replicas := int32(4)
+	hub := &recordingHub{online: true, resp: json.RawMessage(`{"success":true,"message":"扩缩容成功"}`)}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	result, err := service.ExecuteResourceAction(context.Background(), "cluster-1", "deployment", "default", "web", ResourceActionRequest{Action: "scale", Replicas: &replicas})
+	if err != nil {
+		t.Fatalf("execute action: %v", err)
+	}
+	if result.Message != "扩缩容成功" {
+		t.Fatalf("unexpected action result: %#v", result)
+	}
+	req, ok := hub.lastMsg.(protocol.K8sResourceActionRequest)
+	if !ok {
+		t.Fatalf("expected K8sResourceActionRequest, got %#v", hub.lastMsg)
+	}
+	if req.Type != protocol.MessageTypeK8sResourceAction || req.Kind != "deployment" || req.Namespace != "default" || req.Name != "web" || req.Action != "scale" || req.Replicas == nil || *req.Replicas != 4 {
+		t.Fatalf("unexpected action request: %#v", req)
+	}
+	if req.KubeconfigContent != "apiVersion: v1\nkind: Config\n" || req.Context != "ctx-a" {
+		t.Fatalf("expected stored kubeconfig/context, got content=%q context=%q", req.KubeconfigContent, req.Context)
+	}
+}
+
+func TestExecuteResourceActionRejectsUnsupportedCombinationBeforeAgentRequest(t *testing.T) {
+	hub := &recordingHub{online: true}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	_, err := service.ExecuteResourceAction(context.Background(), "cluster-1", "daemonset", "default", "fluent-bit", ResourceActionRequest{Action: "scale"})
+	if err == nil || !strings.Contains(err.Error(), "不支持") {
+		t.Fatalf("expected unsupported action error, got %v", err)
+	}
+	if hub.lastMsg != nil {
+		t.Fatalf("expected no agent request, got %#v", hub.lastMsg)
 	}
 }

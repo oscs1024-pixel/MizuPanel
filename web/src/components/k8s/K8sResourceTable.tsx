@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 type Column<T> = {
   key: string
   title: string
+  align?: 'left' | 'center' | 'right'
   render: (item: T) => ReactNode
 }
 
@@ -39,7 +40,7 @@ export function K8sResourceTable<T>({ columns, items, getKey, emptyText, loading
           <thead>
             <tr className="border-b border-border bg-surface">
               {columns.map((column) => (
-                <th key={column.key} className="whitespace-nowrap px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-muted-foreground">
+                <th key={column.key} className={`whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wider text-muted-foreground ${alignClass(column.align)}`}>
                   {column.title}
                 </th>
               ))}
@@ -49,7 +50,7 @@ export function K8sResourceTable<T>({ columns, items, getKey, emptyText, loading
             {items.map((item) => (
               <tr key={getKey(item)} className="border-b border-border/60 bg-card last:border-0 hover:bg-muted/30">
                 {columns.map((column) => (
-                  <td key={column.key} className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-foreground">
+                  <td key={column.key} className={`whitespace-nowrap px-4 py-3 text-sm font-semibold text-foreground ${alignClass(column.align)}`}>
                     {column.render(item)}
                   </td>
                 ))}
@@ -60,4 +61,10 @@ export function K8sResourceTable<T>({ columns, items, getKey, emptyText, loading
       </div>
     </div>
   )
+}
+
+function alignClass(align: Column<unknown>['align']): string {
+  if (align === 'center') return 'text-center'
+  if (align === 'right') return 'text-right'
+  return 'text-left'
 }

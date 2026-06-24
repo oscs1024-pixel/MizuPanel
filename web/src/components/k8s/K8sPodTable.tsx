@@ -1,14 +1,19 @@
-import type { K8sPod } from '../../types'
+import type { K8sPod, K8sResourceKind } from '../../types'
+import { K8sResourceActions } from './K8sResourceActions'
 import { K8sResourceTable } from './K8sResourceTable'
 import { K8sStatusBadge } from './K8sStatusBadge'
 
 type K8sPodTableProps = {
+  clusterId: string
   items: K8sPod[]
   loading?: boolean
   onViewLogs: (namespace: string, name: string) => void
+  onViewDiagnostics?: (kind: K8sResourceKind, namespace: string, name: string) => void
+  onToast: (message: string, type: 'success' | 'error') => void
+  onResourceChanged?: () => void
 }
 
-export function K8sPodTable({ items, loading, onViewLogs }: K8sPodTableProps) {
+export function K8sPodTable({ clusterId, items, loading, onViewLogs, onViewDiagnostics, onToast, onResourceChanged }: K8sPodTableProps) {
   return (
     <K8sResourceTable
       items={items}
@@ -27,14 +32,18 @@ export function K8sPodTable({ items, loading, onViewLogs }: K8sPodTableProps) {
         {
           key: 'actions',
           title: '操作',
+          align: 'center',
           render: (item) => (
-            <button
-              type="button"
-              onClick={() => onViewLogs(item.namespace, item.name)}
-              className="rounded-lg border border-border bg-surface px-3 py-1 text-xs font-bold text-foreground transition hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
-            >
-              查看日志
-            </button>
+            <K8sResourceActions
+              clusterId={clusterId}
+              kind="pod"
+              namespace={item.namespace}
+              name={item.name}
+              onViewDiagnostics={onViewDiagnostics}
+              onViewLogs={onViewLogs}
+              onToast={onToast}
+              onResourceChanged={onResourceChanged}
+            />
           )
         },
       ]}

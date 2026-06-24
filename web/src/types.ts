@@ -359,6 +359,7 @@ export type K8sCluster = {
   node_name: string
   node_ip: string
   node_status: 'online' | 'offline'  // Agent 节点状态
+  node_last_seen_at?: string
   kubeconfig_path?: string
   context?: string
   status: 'online' | 'offline'  // K8s API 连接状态
@@ -412,6 +413,47 @@ export type K8sStatefulSet = { name: string; namespace: string; ready: string; s
 export type K8sDaemonSet = { name: string; namespace: string; desired: number; current: number; ready: number; available: number; age: string }
 export type K8sService = { name: string; namespace: string; type: string; cluster_ip: string; external_ip?: string; ports: string; age: string }
 export type K8sIngress = { name: string; namespace: string; class?: string; hosts: string; address?: string; ports: string; age: string }
+export type K8sResourceKind = 'pod' | 'deployment' | 'statefulset' | 'daemonset'
+
+export type K8sContainerDetail = {
+  name: string
+  image: string
+  ready: boolean
+  restart_count: number
+  state?: string
+}
+
+export type K8sCondition = {
+  type: string
+  status: string
+  reason?: string
+  message?: string
+}
+
+export type K8sEvent = {
+  type: string
+  reason: string
+  message: string
+  count: number
+  age?: string
+}
+
+export type K8sDiagnostics = {
+  kind: K8sResourceKind
+  namespace: string
+  name: string
+  status: string
+  age?: string
+  node?: string
+  ip?: string
+  metadata?: Record<string, string>
+  summary?: Record<string, string>
+  containers?: K8sContainerDetail[]
+  conditions?: K8sCondition[]
+  events?: K8sEvent[]
+  yaml: string
+  describe: string
+}
 
 export type K8sSummaryResponse = { success: boolean; summary: K8sResourceSummary }
 export type K8sNamespacesResponse = { success: boolean; namespaces: K8sNamespace[] }
@@ -421,6 +463,20 @@ export type K8sStatefulSetsResponse = { success: boolean; statefulsets: K8sState
 export type K8sDaemonSetsResponse = { success: boolean; daemonsets: K8sDaemonSet[] }
 export type K8sServicesResponse = { success: boolean; services: K8sService[] }
 export type K8sIngressesResponse = { success: boolean; ingresses: K8sIngress[] }
+export type K8sDiagnosticsResponse = { success: boolean; diagnostics: K8sDiagnostics }
+
+export type K8sResourceActionName = 'delete' | 'restart' | 'scale' | 'dry_run_apply' | 'apply'
+
+export type K8sResourceActionRequest = {
+  action: K8sResourceActionName
+  replicas?: number
+  yaml?: string
+}
+
+export type K8sResourceActionResponse = {
+  success: boolean
+  message?: string
+}
 
 export type K8sPod = {
   name: string
@@ -442,4 +498,3 @@ export type K8sPodLogsResponse = {
   success: boolean
   logs: string
 }
-

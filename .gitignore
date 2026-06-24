@@ -1,3 +1,4 @@
+#  claude code
 .claude
 CLAUDE.md
 
@@ -36,4 +37,9 @@ skills-lock.json
 # KeepM live memory store (plain text, machine-local)
 /.keepm-memory/
 .orbit/
+
+# codex
 .agents/
+.codex/
+AGENT.md
+AGENTS.md

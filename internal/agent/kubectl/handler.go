@@ -74,6 +74,10 @@ func (h *Handler) Handle(ctx context.Context, msgType string, data json.RawMessa
 		return h.handleGetServices(ctx, data, sendFunc)
 	case protocol.MessageTypeK8sGetIngresses:
 		return h.handleGetIngresses(ctx, data, sendFunc)
+	case protocol.MessageTypeK8sGetDiagnostics:
+		return h.handleGetDiagnostics(ctx, data, sendFunc)
+	case protocol.MessageTypeK8sResourceAction:
+		return h.handleResourceAction(ctx, data, sendFunc)
 	case protocol.MessageTypeK8sGetPodLogs:
 		return h.handleGetPodLogs(ctx, data, sendFunc)
 	}
@@ -232,6 +236,38 @@ func (h *Handler) handleGetIngresses(ctx context.Context, data json.RawMessage, 
 		return sendFunc(protocol.K8sGetIngressesResult{Type: protocol.MessageTypeK8sGetIngressesResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
 	}
 	return sendFunc(protocol.K8sGetIngressesResult{Type: protocol.MessageTypeK8sGetIngressesResult, RequestID: req.RequestID, Success: true, Ingresses: items})
+}
+
+func (h *Handler) handleGetDiagnostics(ctx context.Context, data json.RawMessage, sendFunc func(interface{}) error) error {
+	var req protocol.K8sDiagnosticsRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return sendFunc(protocol.K8sGetDiagnosticsResult{Type: protocol.MessageTypeK8sGetDiagnosticsResult, RequestID: req.RequestID, Success: false, Error: "解析诊断请求失败"})
+	}
+	client, err := h.clientFor(req.ClusterID, req.KubeconfigContent, req.Context)
+	if err != nil {
+		return sendFunc(protocol.K8sGetDiagnosticsResult{Type: protocol.MessageTypeK8sGetDiagnosticsResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	diagnostics, err := client.GetDiagnostics(ctx, req.Kind, req.Namespace, req.Name)
+	if err != nil {
+		return sendFunc(protocol.K8sGetDiagnosticsResult{Type: protocol.MessageTypeK8sGetDiagnosticsResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	return sendFunc(protocol.K8sGetDiagnosticsResult{Type: protocol.MessageTypeK8sGetDiagnosticsResult, RequestID: req.RequestID, Success: true, Diagnostics: diagnostics})
+}
+
+func (h *Handler) handleResourceAction(ctx context.Context, data json.RawMessage, sendFunc func(interface{}) error) error {
+	var req protocol.K8sResourceActionRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return sendFunc(protocol.K8sResourceActionResult{Type: protocol.MessageTypeK8sResourceActionResult, RequestID: req.RequestID, Success: false, Error: "解析操作请求失败"})
+	}
+	client, err := h.clientFor(req.ClusterID, req.KubeconfigContent, req.Context)
+	if err != nil {
+		return sendFunc(protocol.K8sResourceActionResult{Type: protocol.MessageTypeK8sResourceActionResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	result, err := client.ExecuteResourceAction(ctx, req)
+	if err != nil {
+		return sendFunc(protocol.K8sResourceActionResult{Type: protocol.MessageTypeK8sResourceActionResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	return sendFunc(result)
 }
 
 func (h *Handler) handleGetPodLogs(ctx context.Context, data json.RawMessage, sendFunc func(interface{}) error) error {

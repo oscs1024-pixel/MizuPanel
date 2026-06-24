@@ -250,3 +250,105 @@ func TestMetricsMessageJSONOmitsAbsentSnapshots(t *testing.T) {
 		t.Fatalf("empty snapshots should be omitted: %s", data)
 	}
 }
+
+func TestK8sDiagnosticsMessagesJSON(t *testing.T) {
+	request := K8sDiagnosticsRequest{
+		Type:              MessageTypeK8sGetDiagnostics,
+		RequestID:         "req-1",
+		ClusterID:         "cluster-1",
+		Kind:              "pod",
+		Namespace:         "default",
+		Name:              "nginx",
+		KubeconfigContent: "secret",
+		Context:           "prod",
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	var gotRequest K8sDiagnosticsRequest
+	if err := json.Unmarshal(data, &gotRequest); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if gotRequest.Type != MessageTypeK8sGetDiagnostics || gotRequest.Kind != "pod" || gotRequest.Namespace != "default" || gotRequest.Name != "nginx" || gotRequest.KubeconfigContent != "secret" {
+		t.Fatalf("unexpected diagnostics request: %#v", gotRequest)
+	}
+
+	result := K8sGetDiagnosticsResult{
+		Type:      MessageTypeK8sGetDiagnosticsResult,
+		RequestID: "req-1",
+		Success:   true,
+		Diagnostics: &K8sDiagnostics{
+			Kind:      "pod",
+			Namespace: "default",
+			Name:      "nginx",
+			Status:    "Running",
+			Metadata:  map[string]string{"app": "nginx"},
+			Containers: []K8sContainerDetail{{
+				Name:         "nginx",
+				Image:        "nginx:1.27",
+				Ready:        true,
+				RestartCount: 2,
+			}},
+			Conditions: []K8sCondition{{Type: "Ready", Status: "True", Reason: "ContainersReady"}},
+			Events:     []K8sEvent{{Type: "Normal", Reason: "Started", Message: "Started container nginx"}},
+			YAML:       "apiVersion: v1\nkind: Pod\n",
+			Describe:   "Name: nginx\n",
+		},
+	}
+	data, err = json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	var gotResult K8sGetDiagnosticsResult
+	if err := json.Unmarshal(data, &gotResult); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if gotResult.Type != MessageTypeK8sGetDiagnosticsResult || !gotResult.Success || gotResult.Diagnostics == nil {
+		t.Fatalf("unexpected diagnostics result: %#v", gotResult)
+	}
+	if gotResult.Diagnostics.Containers[0].Name != "nginx" || gotResult.Diagnostics.Events[0].Reason != "Started" || !strings.Contains(gotResult.Diagnostics.YAML, "kind: Pod") {
+		t.Fatalf("unexpected diagnostics payload: %#v", gotResult.Diagnostics)
+	}
+}
+
+func TestK8sResourceActionMessagesJSON(t *testing.T) {
+	replicas := int32(3)
+	request := K8sResourceActionRequest{
+		Type:              MessageTypeK8sResourceAction,
+		RequestID:         "req-action",
+		ClusterID:         "cluster-1",
+		Kind:              "deployment",
+		Namespace:         "default",
+		Name:              "web",
+		Action:            "scale",
+		Replicas:          &replicas,
+		YAML:              "kind: Deployment\n",
+		KubeconfigContent: "secret",
+		Context:           "prod",
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal action request: %v", err)
+	}
+	var gotRequest K8sResourceActionRequest
+	if err := json.Unmarshal(data, &gotRequest); err != nil {
+		t.Fatalf("unmarshal action request: %v", err)
+	}
+	if gotRequest.Type != MessageTypeK8sResourceAction || gotRequest.Action != "scale" || gotRequest.Replicas == nil || *gotRequest.Replicas != 3 || gotRequest.YAML == "" || gotRequest.KubeconfigContent != "secret" {
+		t.Fatalf("unexpected action request: %#v", gotRequest)
+	}
+
+	result := K8sResourceActionResult{Type: MessageTypeK8sResourceActionResult, RequestID: "req-action", Success: true, Message: "扩缩容成功"}
+	data, err = json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal action result: %v", err)
+	}
+	var gotResult K8sResourceActionResult
+	if err := json.Unmarshal(data, &gotResult); err != nil {
+		t.Fatalf("unmarshal action result: %v", err)
+	}
+	if gotResult.Type != MessageTypeK8sResourceActionResult || !gotResult.Success || gotResult.Message != "扩缩容成功" {
+		t.Fatalf("unexpected action result: %#v", gotResult)
+	}
+}

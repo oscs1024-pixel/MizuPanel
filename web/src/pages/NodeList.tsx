@@ -19,7 +19,7 @@ export function NodeList({ nodes, selectedNodeID, onSelectNode }: NodeListProps)
             key={node.id}
             type="button"
             onClick={() => onSelectNode(node)}
-            className={`group w-full cursor-pointer rounded-[14px] border px-3 py-3 text-left transition duration-200 focus:outline-none focus:ring-4 focus:ring-primary/20 ${
+            className={`soft-button group w-full cursor-pointer border px-3 py-3 text-left duration-200 focus:outline-none focus:ring-4 focus:ring-primary/20 ${
               active ? 'border-primary/40 bg-primary/10 shadow-sm' : 'border-border bg-card hover:bg-surface'
             }`}
           >
@@ -52,7 +52,7 @@ export function NodeList({ nodes, selectedNodeID, onSelectNode }: NodeListProps)
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-primary/20 bg-card px-2.5 py-2">
+    <div className="rounded-xl border border-primary/20 bg-surface/70 px-2.5 py-2">
       <p className="text-[10px] font-black tracking-[0.1em] text-muted-foreground">{label}</p>
       <p className="mt-0.5 text-xs font-black text-foreground">{value}</p>
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
 import { connectK8sCluster } from '../api/k8s'
 import type { ConnectK8sClusterRequest, Node } from '../types'
 import { Toast } from './Toast'
@@ -92,13 +93,13 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
       )}
 
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        className="soft-modal-overlay fixed inset-0 z-50 flex items-center justify-center"
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose()
         }}
       >
-        <div className="w-full max-w-2xl rounded-2xl border border-border bg-card p-6 shadow-2xl">
-          <div className="mb-6 flex items-center justify-between">
+        <div className="soft-modal-shell w-full max-w-2xl">
+          <div className="soft-modal-header mb-6 flex items-center justify-between border-b px-6 py-5">
             <div>
               <h2 className="text-xl font-black text-foreground">连接 K8s 集群</h2>
               <p className="mt-1 text-sm text-muted-foreground">上传或粘贴 kubeconfig 内容，通过选定 Agent 访问集群</p>
@@ -106,20 +107,18 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-2 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="soft-button inline-flex h-9 w-9 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="关闭"
             >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
+              <X size={18} aria-hidden="true" />
             </button>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-4 px-6 pb-6">
             {/* Cluster Name */}
             <div>
               <label htmlFor="cluster-name" className="mb-2 block text-sm font-bold text-foreground">
-                集群名称 <span className="text-destructive">*</span>
+                集群名称 <span className="text-danger">*</span>
               </label>
               <input
                 id="cluster-name"
@@ -127,17 +126,17 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="例如: production-k8s"
-                className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="soft-input w-full px-4 py-2.5 text-sm font-semibold placeholder:text-muted-foreground"
               />
             </div>
 
             {/* Node Selection */}
             <div>
               <label htmlFor="node-select" className="mb-2 block text-sm font-bold text-foreground">
-                Agent 节点 <span className="text-destructive">*</span>
+                Agent 节点 <span className="text-danger">*</span>
               </label>
               {onlineNodes.length === 0 ? (
-                <div className="rounded-lg border border-border bg-surface px-4 py-3 text-sm text-muted-foreground">
+                <div className="soft-empty-state px-4 py-3 text-sm text-muted-foreground">
                   当前没有在线的 Agent 节点
                 </div>
               ) : (
@@ -145,7 +144,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
                   id="node-select"
                   value={nodeId}
                   onChange={(e) => setNodeId(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="soft-input w-full px-4 py-2.5 text-sm font-semibold"
                 >
                   {onlineNodes.map((node) => (
                     <option key={node.id} value={node.id}>
@@ -162,7 +161,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
             {/* Kubeconfig Content */}
             <div>
               <label htmlFor="kubeconfig-content" className="mb-2 block text-sm font-bold text-foreground">
-                kubeconfig 内容 <span className="text-destructive">*</span>
+                kubeconfig 内容 <span className="text-danger">*</span>
               </label>
               <textarea
                 id="kubeconfig-content"
@@ -170,7 +169,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
                 onChange={(e) => setKubeconfigContent(e.target.value)}
                 placeholder={"apiVersion: v1\nkind: Config\nclusters:\n  - cluster: ..."}
                 rows={10}
-                className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 font-mono text-xs font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="soft-input w-full px-4 py-2.5 font-mono text-xs font-semibold placeholder:text-muted-foreground"
               />
               <p className="mt-1 text-xs text-muted-foreground">
                 kubeconfig 内容会保存在本地 Server 数据库中，不会在页面详情或日志中展示。
@@ -188,25 +187,25 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
                 value={context}
                 onChange={(e) => setContext(e.target.value)}
                 placeholder="留空使用默认 context"
-                className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="soft-input w-full px-4 py-2.5 text-sm font-semibold placeholder:text-muted-foreground"
               />
             </div>
 
             {/* Error Message */}
             {error && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+              <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-semibold text-danger">
                 {error}
               </div>
             )}
           </div>
 
           {/* Actions */}
-          <div className="mt-6 flex justify-end gap-3">
+          <div className="soft-modal-footer flex justify-end gap-3 border-t px-6 py-4">
             <button
               type="button"
               onClick={onClose}
               disabled={connecting}
-              className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-50"
+              className="soft-button border border-border bg-surface px-4 py-2 text-sm font-bold text-foreground hover:bg-muted disabled:opacity-50"
             >
               取消
             </button>
@@ -214,7 +213,7 @@ export default function ConnectK8sClusterModal({ open, nodes, onClose, onSuccess
               type="button"
               onClick={handleConnect}
               disabled={connecting || onlineNodes.length === 0}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+              className="soft-button bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               {connecting ? '连接中...' : '连接集群'}
             </button>

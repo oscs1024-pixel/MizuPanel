@@ -11,11 +11,13 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -478,7 +480,21 @@ func (c *Client) GetNodes(ctx context.Context) ([]protocol.K8sNode, error) {
 				ips = append(ips, address.Address)
 			}
 		}
-		out = append(out, protocol.K8sNode{Name: item.Name, Status: status, Roles: roleText, Version: item.Status.NodeInfo.KubeletVersion, InternalIP: joinNonEmpty(ips, ","), PodCIDR: item.Spec.PodCIDR, Age: formatAge(item.CreationTimestamp)})
+		out = append(out, protocol.K8sNode{
+			Name:                   item.Name,
+			Status:                 status,
+			Roles:                  roleText,
+			Version:                item.Status.NodeInfo.KubeletVersion,
+			InternalIP:             joinNonEmpty(ips, ","),
+			PodCIDR:                item.Spec.PodCIDR,
+			Age:                    formatAge(item.CreationTimestamp),
+			CPUCapacityMilli:       resourceMilliValue(item.Status.Capacity, corev1.ResourceCPU),
+			CPUAllocatableMilli:    resourceMilliValue(item.Status.Allocatable, corev1.ResourceCPU),
+			MemoryCapacityBytes:    resourceValue(item.Status.Capacity, corev1.ResourceMemory),
+			MemoryAllocatableBytes: resourceValue(item.Status.Allocatable, corev1.ResourceMemory),
+			PodCapacity:            resourceValue(item.Status.Capacity, corev1.ResourcePods),
+			PodAllocatable:         resourceValue(item.Status.Allocatable, corev1.ResourcePods),
+		})
 	}
 	return out, nil
 }
@@ -490,7 +506,7 @@ func (c *Client) GetPods(ctx context.Context, namespace string) ([]Pod, error) {
 	}
 	pods := make([]Pod, 0, len(protocolPods))
 	for _, pod := range protocolPods {
-		pods = append(pods, Pod{Name: pod.Name, Namespace: pod.Namespace, Status: pod.Status, Ready: pod.Ready, Restarts: pod.Restarts, Age: pod.Age, Node: pod.Node, IP: pod.IP})
+		pods = append(pods, Pod{Name: pod.Name, Namespace: pod.Namespace, Status: pod.Status, Ready: pod.Ready, Restarts: pod.Restarts, Age: pod.Age, Node: pod.Node, IP: pod.IP, WorkloadKind: pod.WorkloadKind, WorkloadName: pod.WorkloadName, MetricsAvailable: pod.MetricsAvailable, CPUUsageMilli: pod.CPUUsageMilli, MemoryUsageBytes: pod.MemoryUsageBytes})
 	}
 	return pods, nil
 }
@@ -503,6 +519,8 @@ func (c *Client) GetProtocolPods(ctx context.Context, namespace string) ([]proto
 	if err != nil {
 		return nil, fmt.Errorf("获取 Pod 列表失败: %w", err)
 	}
+	metricsByPod := c.listPodMetrics(ctx, namespace)
+	replicaSetOwners := c.listReplicaSetOwners(ctx, namespace)
 	out := make([]protocol.K8sPod, 0, len(items.Items))
 	for _, item := range items.Items {
 		ready, restarts := 0, 0
@@ -512,9 +530,206 @@ func (c *Client) GetProtocolPods(ctx context.Context, namespace string) ([]proto
 			}
 			restarts += int(cs.RestartCount)
 		}
-		out = append(out, protocol.K8sPod{Name: item.Name, Namespace: item.Namespace, Status: string(item.Status.Phase), Ready: fmt.Sprintf("%d/%d", ready, len(item.Status.ContainerStatuses)), Restarts: restarts, Age: formatAge(item.CreationTimestamp), Node: item.Spec.NodeName, IP: item.Status.PodIP})
+		workloadKind, workloadName := podWorkloadOwner(item, replicaSetOwners)
+		containers, cpuUsage, memoryUsage, metricsAvailable := podContainerResources(item, metricsByPod[podResourceKey(item.Namespace, item.Name)])
+		out = append(out, protocol.K8sPod{Name: item.Name, Namespace: item.Namespace, Status: string(item.Status.Phase), Ready: fmt.Sprintf("%d/%d", ready, len(item.Status.ContainerStatuses)), Restarts: restarts, Age: formatAge(item.CreationTimestamp), Node: item.Spec.NodeName, IP: item.Status.PodIP, WorkloadKind: workloadKind, WorkloadName: workloadName, MetricsAvailable: metricsAvailable, CPUUsageMilli: cpuUsage, MemoryUsageBytes: memoryUsage, Containers: containers})
 	}
 	return out, nil
+}
+
+type workloadOwner struct {
+	Kind string
+	Name string
+}
+
+func (c *Client) listReplicaSetOwners(ctx context.Context, namespace string) map[string]workloadOwner {
+	if c.clientset == nil {
+		return map[string]workloadOwner{}
+	}
+	items, err := c.clientset.AppsV1().ReplicaSets(namespaceOrAll(namespace)).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return map[string]workloadOwner{}
+	}
+	owners := make(map[string]workloadOwner, len(items.Items))
+	for _, item := range items.Items {
+		for _, owner := range item.OwnerReferences {
+			if owner.Controller != nil && !*owner.Controller {
+				continue
+			}
+			if owner.Kind == "Deployment" && owner.Name != "" {
+				owners[podResourceKey(item.Namespace, item.Name)] = workloadOwner{Kind: "deployment", Name: owner.Name}
+				break
+			}
+		}
+	}
+	return owners
+}
+
+func podWorkloadOwner(pod corev1.Pod, replicaSetOwners map[string]workloadOwner) (string, string) {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller != nil && !*owner.Controller {
+			continue
+		}
+		switch owner.Kind {
+		case "ReplicaSet":
+			if resolved, ok := replicaSetOwners[podResourceKey(pod.Namespace, owner.Name)]; ok {
+				return resolved.Kind, resolved.Name
+			}
+			return "replicaset", owner.Name
+		case "StatefulSet":
+			return "statefulset", owner.Name
+		case "DaemonSet":
+			return "daemonset", owner.Name
+		}
+	}
+	return "", ""
+}
+
+type podMetricsContainer struct {
+	CPUUsageMilli    int64
+	MemoryUsageBytes int64
+}
+
+type podMetricsInfo struct {
+	Containers map[string]podMetricsContainer
+}
+
+func (c *Client) listPodMetrics(ctx context.Context, namespace string) map[string]podMetricsInfo {
+	if c.dynamic == nil {
+		return map[string]podMetricsInfo{}
+	}
+	gvr := schema.GroupVersionResource{Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"}
+	items, err := c.dynamic.Resource(gvr).Namespace(namespaceOrAll(namespace)).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return map[string]podMetricsInfo{}
+	}
+	result := make(map[string]podMetricsInfo, len(items.Items))
+	for _, item := range items.Items {
+		containers, ok, _ := unstructured.NestedSlice(item.Object, "containers")
+		if !ok {
+			continue
+		}
+		info := podMetricsInfo{Containers: make(map[string]podMetricsContainer, len(containers))}
+		for _, raw := range containers {
+			container, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := container["name"].(string)
+			usage, _ := container["usage"].(map[string]interface{})
+			if name == "" || usage == nil {
+				continue
+			}
+			info.Containers[name] = podMetricsContainer{
+				CPUUsageMilli:    quantityMilliValue(usage["cpu"]),
+				MemoryUsageBytes: quantityValue(usage["memory"]),
+			}
+		}
+		if len(info.Containers) > 0 {
+			result[podResourceKey(item.GetNamespace(), item.GetName())] = info
+		}
+	}
+	return result
+}
+
+func podContainerResources(pod corev1.Pod, metrics podMetricsInfo) ([]protocol.K8sPodContainer, int64, int64, bool) {
+	statuses := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
+	for _, status := range pod.Status.ContainerStatuses {
+		statuses[status.Name] = status
+	}
+	containers := make([]protocol.K8sPodContainer, 0, len(pod.Spec.Containers))
+	var totalCPU, totalMemory int64
+	metricsAvailable := false
+	for _, container := range pod.Spec.Containers {
+		status := statuses[container.Name]
+		state, stateReason := containerStateText(status.State)
+		metric := metrics.Containers[container.Name]
+		if metrics.Containers != nil {
+			if _, ok := metrics.Containers[container.Name]; ok {
+				metricsAvailable = true
+				totalCPU += metric.CPUUsageMilli
+				totalMemory += metric.MemoryUsageBytes
+			}
+		}
+		containers = append(containers, protocol.K8sPodContainer{
+			Name:               container.Name,
+			Image:              container.Image,
+			Ready:              status.Ready,
+			RestartCount:       int(status.RestartCount),
+			State:              state,
+			StateReason:        stateReason,
+			CPUUsageMilli:      metric.CPUUsageMilli,
+			MemoryUsageBytes:   metric.MemoryUsageBytes,
+			CPURequestMilli:    resourceMilliValue(container.Resources.Requests, corev1.ResourceCPU),
+			CPULimitMilli:      resourceMilliValue(container.Resources.Limits, corev1.ResourceCPU),
+			MemoryRequestBytes: resourceValue(container.Resources.Requests, corev1.ResourceMemory),
+			MemoryLimitBytes:   resourceValue(container.Resources.Limits, corev1.ResourceMemory),
+		})
+	}
+	return containers, totalCPU, totalMemory, metricsAvailable
+}
+
+func containerStateText(state corev1.ContainerState) (string, string) {
+	if state.Waiting != nil {
+		return "Waiting", state.Waiting.Reason
+	}
+	if state.Terminated != nil {
+		return "Terminated", state.Terminated.Reason
+	}
+	if state.Running != nil {
+		return "Running", ""
+	}
+	return "", ""
+}
+
+func podResourceKey(namespace, name string) string {
+	return namespace + "/" + name
+}
+
+func resourceMilliValue(list corev1.ResourceList, name corev1.ResourceName) int64 {
+	if list == nil {
+		return 0
+	}
+	value, ok := list[name]
+	if !ok {
+		return 0
+	}
+	return value.MilliValue()
+}
+
+func resourceValue(list corev1.ResourceList, name corev1.ResourceName) int64 {
+	if list == nil {
+		return 0
+	}
+	value, ok := list[name]
+	if !ok {
+		return 0
+	}
+	return value.Value()
+}
+
+func quantityMilliValue(value interface{}) int64 {
+	text, _ := value.(string)
+	if text == "" {
+		return 0
+	}
+	quantity, err := resource.ParseQuantity(text)
+	if err != nil {
+		return 0
+	}
+	return quantity.MilliValue()
+}
+
+func quantityValue(value interface{}) int64 {
+	text, _ := value.(string)
+	if text == "" {
+		return 0
+	}
+	quantity, err := resource.ParseQuantity(text)
+	if err != nil {
+		return 0
+	}
+	return quantity.Value()
 }
 
 func (c *Client) GetDeployments(ctx context.Context, namespace string) ([]protocol.K8sDeployment, error) {
@@ -779,6 +994,50 @@ func (c *Client) ExecuteResourceAction(ctx context.Context, req protocol.K8sReso
 	}
 }
 
+func (c *Client) ApplyManifest(ctx context.Context, req protocol.K8sApplyManifestRequest) (*protocol.K8sApplyManifestResult, error) {
+	if err := c.ensureDynamic(); err != nil {
+		return nil, err
+	}
+	objects, err := decodeManifestObjects(req.YAML)
+	if err != nil {
+		return nil, err
+	}
+	options := metav1.CreateOptions{FieldManager: "mizupanel"}
+	if req.DryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	for i := range objects {
+		obj := &objects[i]
+		info, err := manifestResourceInfoFor(obj)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(obj.GetName()) == "" {
+			return nil, fmt.Errorf("YAML 文档缺少 metadata.name")
+		}
+		var resource dynamic.ResourceInterface = c.dynamic.Resource(info.gvr)
+		if info.namespaced {
+			namespace := strings.TrimSpace(obj.GetNamespace())
+			if namespace == "" {
+				return nil, fmt.Errorf("%s 命名空间不能为空", info.label)
+			}
+			resource = c.dynamic.Resource(info.gvr).Namespace(namespace)
+		}
+		if _, err := resource.Create(ctx, obj, options); err != nil {
+			if req.DryRun {
+				return nil, fmt.Errorf("Dry Run 失败: %w", err)
+			}
+			return nil, fmt.Errorf("创建资源失败: %w", err)
+		}
+	}
+
+	message := "资源创建成功"
+	if req.DryRun {
+		message = "资源校验成功"
+	}
+	return &protocol.K8sApplyManifestResult{Type: protocol.MessageTypeK8sApplyManifestResult, RequestID: req.RequestID, Success: true, Message: message}, nil
+}
+
 func (c *Client) deletePod(ctx context.Context, namespace, name string) error {
 	if err := c.ensureClientset(); err != nil {
 		return err
@@ -877,6 +1136,88 @@ func resourceGVR(kind string) (schema.GroupVersionResource, error) {
 	default:
 		return schema.GroupVersionResource{}, fmt.Errorf("不支持应用 %s", kind)
 	}
+}
+
+type manifestResourceInfo struct {
+	gvr        schema.GroupVersionResource
+	namespaced bool
+	label      string
+}
+
+func manifestResourceInfoFor(obj *unstructured.Unstructured) (manifestResourceInfo, error) {
+	apiVersion := strings.ToLower(strings.TrimSpace(obj.GetAPIVersion()))
+	kind := strings.ToLower(strings.TrimSpace(obj.GetKind()))
+	switch apiVersion + "/" + kind {
+	case "v1/namespace":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, label: "Namespace"}, nil
+	case "v1/pod":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, namespaced: true, label: "Pod"}, nil
+	case "v1/service":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}, namespaced: true, label: "Service"}, nil
+	case "v1/serviceaccount":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}, namespaced: true, label: "ServiceAccount"}, nil
+	case "v1/configmap":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, namespaced: true, label: "ConfigMap"}, nil
+	case "v1/secret":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}, namespaced: true, label: "Secret"}, nil
+	case "v1/persistentvolume":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}, label: "PersistentVolume"}, nil
+	case "v1/persistentvolumeclaim":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}, namespaced: true, label: "PersistentVolumeClaim"}, nil
+	case "apps/v1/deployment":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, namespaced: true, label: "Deployment"}, nil
+	case "apps/v1/statefulset":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, namespaced: true, label: "StatefulSet"}, nil
+	case "apps/v1/daemonset":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, namespaced: true, label: "DaemonSet"}, nil
+	case "batch/v1/job":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, namespaced: true, label: "Job"}, nil
+	case "batch/v1/cronjob":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}, namespaced: true, label: "CronJob"}, nil
+	case "networking.k8s.io/v1/ingress":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}, namespaced: true, label: "Ingress"}, nil
+	case "rbac.authorization.k8s.io/v1/role":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}, namespaced: true, label: "Role"}, nil
+	case "rbac.authorization.k8s.io/v1/rolebinding":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, namespaced: true, label: "RoleBinding"}, nil
+	case "rbac.authorization.k8s.io/v1/clusterrole":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}, label: "ClusterRole"}, nil
+	case "rbac.authorization.k8s.io/v1/clusterrolebinding":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}, label: "ClusterRoleBinding"}, nil
+	case "apiextensions.k8s.io/v1/customresourcedefinition":
+		return manifestResourceInfo{gvr: schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}, label: "CustomResourceDefinition"}, nil
+	default:
+		return manifestResourceInfo{}, fmt.Errorf("不支持的资源类型: %s %s", obj.GetAPIVersion(), obj.GetKind())
+	}
+}
+
+func decodeManifestObjects(body string) ([]unstructured.Unstructured, error) {
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("YAML 不能为空")
+	}
+	decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(body), 4096)
+	objects := make([]unstructured.Unstructured, 0, 1)
+	for {
+		var obj unstructured.Unstructured
+		if err := decoder.Decode(&obj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("解析 YAML 失败: %w", err)
+		}
+		if len(obj.Object) == 0 {
+			continue
+		}
+		if strings.TrimSpace(obj.GetKind()) == "" || strings.TrimSpace(obj.GetAPIVersion()) == "" {
+			return nil, fmt.Errorf("YAML 文档缺少 apiVersion 或 kind")
+		}
+		sanitizeApplyObject(&obj)
+		objects = append(objects, obj)
+	}
+	if len(objects) == 0 {
+		return nil, fmt.Errorf("YAML 不能为空")
+	}
+	return objects, nil
 }
 
 func (c *Client) applyYAML(ctx context.Context, kind, namespace, name, body string, dryRun bool) error {

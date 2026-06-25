@@ -21,18 +21,18 @@ func NewAlertStore(db *sql.DB) *AlertStore {
 }
 
 type AlertRule struct {
-	ID                     int64                  `json:"id"`
-	Name                   string                 `json:"name"`
-	Enabled                bool                   `json:"enabled"`
-	MetricField            string                 `json:"metric_field"`
-	Operator               string                 `json:"operator"`
-	Threshold              float64                `json:"threshold"`
-	DurationSeconds        int                    `json:"duration_seconds"`
-	ScopeType              string                 `json:"scope_type"`
-	ScopeNodeIDs           []string               `json:"scope_node_ids,omitempty"`
-	NotificationChannels   []NotificationChannel  `json:"notification_channels"`
-	CreatedAt              time.Time              `json:"created_at"`
-	UpdatedAt              time.Time              `json:"updated_at"`
+	ID                   int64                 `json:"id"`
+	Name                 string                `json:"name"`
+	Enabled              bool                  `json:"enabled"`
+	MetricField          string                `json:"metric_field"`
+	Operator             string                `json:"operator"`
+	Threshold            float64               `json:"threshold"`
+	DurationSeconds      int                   `json:"duration_seconds"`
+	ScopeType            string                `json:"scope_type"`
+	ScopeNodeIDs         []string              `json:"scope_node_ids,omitempty"`
+	NotificationChannels []NotificationChannel `json:"notification_channels"`
+	CreatedAt            time.Time             `json:"created_at"`
+	UpdatedAt            time.Time             `json:"updated_at"`
 }
 
 type NotificationChannel struct {
@@ -43,19 +43,19 @@ type NotificationChannel struct {
 }
 
 type AlertHistory struct {
-	ID                 int64     `json:"id"`
-	RuleID             int64     `json:"rule_id"`
-	RuleName           string    `json:"rule_name"`
-	NodeID             string    `json:"node_id"`
-	NodeName           string    `json:"node_name"`
-	MetricField        string    `json:"metric_field"`
-	MetricValue        float64   `json:"metric_value"`
-	Threshold          float64   `json:"threshold"`
-	TriggeredAt        time.Time `json:"triggered_at"`
-	ResolvedAt         *time.Time `json:"resolved_at,omitempty"`
-	NotificationSent   bool      `json:"notification_sent"`
-	NotificationError  string    `json:"notification_error,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                int64      `json:"id"`
+	RuleID            int64      `json:"rule_id"`
+	RuleName          string     `json:"rule_name"`
+	NodeID            string     `json:"node_id"`
+	NodeName          string     `json:"node_name"`
+	MetricField       string     `json:"metric_field"`
+	MetricValue       float64    `json:"metric_value"`
+	Threshold         float64    `json:"threshold"`
+	TriggeredAt       time.Time  `json:"triggered_at"`
+	ResolvedAt        *time.Time `json:"resolved_at,omitempty"`
+	NotificationSent  bool       `json:"notification_sent"`
+	NotificationError string     `json:"notification_error,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 func (s *AlertStore) CreateAlertRule(rule *AlertRule) error {
@@ -129,8 +129,12 @@ func (s *AlertStore) CreateAlertHistory(history *AlertHistory) error {
 }
 
 func (s *AlertStore) GetAlertHistory(nodeID string, limit int) ([]AlertHistory, error) {
-	query := `SELECT id, rule_id, rule_name, node_id, node_name, metric_field, metric_value, threshold, triggered_at, resolved_at, notification_sent, notification_error, created_at
-		FROM alert_history WHERE node_id = ? ORDER BY triggered_at DESC LIMIT ?`
+	query := `SELECT h.id, h.rule_id, COALESCE(r.name, h.rule_name), h.node_id, h.node_name, h.metric_field, h.metric_value, h.threshold, h.triggered_at, h.resolved_at, h.notification_sent, h.notification_error, h.created_at
+		FROM alert_history h
+		LEFT JOIN alert_rules r ON r.id = h.rule_id
+		WHERE h.node_id = ?
+		ORDER BY h.triggered_at DESC
+		LIMIT ?`
 	rows, err := s.db.Query(query, nodeID, limit)
 	if err != nil {
 		return nil, err
@@ -148,9 +152,108 @@ func (s *AlertStore) GetAlertHistory(nodeID string, limit int) ([]AlertHistory, 
 	return history, rows.Err()
 }
 
+func (s *AlertStore) GetAlertHistoryByID(id int64) (*AlertHistory, error) {
+	var h AlertHistory
+	err := s.db.QueryRow(`SELECT h.id, h.rule_id, COALESCE(r.name, h.rule_name), h.node_id, h.node_name, h.metric_field, h.metric_value, h.threshold, h.triggered_at, h.resolved_at, h.notification_sent, h.notification_error, h.created_at
+		FROM alert_history h
+		LEFT JOIN alert_rules r ON r.id = h.rule_id
+		WHERE h.id = ?`, id).
+		Scan(&h.ID, &h.RuleID, &h.RuleName, &h.NodeID, &h.NodeName, &h.MetricField, &h.MetricValue, &h.Threshold, &h.TriggeredAt, &h.ResolvedAt, &h.NotificationSent, &h.NotificationError, &h.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
 func (s *AlertStore) UpdateAlertHistoryResolved(id int64, resolvedAt time.Time) error {
 	_, err := s.db.Exec(`UPDATE alert_history SET resolved_at = ? WHERE id = ?`, resolvedAt, id)
 	return err
+}
+
+func (s *AlertStore) ResolveAlertHistory(id int64, resolvedAt time.Time) (*AlertHistory, error) {
+	history, err := s.GetAlertHistoryByID(id)
+	if err != nil || history == nil {
+		return history, err
+	}
+	if history.ResolvedAt == nil {
+		if _, err := s.db.Exec(`UPDATE alert_history SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL`, resolvedAt, id); err != nil {
+			return nil, err
+		}
+		return s.GetAlertHistoryByID(id)
+	}
+	return history, nil
+}
+
+func (s *AlertStore) DeleteResolvedAlertHistory(id int64) (bool, error) {
+	result, err := s.db.Exec(`DELETE FROM alert_history WHERE id = ? AND resolved_at IS NOT NULL`, id)
+	if err != nil {
+		return false, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return deleted > 0, nil
+}
+
+func (s *AlertStore) DeleteResolvedAlertHistories(ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var deleted int64
+	for _, id := range ids {
+		result, err := tx.Exec(`DELETE FROM alert_history WHERE id = ? AND resolved_at IS NOT NULL`, id)
+		if err != nil {
+			return 0, err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		deleted += rows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+func (s *AlertStore) ResolveActiveAlertHistoryByRuleID(ruleID int64, resolvedAt time.Time) (int64, error) {
+	result, err := s.db.Exec(`UPDATE alert_history SET resolved_at = ? WHERE rule_id = ? AND resolved_at IS NULL`, resolvedAt, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *AlertStore) ResolveActiveAlertHistoryForDisabledRules(resolvedAt time.Time) (int64, error) {
+	result, err := s.db.Exec(`UPDATE alert_history
+		SET resolved_at = ?
+		WHERE resolved_at IS NULL
+			AND rule_id IN (SELECT id FROM alert_rules WHERE enabled = 0)`, resolvedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *AlertStore) UpdateAlertHistoryRuleNameByRuleID(ruleID int64, ruleName string) (int64, error) {
+	result, err := s.db.Exec(`UPDATE alert_history SET rule_name = ? WHERE rule_id = ?`, ruleName, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // UpdateAlertHistoryMetricValue updates the metric_value for an active alert
@@ -161,8 +264,11 @@ func (s *AlertStore) UpdateAlertHistoryMetricValue(id int64, metricValue float64
 
 // GetActiveAlertHistory returns all unresolved alerts (resolved_at IS NULL)
 func (s *AlertStore) GetActiveAlertHistory() ([]AlertHistory, error) {
-	query := `SELECT id, rule_id, rule_name, node_id, node_name, metric_field, metric_value, threshold, triggered_at, resolved_at, notification_sent, notification_error, created_at
-		FROM alert_history WHERE resolved_at IS NULL ORDER BY triggered_at DESC`
+	query := `SELECT h.id, h.rule_id, COALESCE(r.name, h.rule_name), h.node_id, h.node_name, h.metric_field, h.metric_value, h.threshold, h.triggered_at, h.resolved_at, h.notification_sent, h.notification_error, h.created_at
+		FROM alert_history h
+		LEFT JOIN alert_rules r ON r.id = h.rule_id
+		WHERE h.resolved_at IS NULL
+		ORDER BY h.triggered_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -249,4 +355,3 @@ func (s *AlertStore) GetEnabledAlertRules() ([]AlertRule, error) {
 	}
 	return rules, rows.Err()
 }
-

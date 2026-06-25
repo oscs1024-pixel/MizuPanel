@@ -12,13 +12,13 @@ import (
 
 // AlertState tracks the state of an alert for a specific rule and node
 type AlertState struct {
-	RuleID        int64
-	NodeID        string
-	ConditionMet  bool
-	Triggered     bool  // Whether notification has been sent
-	HistoryID     int64 // Alert history record ID
-	FirstMetAt    time.Time
-	LastChecked   time.Time
+	RuleID       int64
+	NodeID       string
+	ConditionMet bool
+	Triggered    bool  // Whether notification has been sent
+	HistoryID    int64 // Alert history record ID
+	FirstMetAt   time.Time
+	LastChecked  time.Time
 }
 
 // Engine manages alert rule evaluation and notification
@@ -55,22 +55,28 @@ func (e *Engine) Initialize(ctx context.Context) error {
 	for _, alert := range activeAlerts {
 		stateKey := fmt.Sprintf("%d:%s", alert.RuleID, alert.NodeID)
 		e.states[stateKey] = &AlertState{
-			RuleID:      alert.RuleID,
-			NodeID:      alert.NodeID,
+			RuleID:       alert.RuleID,
+			NodeID:       alert.NodeID,
 			ConditionMet: true,
-			Triggered:   true,
-			HistoryID:   alert.ID,
-			FirstMetAt:  alert.TriggeredAt,
-			LastChecked: time.Now(),
+			Triggered:    true,
+			HistoryID:    alert.ID,
+			FirstMetAt:   alert.TriggeredAt,
+			LastChecked:  time.Now(),
 		}
 	}
 
 	return nil
 }
 
-
 // CheckRules evaluates all enabled alert rules against latest metrics
 func (e *Engine) CheckRules(ctx context.Context) error {
+	if _, err := e.alerts.ResolveActiveAlertHistoryForDisabledRules(time.Now().UTC()); err != nil {
+		return fmt.Errorf("resolve disabled rule alerts: %w", err)
+	}
+	if err := e.syncStatesWithActiveAlerts(); err != nil {
+		return err
+	}
+
 	rules, err := e.alerts.GetEnabledAlertRules()
 	if err != nil {
 		return fmt.Errorf("get enabled rules: %w", err)
@@ -107,6 +113,35 @@ func (e *Engine) CheckRules(ctx context.Context) error {
 				e.checkResolution(ctx, &rule, node.ID)
 			}
 		}
+	}
+
+	return nil
+}
+
+func (e *Engine) syncStatesWithActiveAlerts() error {
+	activeAlerts, err := e.alerts.GetActiveAlertHistory()
+	if err != nil {
+		return fmt.Errorf("load active alerts: %w", err)
+	}
+
+	activeByKey := make(map[string]store.AlertHistory, len(activeAlerts))
+	for _, alert := range activeAlerts {
+		activeByKey[fmt.Sprintf("%d:%s", alert.RuleID, alert.NodeID)] = alert
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for stateKey, state := range e.states {
+		if !state.Triggered {
+			continue
+		}
+		activeAlert, ok := activeByKey[stateKey]
+		if !ok {
+			delete(e.states, stateKey)
+			continue
+		}
+		state.HistoryID = activeAlert.ID
 	}
 
 	return nil
@@ -241,8 +276,8 @@ func (e *Engine) evaluateRule(rule *store.AlertRule, metric *store.Metric) bool 
 	state, exists := e.states[stateKey]
 
 	if !thresholdMet {
-		// Condition no longer met - clear state
-		if exists {
+		// Clear pending duration-only state. Triggered alerts are resolved by checkResolution.
+		if exists && !state.Triggered {
 			delete(e.states, stateKey)
 		}
 		return false

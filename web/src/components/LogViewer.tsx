@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 
 interface LogViewerProps {
   nodeId: string
@@ -306,10 +307,11 @@ export default function LogViewer({ nodeId }: LogViewerProps) {
                   </button>
                   <button
                     onClick={() => removeSavedPath(path)}
-                    className="rounded p-1 text-xs text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+                    className="soft-button inline-flex h-7 w-7 items-center justify-center text-xs text-muted-foreground hover:bg-danger/10 hover:text-danger"
                     title="删除"
+                    aria-label="删除路径"
                   >
-                    ✕
+                    <X size={13} aria-hidden="true" />
                   </button>
                 </div>
               ))
@@ -380,7 +382,7 @@ export default function LogViewer({ nodeId }: LogViewerProps) {
                 }
               }}
               placeholder="输入日志文件路径，例如：/var/log/messages"
-              className="flex-1 rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              className="soft-input flex-1 px-3 py-2 text-sm placeholder:text-muted-foreground"
               disabled={isConnected}
             />
             <input
@@ -414,7 +416,7 @@ export default function LogViewer({ nodeId }: LogViewerProps) {
             ) : (
               <button
                 onClick={disconnectLogTail}
-                className="rounded bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90"
+                className="soft-button bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-danger/90"
               >
                 停止
               </button>
@@ -427,7 +429,7 @@ export default function LogViewer({ nodeId }: LogViewerProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索日志内容..."
-              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              className="soft-input flex-1 px-3 py-1.5 text-sm placeholder:text-muted-foreground"
             />
             <label className="flex items-center gap-2 text-sm text-foreground">
               <input
@@ -449,7 +451,7 @@ export default function LogViewer({ nodeId }: LogViewerProps) {
 
         {/* Error display */}
         {error && (
-          <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="mb-4 rounded-2xl border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
             {error}
           </div>
         )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
 
 type RestartPolicy = 'no' | 'always' | 'on-failure' | 'unless-stopped'
 type NetworkMode = 'bridge' | 'host' | 'none' | 'container'
@@ -160,15 +161,17 @@ export default function CreateContainerModal({ open, nodeId, onClose, onCreate }
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
-      <section role="dialog" aria-modal="true" aria-label="创建容器" className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-border bg-card shadow-2xl outline-none">
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-primary/30 bg-primary/10 px-5 py-4">
+    <div className="soft-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
+      <section role="dialog" aria-modal="true" aria-label="创建容器" className="soft-modal-shell flex max-h-[90vh] w-full max-w-4xl flex-col outline-none">
+        <div className="soft-modal-header flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-[0.24em] text-primary">Docker Container</p>
             <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-foreground">创建容器</h3>
             <p className="mt-2 text-sm font-bold leading-6 text-primary">通过可视化配置生成并执行 docker run 命令</p>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose} className="shrink-0 rounded-2xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-black text-primary transition hover:bg-primary/10 focus:outline-none focus:ring-4 focus:ring-primary/20">✕</button>
+          <button type="button" aria-label="关闭" onClick={onClose} className="soft-button inline-flex h-9 w-9 shrink-0 items-center justify-center border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 focus:outline-none focus:ring-4 focus:ring-primary/20">
+            <X size={16} aria-hidden="true" />
+          </button>
         </div>
 
         <div className="overflow-y-auto px-5 py-4">
@@ -522,12 +525,12 @@ export default function CreateContainerModal({ open, nodeId, onClose, onCreate }
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-surface px-5 py-4">
+        <div className="soft-modal-footer flex shrink-0 flex-wrap justify-end gap-2 border-t px-5 py-4">
           <button
             type="button"
             onClick={onClose}
             disabled={creating}
-            className="min-h-11 cursor-pointer rounded-2xl border border-border bg-card px-4 text-sm font-black text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="soft-button min-h-11 cursor-pointer border border-border bg-card px-4 text-sm font-black text-muted-foreground hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
             取消
           </button>
@@ -535,7 +538,7 @@ export default function CreateContainerModal({ open, nodeId, onClose, onCreate }
             type="button"
             onClick={handleCreate}
             disabled={creating || !image.trim()}
-            className="min-h-11 cursor-pointer rounded-2xl bg-primary px-4 text-sm font-black text-primary-foreground shadow-sm transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+            className="soft-button min-h-11 cursor-pointer bg-primary px-4 text-sm font-black text-primary-foreground shadow-sm hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creating ? '创建中...' : '创建容器'}
           </button>

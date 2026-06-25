@@ -16,6 +16,8 @@ import type {
   K8sDiagnosticsResponse,
   K8sResourceActionRequest,
   K8sResourceActionResponse,
+  K8sApplyManifestRequest,
+  K8sApplyManifestResponse,
   K8sResourceKind
 } from '../types'
 
@@ -131,6 +133,20 @@ export function executeK8sResourceAction(
 ): Promise<K8sResourceActionResponse> {
   return request<K8sResourceActionResponse>(
     `/api/k8s/clusters/${encodeURIComponent(clusterID)}/resources/${encodeURIComponent(kind)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/actions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req)
+    }
+  )
+}
+
+export function applyK8sManifest(
+  clusterID: string,
+  req: K8sApplyManifestRequest
+): Promise<K8sApplyManifestResponse> {
+  return request<K8sApplyManifestResponse>(
+    `/api/k8s/clusters/${encodeURIComponent(clusterID)}/resources/apply`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

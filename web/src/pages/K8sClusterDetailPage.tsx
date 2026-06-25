@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, Plus, RefreshCw, Search } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import {
   fetchK8sCluster,
@@ -36,6 +36,7 @@ import { K8sPodTable } from '../components/k8s/K8sPodTable'
 import { K8sWorkloadTable } from '../components/k8s/K8sWorkloadTable'
 import { K8sServiceTable } from '../components/k8s/K8sServiceTable'
 import { K8sIngressTable } from '../components/k8s/K8sIngressTable'
+import { K8sCreateResourceModal } from '../components/k8s/K8sCreateResourceModal'
 
 type K8sClusterDetailPageProps = {
   clusterId: string
@@ -97,6 +98,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
     podName: '',
   })
   const [diagnosticsDrawer, setDiagnosticsDrawer] = useState<{ open: boolean; kind: K8sResourceKind; namespace: string; name: string } | null>(null)
+  const [createResourceOpen, setCreateResourceOpen] = useState(false)
   const clusterRequestSeq = useRef(0)
   const resourceRequestSeq = useRef(0)
   const namespaceRequestSeq = useRef(0)
@@ -173,8 +175,13 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
         })
         break
       case 'nodes':
-        request = fetchK8sNodes(clusterId).then((response) => {
-          if (isCurrentRequest()) setNodes(response.nodes || [])
+        request = Promise.all([
+          fetchK8sNodes(clusterId),
+          fetchK8sPods(clusterId),
+        ]).then(([nodesResponse, podsResponse]) => {
+          if (!isCurrentRequest()) return
+          setNodes(nodesResponse.nodes || [])
+          setPods(podsResponse.pods || [])
         })
         break
       case 'pods':
@@ -183,18 +190,33 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
         })
         break
       case 'deployments':
-        request = fetchK8sDeployments(clusterId, effectiveNamespace || undefined).then((response) => {
-          if (isCurrentRequest()) setDeployments(response.deployments || [])
+        request = Promise.all([
+          fetchK8sDeployments(clusterId, effectiveNamespace || undefined),
+          fetchK8sPods(clusterId, effectiveNamespace || undefined),
+        ]).then(([deploymentsResponse, podsResponse]) => {
+          if (!isCurrentRequest()) return
+          setDeployments(deploymentsResponse.deployments || [])
+          setPods(podsResponse.pods || [])
         })
         break
       case 'statefulsets':
-        request = fetchK8sStatefulSets(clusterId, effectiveNamespace || undefined).then((response) => {
-          if (isCurrentRequest()) setStatefulSets(response.statefulsets || [])
+        request = Promise.all([
+          fetchK8sStatefulSets(clusterId, effectiveNamespace || undefined),
+          fetchK8sPods(clusterId, effectiveNamespace || undefined),
+        ]).then(([statefulSetsResponse, podsResponse]) => {
+          if (!isCurrentRequest()) return
+          setStatefulSets(statefulSetsResponse.statefulsets || [])
+          setPods(podsResponse.pods || [])
         })
         break
       case 'daemonsets':
-        request = fetchK8sDaemonSets(clusterId, effectiveNamespace || undefined).then((response) => {
-          if (isCurrentRequest()) setDaemonSets(response.daemonsets || [])
+        request = Promise.all([
+          fetchK8sDaemonSets(clusterId, effectiveNamespace || undefined),
+          fetchK8sPods(clusterId, effectiveNamespace || undefined),
+        ]).then(([daemonSetsResponse, podsResponse]) => {
+          if (!isCurrentRequest()) return
+          setDaemonSets(daemonSetsResponse.daemonsets || [])
+          setPods(podsResponse.pods || [])
         })
         break
       case 'services':
@@ -290,8 +312,8 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="soft-empty-state px-10 py-8 text-center">
           <div className="mb-3 inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
           <p className="text-sm font-semibold text-muted-foreground">加载集群信息...</p>
         </div>
@@ -301,13 +323,13 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
 
   if (error || !cluster) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <p className="text-sm font-semibold text-destructive">{error || '集群不存在'}</p>
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="soft-empty-state px-10 py-8 text-center">
+          <p className="text-sm font-semibold text-danger">{error || '集群不存在'}</p>
           <button
             type="button"
             onClick={onBack}
-            className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+            className="soft-button mt-4 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
           >
             返回列表
           </button>
@@ -336,7 +358,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
   }
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-4 sm:p-6">
       {toast && (
         <Toast
           message={toast.message}
@@ -365,16 +387,27 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
         onResourceChanged={() => loadActiveResource()}
       />
 
+      <K8sCreateResourceModal
+        open={createResourceOpen}
+        clusterId={clusterId}
+        currentNamespace={namespace}
+        namespaces={namespaces}
+        onClose={() => setCreateResourceOpen(false)}
+        onToast={(message, type) => setToast({ message, type })}
+        onCreated={() => {
+          loadNamespaceOptions()
+          loadActiveResource()
+        }}
+      />
+
       <div className="mx-auto max-w-[1380px] space-y-5">
-        <header className="rounded-[20px] border border-border bg-card p-5 shadow-sm">
+        <header className="soft-panel p-5">
           <button
             type="button"
             onClick={onBack}
-            className="mb-4 flex items-center gap-2 text-sm font-bold text-muted-foreground transition hover:text-foreground"
+            className="soft-button mb-4 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm font-bold text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+            <ArrowLeft size={16} aria-hidden="true" />
             返回 Kubernetes 集群
           </button>
 
@@ -393,14 +426,26 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                 {agentLastSeenAt ? ` · Agent Last Seen: ${formatDateTime(agentLastSeenAt)}` : ''}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => loadActiveResource()}
-              disabled={resourcesLoading || !isOnline}
-              className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-black text-primary transition hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {resourcesLoading ? '加载中...' : '刷新资源'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateResourceOpen(true)}
+                disabled={!isOnline}
+                className="soft-button inline-flex items-center gap-2 bg-primary px-4 py-2 text-sm font-black text-primary-foreground shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus size={15} aria-hidden="true" />
+                创建资源
+              </button>
+              <button
+                type="button"
+                onClick={() => loadActiveResource()}
+                disabled={resourcesLoading || !isOnline}
+                className="soft-button inline-flex items-center gap-2 border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-black text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw size={15} className={resourcesLoading ? 'animate-spin' : ''} aria-hidden="true" />
+                {resourcesLoading ? '加载中...' : '刷新资源'}
+              </button>
+            </div>
           </div>
         </header>
 
@@ -425,7 +470,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                 {!isOnline ? (
                   <K8sOfflineState message="集群或 Agent 节点离线，无法查看集群资源信息" />
                 ) : resourcesLoading ? (
-                  <div className="rounded-[16px] border border-border bg-card p-8 text-center shadow-sm">
+                  <div className="soft-empty-state p-8 text-center">
                     <div className="mb-3 inline-block h-6 w-6 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
                     <p className="text-sm font-bold text-muted-foreground">加载集群信息...</p>
                   </div>
@@ -445,7 +490,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                     </K8sDetailPanel>
 
                     <K8sDetailPanel title="连接信息">
-                      <div className="divide-y divide-border rounded-xl border border-border bg-surface px-4">
+                      <div className="divide-y divide-border rounded-2xl border border-border/80 bg-surface/70 px-4">
                         {cluster.kubeconfig_path && <InfoRow label="kubeconfig 路径" value={cluster.kubeconfig_path} />}
                         {cluster.context && <InfoRow label="Context" value={cluster.context} />}
                         <InfoRow label="Agent 节点" value={`${cluster.node_name || '未知 Agent'} (${cluster.node_ip || '未知 IP'})`} />
@@ -467,7 +512,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
 
             {activeTab === 'nodes' && (
               <K8sDetailPanel title="节点">
-                {!isOnline ? <K8sOfflineState message="集群或 Agent 节点离线，无法查看 Node 列表" /> : <K8sNodeTable items={nodes} loading={resourcesLoading} />}
+                {!isOnline ? <K8sOfflineState message="集群或 Agent 节点离线，无法查看 Node 列表" /> : <K8sNodeTable items={nodes} pods={safePods} loading={resourcesLoading} />}
               </K8sDetailPanel>
             )}
 
@@ -521,6 +566,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                     clusterId={clusterId}
                     mode="deployment"
                     items={filteredDeployments}
+                    pods={safePods}
                     loading={resourcesLoading}
                     onViewDiagnostics={openDiagnostics}
                     onToast={(message, type) => setToast({ message, type })}
@@ -550,6 +596,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                     clusterId={clusterId}
                     mode="statefulset"
                     items={filteredStatefulSets}
+                    pods={safePods}
                     loading={resourcesLoading}
                     onViewDiagnostics={openDiagnostics}
                     onToast={(message, type) => setToast({ message, type })}
@@ -579,6 +626,7 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
                     clusterId={clusterId}
                     mode="daemonset"
                     items={filteredDaemonSets}
+                    pods={safePods}
                     loading={resourcesLoading}
                     onViewDiagnostics={openDiagnostics}
                     onToast={(message, type) => setToast({ message, type })}
@@ -638,12 +686,12 @@ export function K8sClusterDetailPage({ clusterId, onBack }: K8sClusterDetailPage
 
 function ResourceError({ message, onRetry, compact = false }: { message: string; onRetry: () => void; compact?: boolean }) {
   return (
-    <div className={`rounded-[16px] border border-danger/30 bg-danger/5 text-center ${compact ? 'p-4' : 'p-8'}`}>
+    <div className={`soft-empty-state border-danger/30 bg-danger/5 text-center ${compact ? 'p-4' : 'p-8'}`}>
       <p className="text-sm font-bold text-danger">{message}</p>
       <button
         type="button"
         onClick={() => onRetry()}
-        className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+        className="soft-button mt-3 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
       >
         重试
       </button>
@@ -653,7 +701,7 @@ function ResourceError({ message, onRetry, compact = false }: { message: string;
 
 function K8sSummaryCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="relative overflow-hidden rounded-[16px] border border-border bg-card p-4 shadow-sm">
+    <div className="soft-stat-card p-4">
       <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-primary/40 to-accent/20" />
       <p className="text-xs font-black text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-black tracking-tight ${accent ? 'text-primary' : 'text-foreground'}`}>{value}</p>
@@ -663,7 +711,7 @@ function K8sSummaryCard({ label, value, accent = false }: { label: string; value
 
 function K8sOfflineState({ message }: { message: string }) {
   return (
-    <div className="rounded-[16px] border border-dashed border-border bg-card p-8 text-center shadow-sm">
+    <div className="soft-empty-state p-8 text-center">
       <p className="text-sm font-bold text-muted-foreground">{message}</p>
     </div>
   )
@@ -671,8 +719,8 @@ function K8sOfflineState({ message }: { message: string }) {
 
 function K8sDetailPanel({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-[16px] border border-border bg-card shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
+    <section className="soft-panel">
+      <div className="soft-panel-header flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <h2 className="text-base font-black text-foreground">{title}</h2>
         {actions}
       </div>
@@ -682,7 +730,7 @@ function K8sDetailPanel({ title, actions, children }: { title: string; actions?:
 }
 
 function K8sFilterBar({ children }: { children: ReactNode }) {
-  return <div className="mb-4 flex flex-wrap items-center gap-3">{children}</div>
+  return <div className="soft-toolbar mb-4 flex flex-wrap items-center gap-3 p-2.5">{children}</div>
 }
 
 function ResourceFilters({
@@ -724,7 +772,7 @@ function ResourceSearchInput({ value, onChange, placeholder }: { value: string; 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-11 w-full rounded-xl border border-border bg-surface pl-9 pr-4 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+        className="soft-input h-11 w-full pl-9 pr-4 text-sm font-semibold placeholder:text-muted-foreground"
       />
     </div>
   )
@@ -813,7 +861,7 @@ function NamespaceSelect({
           setOpen((current) => !current)
           window.requestAnimationFrame(updateMenuPosition)
         }}
-        className="flex h-11 min-w-[220px] items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 text-left text-sm font-semibold text-foreground transition hover:bg-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+        className="soft-input flex h-11 min-w-[220px] items-center justify-between gap-3 px-3 text-left text-sm font-semibold hover:bg-muted/70"
       >
         <span className="min-w-0">
           <span className="block text-[10px] font-black leading-none text-muted-foreground">命名空间</span>
@@ -836,7 +884,7 @@ function NamespaceSelect({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索命名空间"
-              className="h-10 w-full rounded-xl border border-border bg-surface pl-9 pr-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="soft-input h-10 w-full pl-9 pr-3 text-sm font-semibold placeholder:text-muted-foreground"
             />
           </div>
 
@@ -890,7 +938,7 @@ function NamespaceOption({ name, status, selected, onClick }: { name: string; st
 
 function K8sDetailSidebar({ activeTab, counts, onSelect }: { activeTab: DetailTab; counts: Partial<Record<DetailTab, number | undefined>>; onSelect: (tab: DetailTab) => void }) {
   return (
-    <aside className="rounded-[18px] border border-border bg-card p-2 shadow-sm lg:sticky lg:top-6">
+    <aside className="soft-panel p-2 lg:sticky lg:top-6">
       <nav className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
         {DETAIL_TABS.map((item) => {
           const active = activeTab === item.key
@@ -900,7 +948,7 @@ function K8sDetailSidebar({ activeTab, counts, onSelect }: { activeTab: DetailTa
               key={item.key}
               type="button"
               onClick={() => onSelect(item.key)}
-              className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-black transition ${active ? 'border border-primary/20 bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              className={`soft-button flex items-center justify-between gap-3 px-3 py-2.5 text-left text-sm font-black ${active ? 'border border-primary/20 bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
             >
               <span className="truncate">{item.label}</span>
               <span className="shrink-0 text-xs opacity-75">{count === undefined ? item.shortLabel || '' : count}</span>

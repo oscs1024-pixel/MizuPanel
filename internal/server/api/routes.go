@@ -169,6 +169,7 @@ func NewRouter(nodes *store.NodeStore, metrics *store.MetricStore, snapshots ...
 		mux.HandleFunc("/api/alerts/rules", server.requireAuth(server.handleAlertRules(alertStore)))
 		mux.HandleFunc("/api/alerts/rules/", server.requireAuth(server.handleAlertRuleRoutes(alertStore)))
 		mux.HandleFunc("/api/alerts/history", server.requireAuth(server.handleAlertHistory(alertStore)))
+		mux.HandleFunc("/api/alerts/history/", server.requireAuth(server.handleAlertHistoryRoutes(alertStore)))
 	}
 	if k8sService != nil {
 		mux.HandleFunc("/api/k8s/clusters", server.requireAuth(server.handleK8sClusters(k8sService)))
@@ -1277,7 +1278,6 @@ func (s *Server) handleContainerDelete(w http.ResponseWriter, r *http.Request, n
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

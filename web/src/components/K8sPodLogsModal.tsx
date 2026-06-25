@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Download, RefreshCw, X } from 'lucide-react'
 import { fetchK8sPodLogs } from '../api/k8s'
 
 interface K8sPodLogsModalProps {
@@ -101,14 +102,13 @@ export default function K8sPodLogsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="soft-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="flex h-[80vh] w-full max-w-6xl flex-col rounded-2xl border border-border bg-card shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border p-4">
+      <div className="soft-modal-shell flex h-[80vh] w-full max-w-6xl flex-col">
+        <div className="soft-modal-header flex items-center justify-between border-b p-4">
           <div>
             <h2 className="text-lg font-black text-foreground">Pod 日志</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
@@ -118,29 +118,26 @@ export default function K8sPodLogsModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="soft-button inline-flex h-9 w-9 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label="关闭"
           >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Controls */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
+        <div className="soft-toolbar m-4 mb-3 flex flex-wrap items-center gap-3 p-3">
           <input
             type="text"
             value={container}
             onChange={(e) => setContainer(e.target.value)}
             placeholder="容器名称 (可选)"
-            className="w-40 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            className="soft-input h-9 w-40 px-3 text-sm font-semibold placeholder:text-muted-foreground"
           />
 
           <select
             value={tailLines}
             onChange={(e) => setTailLines(Number(e.target.value))}
-            className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-semibold text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            className="soft-input h-9 px-3 text-sm font-semibold"
           >
             <option value={50}>最后 50 行</option>
             <option value={100}>最后 100 行</option>
@@ -154,15 +151,16 @@ export default function K8sPodLogsModal({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索日志..."
-            className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            className="soft-input h-9 min-w-[220px] flex-1 px-3 text-sm font-semibold placeholder:text-muted-foreground"
           />
 
           <button
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-50"
+            className="soft-button inline-flex h-9 items-center gap-1.5 border border-border bg-surface px-3 text-sm font-bold text-foreground hover:bg-muted disabled:opacity-50"
           >
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
             {loading ? '加载中...' : '刷新'}
           </button>
 
@@ -170,8 +168,9 @@ export default function K8sPodLogsModal({
             type="button"
             onClick={handleDownload}
             disabled={!logContent}
-            className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-50"
+            className="soft-button inline-flex h-9 items-center gap-1.5 border border-border bg-surface px-3 text-sm font-bold text-foreground hover:bg-muted disabled:opacity-50"
           >
+            <Download size={15} aria-hidden="true" />
             下载
           </button>
 
@@ -186,16 +185,15 @@ export default function K8sPodLogsModal({
           </label>
         </div>
 
-        {/* Log Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="mx-4 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card">
           {error ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex h-full items-center justify-center p-4">
               <div className="text-center">
-                <p className="text-sm font-semibold text-destructive">{error}</p>
+                <p className="text-sm font-semibold text-danger">{error}</p>
                 <button
                   type="button"
                   onClick={handleRefresh}
-                  className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+                  className="soft-button mt-3 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
                 >
                   重试
                 </button>
@@ -216,22 +214,21 @@ export default function K8sPodLogsModal({
             <div
               ref={logContainerRef}
               onScroll={handleScroll}
-              className="h-full overflow-auto bg-slate-950 p-4 font-mono text-xs text-slate-100"
+              className="h-full overflow-auto bg-code p-4 font-mono text-xs text-code-foreground"
             >
               <pre className="whitespace-pre-wrap break-words">{filteredContent}</pre>
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border p-4">
+        <div className="soft-modal-footer mt-4 flex items-center justify-between border-t p-4">
           <p className="text-xs text-muted-foreground">
             {searchQuery ? `筛选结果：${filteredContent.split('\n').length} 行` : `总计：${logContent.split('\n').length} 行`}
           </p>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+            className="soft-button bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
           >
             关闭
           </button>

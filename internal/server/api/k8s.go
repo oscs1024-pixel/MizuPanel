@@ -126,6 +126,12 @@ func (s *Server) handleK8sClusterRoutes(k8sService *k8s.Service) http.HandlerFun
 			return
 		}
 
+		// /api/k8s/clusters/:id/resources/apply
+		if len(parts) == 3 && parts[1] == "resources" && parts[2] == "apply" {
+			s.handleK8sApplyManifest(k8sService, clusterID, w, r)
+			return
+		}
+
 		// /api/k8s/clusters/:id/resources/:kind/:namespace/:name/diagnostics
 		if len(parts) == 6 && parts[1] == "resources" && parts[5] == "diagnostics" {
 			kind := parts[2]
@@ -350,6 +356,24 @@ func (s *Server) handleK8sResourceAction(k8sService *k8s.Service, clusterID, kin
 		return
 	}
 	result, err := k8sService.ExecuteResourceAction(r.Context(), clusterID, kind, namespace, name, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": result.Message})
+}
+
+func (s *Server) handleK8sApplyManifest(k8sService *k8s.Service, clusterID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req k8s.ApplyManifestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	result, err := k8sService.ApplyManifest(r.Context(), clusterID, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

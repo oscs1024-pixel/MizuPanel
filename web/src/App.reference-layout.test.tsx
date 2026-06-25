@@ -325,7 +325,6 @@ describe('reference-style dashboard layout', () => {
     expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument()
 
     fireEvent.click(addHostButton)
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(createInstallCommandMock).toHaveBeenCalledWith('linux')
@@ -369,7 +368,6 @@ describe('reference-style dashboard layout', () => {
     const filterToolbar = screen.getByRole('toolbar', { name: '主机筛选与操作' })
     const addHostButton = within(filterToolbar).getByRole('button', { name: '添加主机' })
     fireEvent.click(addHostButton)
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     const closeButton = within(installDialog).getByRole('button', { name: '关闭安装命令' })
@@ -394,7 +392,6 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     expect(await within(installDialog).findByText('安装命令生成失败')).toBeInTheDocument()
@@ -411,7 +408,6 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.({ command: 'linux initial command', install_token: 'linux-initial-token' })
     const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(installRegion).toHaveTextContent('linux initial command')
@@ -442,7 +438,6 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.resolve({ command: 'linux initial command', install_token: 'linux-initial-token' })
     const installRegion = await screen.findByRole('dialog', { name: '添加主机' })
     expect(installRegion).toHaveTextContent('linux initial command')
@@ -472,7 +467,6 @@ describe('reference-style dashboard layout', () => {
 
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     pending.linux.shift()?.({ command: 'linux initial command', install_token: 'linux-initial-token' })
     expect(await screen.findByText('linux initial command')).toBeInTheDocument()
 
@@ -497,7 +491,6 @@ describe('reference-style dashboard layout', () => {
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
     await screen.findByRole('dialog', { name: '添加主机' })
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '复制安装命令' })).not.toBeDisabled())
 
     fireEvent.click(screen.getByRole('button', { name: '复制安装命令' }))
@@ -517,7 +510,6 @@ describe('reference-style dashboard layout', () => {
     await screen.findByText('全部 2')
     fireEvent.click(screen.getByRole('button', { name: '添加主机' }))
     await screen.findByRole('dialog', { name: '添加主机' })
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '复制安装命令' })).not.toBeDisabled())
 
     fireEvent.click(screen.getByRole('button', { name: '复制安装命令' }))

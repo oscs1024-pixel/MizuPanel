@@ -90,6 +90,7 @@ describe('App regression behavior', () => {
     vi.mocked(deleteNode).mockReset()
     vi.mocked(deleteNode).mockResolvedValue(undefined)
     vi.mocked(getNodeMetrics).mockReset()
+    vi.mocked(getNodeMetrics).mockResolvedValue({ metrics: [] })
     vi.mocked(getNodeProcesses).mockReset()
     vi.mocked(getNodeDocker).mockReset()
     vi.mocked(getNodeProcesses).mockResolvedValue({ node_id: 'node-1', collected_at: 0, error: '', processes: [] })
@@ -167,7 +168,6 @@ describe('App regression behavior', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     expect(await screen.findByText('network')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '登录 MizuPanel' })).not.toBeInTheDocument()

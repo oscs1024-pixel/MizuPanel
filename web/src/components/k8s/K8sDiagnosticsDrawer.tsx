@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Pencil, Save } from 'lucide-react'
+import { CheckCircle2, Copy, Pencil, RefreshCw, Save, X } from 'lucide-react'
 
 import { executeK8sResourceAction, fetchK8sDiagnostics } from '../../api/k8s'
 import type { K8sDiagnostics, K8sResourceActionRequest, K8sResourceKind } from '../../types'
@@ -140,13 +140,13 @@ export function K8sDiagnosticsDrawer({ clusterId, resource, open, onClose, onToa
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/35"
+        className="soft-modal-overlay fixed inset-0 z-40"
         onClick={(event) => {
           if (event.target === event.currentTarget) onClose()
         }}
       >
-        <aside className="ml-auto flex h-full w-full max-w-[760px] flex-col border-l border-border bg-background shadow-2xl">
-          <header className="border-b border-border bg-card px-5 py-4">
+        <aside className="soft-drawer ml-auto flex h-full w-full max-w-[760px] flex-col">
+          <header className="soft-panel-header border-b px-5 py-4">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-wider text-primary">{kindLabels[resource.kind]}</p>
@@ -154,23 +154,24 @@ export function K8sDiagnosticsDrawer({ clusterId, resource, open, onClose, onToa
                 <p className="mt-1 text-sm font-semibold text-muted-foreground">{resource.namespace}</p>
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={loadDiagnostics} disabled={loading} className="rounded-lg border border-border bg-surface px-3 py-2 text-xs font-black text-foreground transition hover:bg-muted disabled:opacity-50">
+                <button type="button" onClick={loadDiagnostics} disabled={loading} className="soft-button inline-flex items-center gap-1.5 border border-border bg-surface px-3 py-2 text-xs font-black text-foreground hover:bg-muted disabled:opacity-50">
+                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
                   {loading ? '加载中' : '刷新'}
                 </button>
-                <button type="button" onClick={onClose} className="rounded-lg border border-border bg-surface px-3 py-2 text-xs font-black text-foreground transition hover:bg-muted">
-                  关闭
+                <button type="button" onClick={onClose} className="soft-button inline-flex h-9 w-9 items-center justify-center border border-border bg-surface text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭">
+                  <X size={16} aria-hidden="true" />
                 </button>
               </div>
             </div>
           </header>
 
-          <nav className="flex gap-1 overflow-x-auto border-b border-border bg-card px-4 py-2">
+          <nav className="flex gap-1 overflow-x-auto border-b border-border/80 bg-card/75 px-4 py-2">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`rounded-lg px-3 py-2 text-xs font-black transition ${activeTab === tab.key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                className={`soft-button px-3 py-2 text-xs font-black ${activeTab === tab.key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
               >
                 {tab.label}
               </button>
@@ -181,9 +182,9 @@ export function K8sDiagnosticsDrawer({ clusterId, resource, open, onClose, onToa
             {loading ? (
               <DrawerState text="加载诊断信息..." />
             ) : error ? (
-              <div className="rounded-[16px] border border-danger/30 bg-danger/5 p-6 text-center">
+              <div className="soft-empty-state border-danger/30 bg-danger/5 p-6 text-center">
                 <p className="text-sm font-bold text-danger">{error}</p>
-                <button type="button" onClick={loadDiagnostics} className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90">重试</button>
+                <button type="button" onClick={loadDiagnostics} className="soft-button mt-3 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90">重试</button>
               </div>
             ) : !diagnostics ? (
               <DrawerState text="暂无诊断信息" />
@@ -229,10 +230,10 @@ function DiagnosticsContent({ activeTab, diagnostics, onCopy, onEditYAML, onOpen
   }
   if (activeTab === 'logs') {
     return (
-      <section className="rounded-[16px] border border-border bg-card p-5">
+      <section className="soft-card p-5">
         <h3 className="text-base font-black text-foreground">Pod 日志</h3>
         <p className="mt-2 text-sm font-semibold text-muted-foreground">继续使用现有日志查看器，保持日志筛选和下载能力。</p>
-        <button type="button" onClick={onOpenLogs} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90">
+        <button type="button" onClick={onOpenLogs} className="soft-button mt-4 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90">
           打开日志
         </button>
       </section>
@@ -244,7 +245,7 @@ function DiagnosticsContent({ activeTab, diagnostics, onCopy, onEditYAML, onOpen
 function OverviewPane({ diagnostics }: { diagnostics: K8sDiagnostics }) {
   return (
     <div className="space-y-4">
-      <section className="rounded-[16px] border border-border bg-card p-5">
+      <section className="soft-card p-5">
         <div className="flex flex-wrap items-center gap-3">
           <K8sStatusBadge status={diagnostics.status} />
           {diagnostics.age ? <span className="text-sm font-semibold text-muted-foreground">Age {diagnostics.age}</span> : null}
@@ -257,11 +258,11 @@ function OverviewPane({ diagnostics }: { diagnostics: K8sDiagnostics }) {
       <KeyValueSection title="Labels" values={diagnostics.metadata || {}} />
 
       {diagnostics.containers && diagnostics.containers.length > 0 ? (
-        <section className="rounded-[16px] border border-border bg-card p-5">
+        <section className="soft-card p-5">
           <h3 className="text-base font-black text-foreground">容器</h3>
           <div className="mt-3 space-y-2">
             {diagnostics.containers.map((container) => (
-              <div key={container.name} className="rounded-xl border border-border bg-surface p-3">
+              <div key={container.name} className="rounded-2xl border border-border/80 bg-surface/80 p-3">
                 <p className="font-black text-foreground">{container.name}</p>
                 <p className="mt-1 text-sm font-semibold text-muted-foreground">{container.image}</p>
                 <p className="mt-1 text-xs font-bold text-muted-foreground">Ready {container.ready ? 'true' : 'false'} · Restarts {container.restart_count}{container.state ? ` · ${container.state}` : ''}</p>
@@ -272,11 +273,11 @@ function OverviewPane({ diagnostics }: { diagnostics: K8sDiagnostics }) {
       ) : null}
 
       {diagnostics.conditions && diagnostics.conditions.length > 0 ? (
-        <section className="rounded-[16px] border border-border bg-card p-5">
+        <section className="soft-card p-5">
           <h3 className="text-base font-black text-foreground">Conditions</h3>
           <div className="mt-3 space-y-2">
             {diagnostics.conditions.map((condition) => (
-              <div key={`${condition.type}-${condition.status}`} className="rounded-xl border border-border bg-surface p-3">
+              <div key={`${condition.type}-${condition.status}`} className="rounded-2xl border border-border/80 bg-surface/80 p-3">
                 <p className="font-black text-foreground">{condition.type}: {condition.status}</p>
                 {condition.reason || condition.message ? <p className="mt-1 text-sm font-semibold text-muted-foreground">{condition.reason}{condition.message ? ` - ${condition.message}` : ''}</p> : null}
               </div>
@@ -292,11 +293,11 @@ function KeyValueSection({ title, values }: { title: string; values: Record<stri
   const entries = Object.entries(values)
   if (entries.length === 0) return null
   return (
-    <section className="rounded-[16px] border border-border bg-card p-5">
+    <section className="soft-card p-5">
       <h3 className="text-base font-black text-foreground">{title}</h3>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {entries.map(([key, value]) => (
-          <div key={key} className="rounded-xl border border-border bg-surface px-3 py-2">
+          <div key={key} className="rounded-2xl border border-border/80 bg-surface/80 px-3 py-2">
             <p className="text-xs font-black uppercase text-muted-foreground">{key}</p>
             <p className="mt-1 break-all text-sm font-semibold text-foreground">{value || '-'}</p>
           </div>
@@ -311,7 +312,7 @@ function EventsPane({ events }: { events: K8sDiagnostics['events'] }) {
   return (
     <div className="space-y-2">
       {events.map((event, index) => (
-        <div key={`${event.reason}-${index}`} className="rounded-[14px] border border-border bg-card p-4">
+        <div key={`${event.reason}-${index}`} className="soft-card p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full px-2 py-1 text-xs font-black ${event.type === 'Warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>{event.type || 'Normal'}</span>
             <span className="font-black text-foreground">{event.reason}</span>
@@ -327,15 +328,16 @@ function EventsPane({ events }: { events: K8sDiagnostics['events'] }) {
 
 function CodePane({ title, value, onCopy, onEdit }: { title: string; value: string; onCopy: () => void; onEdit?: () => void }) {
   return (
-    <section className="overflow-hidden rounded-[16px] border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <section className="soft-panel">
+      <div className="soft-panel-header flex items-center justify-between gap-3 px-4 py-3">
         <h3 className="text-base font-black text-foreground">{title}</h3>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={onCopy} disabled={!value} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-black text-foreground transition hover:bg-muted disabled:opacity-50">
+          <button type="button" onClick={onCopy} disabled={!value} className="soft-button inline-flex items-center gap-1.5 border border-border bg-surface px-3 py-1.5 text-xs font-black text-foreground hover:bg-muted disabled:opacity-50">
+            <Copy size={13} aria-hidden="true" />
             复制
           </button>
           {onEdit ? (
-            <button type="button" onClick={onEdit} disabled={!value} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary transition hover:bg-primary/15 disabled:opacity-50">
+            <button type="button" onClick={onEdit} disabled={!value} className="soft-button inline-flex items-center gap-1.5 border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary hover:bg-primary/15 disabled:opacity-50">
               <Pencil size={13} aria-hidden="true" />
               编辑
             </button>
@@ -349,7 +351,7 @@ function CodePane({ title, value, onCopy, onEdit }: { title: string; value: stri
 
 function DrawerState({ text }: { text: string }) {
   return (
-    <div className="rounded-[16px] border border-dashed border-border bg-card p-8 text-center">
+    <div className="soft-empty-state p-8 text-center">
       <p className="text-sm font-bold text-muted-foreground">{text}</p>
     </div>
   )
@@ -358,11 +360,11 @@ function DrawerState({ text }: { text: string }) {
 function ModalShell({ open, title, children, onClose }: { open: boolean; title: string; children: ReactNode; onClose: () => void }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4" onClick={(event) => {
+    <div className="soft-modal-overlay fixed inset-0 z-[60] flex items-center justify-center px-4" onClick={(event) => {
       if (event.target === event.currentTarget) onClose()
     }}>
-      <section role="dialog" aria-modal="true" aria-label={title} className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[16px] border border-border bg-card shadow-2xl">
-        <header className="border-b border-border px-5 py-4">
+      <section role="dialog" aria-modal="true" aria-label={title} className="soft-modal-shell flex max-h-[90vh] w-full max-w-4xl flex-col">
+        <header className="soft-modal-header border-b px-5 py-4">
           <h3 className="text-lg font-black text-foreground">{title}</h3>
         </header>
         {children}
@@ -381,16 +383,16 @@ function YAMLEditModal({ open, value, dryRunPassed, submitting, onChange, onClos
           value={value}
           onChange={(event) => onChange(event.target.value)}
           spellCheck={false}
-          className="h-[58vh] min-h-[360px] w-full resize-none rounded-lg border border-border bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 outline-none transition focus:border-primary"
+          className="h-[58vh] min-h-[360px] w-full resize-none rounded-2xl border border-border bg-code p-4 font-mono text-xs leading-5 text-code-foreground outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/15"
         />
       </div>
-      <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-4">
-        <button type="button" onClick={onClose} disabled={submitting} className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-50">取消</button>
-        <button type="button" onClick={onDryRun} disabled={submitting || !value.trim()} className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-bold text-primary transition hover:bg-primary/15 disabled:opacity-50">
+      <footer className="soft-modal-footer flex flex-wrap items-center justify-end gap-2 border-t px-5 py-4">
+        <button type="button" onClick={onClose} disabled={submitting} className="soft-button border border-border bg-card px-4 py-2 text-sm font-bold text-foreground hover:bg-muted disabled:opacity-50">取消</button>
+        <button type="button" onClick={onDryRun} disabled={submitting || !value.trim()} className="soft-button inline-flex items-center gap-2 border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-bold text-primary hover:bg-primary/15 disabled:opacity-50">
           <CheckCircle2 size={16} aria-hidden="true" />
           {submitting ? '校验中' : 'Dry Run'}
         </button>
-        <button type="button" onClick={onSave} disabled={submitting || !dryRunPassed} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50">
+        <button type="button" onClick={onSave} disabled={submitting || !dryRunPassed} className="soft-button inline-flex items-center gap-2 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
           <Save size={16} aria-hidden="true" />
           {submitting ? '保存中' : '保存'}
         </button>

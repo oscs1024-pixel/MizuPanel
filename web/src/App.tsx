@@ -1,7 +1,8 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 
-import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
+import { createInstallCommand, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, setUnauthorizedHandler, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './api/client'
 import { BrandLogo } from './components/BrandLogo'
 import { MetricCard } from './components/MetricCard'
 import { formatBytes, formatPercent, formatSpeed } from './lib/format'
@@ -15,7 +16,7 @@ import { TerminalPage } from './pages/TerminalPage'
 import { K8sClustersPage } from './pages/K8sClustersPage'
 import { K8sClusterDetailPage } from './pages/K8sClusterDetailPage'
 import ConnectK8sClusterModal from './components/ConnectK8sClusterModal'
-import type { DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse, SSHAuthType, SSHProgressEvent } from './types'
+import type { DockerContainer, DockerSnapshotResponse, InstallPlatform, Metric, Node, ProcessSnapshotResponse, RangeOption, SettingsResponse } from './types'
 
 function decodeRouteNodeID(value?: string) {
   if (!value) return undefined
@@ -76,22 +77,6 @@ const rangeSeconds: Record<RangeOption, number> = {
 }
 
 const orderedRanges: RangeOption[] = ['1h', '6h', '24h', '3d', '7d']
-
-type SSHProgressEventLog = SSHProgressEvent & { logs: string[] }
-
-function mergeSSHProgressEvent(current: SSHProgressEventLog[], progress: SSHProgressEvent): SSHProgressEventLog[] {
-  const index = current.findIndex((event) => event.step === progress.step)
-  if (index === -1) {
-    return [...current, { ...progress, logs: progress.message ? [progress.message] : [] }]
-  }
-  const next = [...current]
-  const existing = next[index]
-  const logs = progress.message && existing.logs[existing.logs.length - 1] !== progress.message
-    ? [...existing.logs, progress.message]
-    : existing.logs
-  next[index] = { ...existing, ...progress, logs }
-  return next
-}
 
 function largestAllowedRange(seconds: number): RangeOption {
   const allowed = orderedRanges.filter((option) => rangeSeconds[option] <= seconds)
@@ -157,19 +142,6 @@ export default function App() {
   const [installToken, setInstallToken] = useState<string>()
   const [installCommandLoading, setInstallCommandLoading] = useState(false)
   const [installCommandOpen, setInstallCommandOpen] = useState(false)
-  const [installMethod, setInstallMethod] = useState<'ssh' | 'manual'>('ssh')
-  const [sshHost, setSSHHost] = useState('')
-  const [sshPort, setSSHPort] = useState(22)
-  const [sshAuthType, setSSHAuthType] = useState<SSHAuthType>('password')
-  const [sshPassword, setSSHPassword] = useState('')
-  const [sshPrivateKey, setSSHPrivateKey] = useState('')
-  const [sshPassphrase, setSSHPassphrase] = useState('')
-  const [sshNodeID, setSSHNodeID] = useState('')
-  const [sshNodeName, setSSHNodeName] = useState('')
-  const [sshInstallLoading, setSSHInstallLoading] = useState(false)
-  const [sshInstallMessage, setSSHInstallMessage] = useState<string>()
-  const [sshInstallError, setSSHInstallError] = useState<string>()
-  const [sshInstallEvents, setSSHInstallEvents] = useState<SSHProgressEventLog[]>([])
   const [settings, setSettings] = useState<SettingsResponse>()
   const [settingsRetention, setSettingsRetention] = useState<RangeOption>('6h')
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -482,18 +454,6 @@ export default function App() {
     setInstallCommandError(undefined)
     setInstallCommandCopied(false)
     setInstallCommandLoading(false)
-    setSSHHost('')
-    setSSHPort(22)
-    setSSHAuthType('password')
-    setSSHPassword('')
-    setSSHPrivateKey('')
-    setSSHPassphrase('')
-    setSSHNodeID('')
-    setSSHNodeName('')
-    setSSHInstallLoading(false)
-    setSSHInstallMessage(undefined)
-    setSSHInstallError(undefined)
-    setSSHInstallEvents([])
     setInstallCommandOpen(false)
     addHostButtonRef.current?.focus()
   }
@@ -530,56 +490,14 @@ export default function App() {
 
   const showInstallCommand = () => {
     setInstallCommandOpen(true)
-    setInstallMethod('ssh')
-  }
-
-  const selectInstallMethod = (method: 'ssh' | 'manual') => {
-    setInstallMethod(method)
-    if (method === 'manual' && !installCommand) {
-      setInstallPlatform('linux')
-      requestInstallCommand('linux')
-    }
+    setInstallPlatform('linux')
+    requestInstallCommand('linux')
   }
 
   const selectInstallPlatform = (platform: InstallPlatform) => {
     if (platform === installPlatform) return
     setInstallPlatform(platform)
     requestInstallCommand(platform)
-  }
-
-  const subscribeSSHInstallProgress = (jobID: string) => {
-    const source = new EventSource(`/api/install/ssh/${encodeURIComponent(jobID)}/events`)
-    source.onmessage = (event) => {
-      const progress = JSON.parse(event.data) as SSHProgressEvent
-      setSSHInstallEvents((current) => mergeSSHProgressEvent(current, progress))
-      if (progress.done) source.close()
-    }
-    source.onerror = () => source.close()
-  }
-
-  const startSSHInstallJob = () => {
-    setSSHInstallLoading(true)
-    setSSHInstallMessage(undefined)
-    setSSHInstallError(undefined)
-    setSSHInstallEvents([])
-    startSSHInstall({
-      host: sshHost.trim(),
-      port: sshPort || 22,
-      username: 'root',
-      auth_type: sshAuthType,
-      ...(sshAuthType === 'password' ? { password: sshPassword } : { private_key: sshPrivateKey, ...(sshPassphrase ? { passphrase: sshPassphrase } : {}) }),
-      node_id: sshNodeID.trim(),
-      name: sshNodeName.trim(),
-      enable_terminal: true,
-      enable_docker: true,
-      mode: 'ops'
-    })
-      .then((response) => {
-        setSSHInstallMessage(`SSH 安装任务已创建：${response.job_id}`)
-        subscribeSSHInstallProgress(response.job_id)
-      })
-      .catch((err: unknown) => setSSHInstallError(err instanceof Error ? err.message : 'SSH 安装任务创建失败'))
-      .finally(() => setSSHInstallLoading(false))
   }
 
   const openPage = (nextPage: AppPage) => {
@@ -656,20 +574,20 @@ export default function App() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
-        <div className="rounded-[28px] border border-border bg-card px-6 py-5 text-sm font-black text-muted-foreground shadow-glass">正在加载节点...</div>
+      <main className="soft-page flex min-h-screen items-center justify-center px-4 text-foreground">
+        <div className="soft-panel px-6 py-5 text-sm font-black text-muted-foreground">正在加载节点...</div>
       </main>
     )
   }
 
   if (authEnabled && !authenticated) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+      <main className="soft-page flex min-h-screen items-center justify-center px-4 text-foreground">
         <div
           role="dialog"
           aria-modal="true"
           aria-label="登录 MizuPanel"
-          className="w-full max-w-md rounded-[28px] border border-border bg-card p-6 shadow-glass"
+          className="soft-modal-shell w-full max-w-md p-6"
         >
           <h1 className="text-2xl font-black text-foreground">登录 MizuPanel</h1>
           <p className="mt-2 text-sm font-semibold text-muted-foreground">请使用管理员账号登录以继续。</p>
@@ -681,7 +599,7 @@ export default function App() {
                 type="text"
                 value={loginUsername}
                 onChange={(event) => setLoginUsername(event.target.value)}
-                className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
+                className="soft-input mt-1 min-h-10 w-full px-3 text-sm font-bold"
               />
             </label>
             <label className="block text-sm font-black text-foreground">
@@ -692,7 +610,7 @@ export default function App() {
                 value={loginPassword}
                 onChange={(event) => setLoginPassword(event.target.value)}
                 onKeyDown={(event) => event.key === 'Enter' && handleLogin()}
-                className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20"
+                className="soft-input mt-1 min-h-10 w-full px-3 text-sm font-bold"
               />
             </label>
             {error ? (
@@ -709,7 +627,7 @@ export default function App() {
               type="button"
               onClick={handleLogin}
               disabled={loginLoading}
-              className="min-h-11 w-full cursor-pointer rounded-2xl bg-primary px-4 text-sm font-black text-primary-foreground shadow-sm transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="soft-button min-h-11 w-full cursor-pointer bg-primary px-4 text-sm font-black text-primary-foreground shadow-sm hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loginLoading ? '登录中...' : '登录'}
             </button>
@@ -728,7 +646,7 @@ export default function App() {
   }
 
   const installCommandDialog = installCommandOpen ? (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-code/35 px-3 py-6">
+    <div className="soft-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-3 py-6">
       <section
         id="agent-install-command"
         ref={installCommandDialogRef}
@@ -738,151 +656,48 @@ export default function App() {
         aria-live="polite"
         tabIndex={-1}
         onKeyDown={handleInstallCommandKeyDown}
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-border bg-card text-left shadow-2xl outline-none"
+        className="soft-modal-shell flex max-h-[90vh] w-full max-w-4xl flex-col text-left outline-none"
       >
-      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+      <div className="soft-modal-header flex shrink-0 items-start justify-between gap-3 border-b px-4 py-3">
         <div className="min-w-0">
           <p className="text-sm font-black text-foreground">添加主机</p>
-          <p className="mt-1 text-xs font-semibold text-muted-foreground">通过 SSH 自动安装，或复制手动命令到目标机器执行；SSH 凭据只本次使用，不会保存。</p>
+          <p className="mt-1 text-xs font-semibold text-muted-foreground">复制安装命令到目标机器执行，Agent 会自动生成节点身份并连接到 MizuPanel。</p>
         </div>
         <button
           type="button"
           aria-label="关闭"
           onClick={closeInstallCommand}
-          className="shrink-0 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-black text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
+          className="soft-button inline-flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-card text-muted-foreground hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
         >
-          ✕
+          <X size={16} aria-hidden="true" />
         </button>
       </div>
       <div className="overflow-y-auto px-4 py-3">
-          <div className="flex w-fit rounded-2xl border border-border bg-card p-1 shadow-inner" aria-label="选择添加主机方式">
-            {([
-              ['ssh', 'SSH 自动安装'],
-              ['manual', '手动命令安装']
-            ] as const).map(([method, label]) => (
-              <button
-                key={method}
-                type="button"
-                aria-pressed={installMethod === method}
-                onClick={() => selectInstallMethod(method)}
-                className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-primary/20 ${installMethod === method ? 'bg-code text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {installMethod === 'ssh' ? (
-            <div className="mt-3 grid gap-3 rounded-[24px] border border-border bg-card p-3 lg:grid-cols-2">
-              <label className="text-xs font-black text-foreground">
-                SSH Host
-                <input aria-label="SSH Host" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="192.168.1.10" className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-              </label>
-              <label className="text-xs font-black text-foreground">
-                SSH 端口
-                <input aria-label="SSH 端口" type="number" value={sshPort} onChange={(event) => setSSHPort(Number(event.target.value) || 22)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-              </label>
-              <label className="text-xs font-black text-foreground">
-                SSH 用户
-                <input aria-label="SSH 用户" value="root" readOnly className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-muted px-3 text-sm font-black text-muted-foreground" />
-              </label>
-              <label className="text-xs font-black text-foreground">
-                认证方式
-                <select aria-label="SSH 认证方式" value={sshAuthType} onChange={(event) => setSSHAuthType(event.target.value as SSHAuthType)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20">
-                  <option value="password">密码</option>
-                  <option value="private_key">私钥</option>
-                </select>
-              </label>
-              {sshAuthType === 'password' ? (
-                <label className="text-xs font-black text-foreground lg:col-span-2">
-                  SSH 密码
-                  <input aria-label="SSH 密码" type="password" value={sshPassword} onChange={(event) => setSSHPassword(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-                </label>
-              ) : (
-                <>
-                  <label className="text-xs font-black text-foreground lg:col-span-2">
-                    SSH 私钥
-                    <textarea aria-label="SSH 私钥" value={sshPrivateKey} onChange={(event) => setSSHPrivateKey(event.target.value)} rows={4} className="mt-1 w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-                  </label>
-                  <label className="text-xs font-black text-foreground lg:col-span-2">
-                    私钥 Passphrase（可选）
-                    <input aria-label="私钥 Passphrase" type="password" value={sshPassphrase} onChange={(event) => setSSHPassphrase(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-                  </label>
-                </>
-              )}
-              <label className="text-xs font-black text-foreground">
-                节点 ID
-                <input aria-label="节点 ID" value={sshNodeID} onChange={(event) => setSSHNodeID(event.target.value)} placeholder="node-1" className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-              </label>
-              <label className="text-xs font-black text-foreground">
-                节点名称
-                <input aria-label="节点名称" value={sshNodeName} onChange={(event) => setSSHNodeName(event.target.value)} placeholder="Oracle SG" className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/20" />
-              </label>
-              <div className="lg:col-span-2 rounded-2xl border border-success/30 bg-success/10 px-3 py-2 text-xs font-bold leading-5 text-success">
-                默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。
-              </div>
-              <div className="lg:col-span-2">
-                <button type="button" onClick={startSSHInstallJob} disabled={sshInstallLoading} className="min-h-11 cursor-pointer rounded-2xl bg-success px-4 text-xs font-black text-primary-foreground shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50">
-                  {sshInstallLoading ? '正在创建 SSH 安装任务...' : '开始 SSH 安装'}
-                </button>
-                {sshInstallMessage ? <p className="mt-2 rounded-2xl border border-success/30 bg-success/10 px-3 py-2 text-xs font-black text-success">{sshInstallMessage}</p> : null}
-                {sshInstallError ? <p className="mt-2 rounded-2xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-black text-danger">{sshInstallError}</p> : null}
-              </div>
-              {sshInstallEvents.length > 0 ? (
-                <div className="lg:col-span-2 rounded-2xl border border-border bg-card p-3 shadow-inner">
-                  <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">安装进度</p>
-                  <ol className="space-y-2">
-                    {sshInstallEvents.map((event) => (
-                      <li key={event.step} className="flex items-start gap-3 rounded-2xl bg-surface px-3 py-2">
-                        <span className={`mt-0.5 h-3 w-3 rounded-full ${event.status === 'success' ? 'bg-success' : event.status === 'failed' ? 'bg-danger' : event.status === 'running' ? 'bg-info' : 'bg-muted-foreground'}`} />
-                        <span className="min-w-0">
-                          <span className="block text-xs font-black text-foreground">{event.label}</span>
-                          <span className="block text-xs font-black text-muted-foreground">{event.status === 'success' ? '成功' : event.status === 'failed' ? '失败' : event.status === 'running' ? '进行中' : '待执行'}</span>
-                          {event.logs.length > 0 ? (
-                            <span className="mt-1 block space-y-1">
-                              {event.logs.map((log, index) => <span key={`${event.step}-${index}`} className="block break-words text-xs font-semibold leading-5 text-muted-foreground">{log}</span>)}
-                            </span>
-                          ) : null}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                  {sshInstallEvents.length > 0 && sshInstallEvents.every((e) => e.status === 'success' || e.status === 'failed') ? (
-                    <button type="button" onClick={closeInstallCommand} className="mt-3 min-h-10 cursor-pointer rounded-2xl bg-success px-4 text-xs font-black text-primary-foreground shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20">
-                      关闭
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {installMethod === 'manual' ? (
-            <>
-              <div className="mt-3 rounded-2xl border border-border bg-card p-3">
+              <div className="soft-card p-3">
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-success">简化状态</p>
                 <ol className="mt-3 space-y-2">
-                  <li className="flex items-start gap-3 rounded-2xl bg-card px-3 py-2">
+                  <li className="flex items-start gap-3 rounded-2xl bg-surface/70 px-3 py-2">
                     <span className="mt-0.5 h-3 w-3 rounded-full bg-success" />
                     <span className="min-w-0">
                       <span className="block text-xs font-black text-foreground">已生成一次性 install_token</span>
                       <span className="block text-xs font-bold text-muted-foreground">{installToken || '等待生成'}</span>
                     </span>
                   </li>
-                  <li className="flex items-start gap-3 rounded-2xl bg-card px-3 py-2">
+                  <li className="flex items-start gap-3 rounded-2xl bg-surface/70 px-3 py-2">
                     <span className="mt-0.5 h-3 w-3 rounded-full bg-info" />
                     <span className="min-w-0">
                       <span className="block text-xs font-black text-foreground">等待在目标机器执行命令</span>
                       <span className="block text-xs font-bold text-muted-foreground">复制命令到目标机器后执行即可。</span>
                     </span>
                   </li>
-                  <li className="flex items-start gap-3 rounded-2xl bg-card px-3 py-2">
+                  <li className="flex items-start gap-3 rounded-2xl bg-surface/70 px-3 py-2">
                     <span className="mt-0.5 h-3 w-3 rounded-full bg-muted-foreground" />
                     <span className="min-w-0">
                       <span className="block text-xs font-black text-foreground">等待 Agent 首次注册</span>
                       <span className="block text-xs font-bold text-muted-foreground">安装完成后，Agent 会自动连接到 MizuPanel。</span>
                     </span>
                   </li>
-                  <li className="flex items-start gap-3 rounded-2xl bg-card px-3 py-2">
+                  <li className="flex items-start gap-3 rounded-2xl bg-surface/70 px-3 py-2">
                     <span className="mt-0.5 h-3 w-3 rounded-full bg-code" />
                     <span className="min-w-0">
                       <span className="block text-xs font-black text-foreground">Agent 已连接，安装成功</span>
@@ -893,20 +708,20 @@ export default function App() {
                 <p className="mt-3 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-bold leading-5 text-warning">超时未连接时，请检查 server_url、防火墙或 Agent 日志。</p>
               </div>
 
-              <div className="mt-3 flex w-fit rounded-2xl border border-border bg-card p-1 shadow-inner" aria-label="选择 Agent 安装系统">
+              <div className="soft-toolbar mt-3 flex w-fit p-1" aria-label="选择 Agent 安装系统">
                 {(['linux', 'windows'] as const).map((platform) => (
                   <button
                     key={platform}
                     type="button"
                     aria-pressed={installPlatform === platform}
                     onClick={() => selectInstallPlatform(platform)}
-                    className={`min-h-9 cursor-pointer rounded-xl px-4 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-primary/20 ${installPlatform === platform ? 'bg-code text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                    className={`soft-button min-h-9 cursor-pointer px-4 text-xs font-black focus:outline-none focus:ring-4 focus:ring-primary/20 ${installPlatform === platform ? 'bg-code text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                   >
                     {platform === 'linux' ? 'Linux' : 'Windows'}
                   </button>
                 ))}
               </div>
-              <div className="mt-3 rounded-2xl border border-border bg-card px-3 py-2 shadow-inner">
+              <div className="soft-card mt-3 px-3 py-2">
                 {installPlatform === 'linux' ? (
                   <p className="text-xs font-bold leading-5 text-success">默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。</p>
                 ) : (
@@ -920,7 +735,7 @@ export default function App() {
                   aria-label={installCommandCopied ? '已复制' : '复制安装命令'}
                   onClick={copyInstallCommand}
                   disabled={!installCommand}
-                  className="min-h-10 cursor-pointer rounded-2xl bg-success px-4 text-xs font-black text-primary-foreground shadow-sm transition hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+                  className="soft-button min-h-10 cursor-pointer bg-success px-4 text-xs font-black text-primary-foreground shadow-sm hover:brightness-95 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
                 >
                   {installCommandCopied ? '已复制' : '复制'}
                 </button>
@@ -928,7 +743,7 @@ export default function App() {
                   type="button"
                   aria-label="关闭安装命令"
                   onClick={closeInstallCommand}
-                  className="min-h-10 cursor-pointer rounded-2xl border border-border bg-card px-4 text-xs font-black text-muted-foreground transition hover:border-success/50 hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
+                  className="soft-button min-h-10 cursor-pointer border border-border bg-card px-4 text-xs font-black text-muted-foreground hover:border-success/50 hover:text-foreground focus:outline-none focus:ring-4 focus:ring-primary/20"
                 >
                   关闭
                 </button>
@@ -954,8 +769,6 @@ export default function App() {
               <div className="border-t border-border bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-warning">
                 token 来源：点击添加主机时，Server 会自动生成一次性 install_token。
               </div>
-            </>
-          ) : null}
       </div>
       </section>
     </div>
@@ -967,7 +780,7 @@ export default function App() {
   const averageLoad = latestMetrics.length === 0 ? 0 : latestMetrics.reduce((sum, metric) => sum + metric.load1, 0) / latestMetrics.length
   const contentCopy = pageCopy[page]
   const hostContent = (
-    <div data-testid="host-page-container" className="mx-auto flex w-full max-w-[1400px] flex-col gap-3">
+    <div data-testid="host-page-container" className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <TopStatCard title="节点总数" value={String(nodes.length)} subtitle={`在线 ${onlineNodes} · 离线 ${nodes.length - onlineNodes}`} tone="blue" />
         <TopStatCard title="平均 CPU" value={formatPercent(averages.cpu)} subtitle="最新采样" tone="green" sparklineData={hostMetricsHistory.map(h => h.cpu)} />
@@ -977,7 +790,7 @@ export default function App() {
       </section>
 
       {nodes.length === 0 ? (
-        <section className="rounded-[14px] border border-dashed border-border bg-card px-6 py-12 text-center shadow-sm">
+        <section className="soft-empty-state px-6 py-12 text-center">
           <p className="font-display text-3xl font-black text-foreground">暂无节点接入</p>
           <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">在目标服务器执行 Agent 安装命令后，节点会自动出现在这里。</p>
           <button
@@ -986,14 +799,14 @@ export default function App() {
             onClick={showInstallCommand}
             aria-expanded={installCommandOpen}
             aria-controls="agent-install-command"
-            className="mt-6 min-h-11 cursor-pointer rounded-xl bg-primary px-5 text-sm font-black text-primary-foreground shadow-sm transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20"
+            className="soft-button mt-6 min-h-11 cursor-pointer bg-primary px-5 text-sm font-black text-primary-foreground shadow-sm hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20"
           >
             安装目标主机 Agent 进行采集
           </button>
         </section>
       ) : (
         <div data-testid="host-main-grid" className="grid min-w-0 gap-3 xl:grid-cols-[320px_minmax(0,1fr)] xl:items-start">
-          <section data-testid="host-list-panel" className="min-w-0 rounded-[14px] border border-border bg-card p-3 shadow-sm xl:w-[320px]">
+          <section data-testid="host-list-panel" className="soft-panel min-w-0 p-3 xl:w-[320px]">
             <div className="mb-3 min-w-0">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">主机</p>
               <h2 className="mt-1 text-lg font-black tracking-tight text-foreground">主机</h2>
@@ -1004,7 +817,7 @@ export default function App() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索主机..."
-              className="min-h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-semibold text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-4 focus:ring-primary/15"
+              className="soft-input min-h-10 w-full px-3 text-sm font-semibold placeholder:text-muted-foreground"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2" role="toolbar" aria-label="主机筛选与操作">
               <button type="button" aria-pressed={hostFilter === 'all'} onClick={() => setHostFilter('all')} className={hostFilterButtonClass('all', 'bg-foreground text-background shadow-sm focus:ring-primary/20', 'border border-border bg-card text-muted-foreground hover:text-foreground focus:ring-border')}>全部 {nodes.length}</button>
@@ -1017,7 +830,7 @@ export default function App() {
                 aria-label="添加主机"
                 aria-expanded={installCommandOpen}
                 aria-controls="agent-install-command"
-                className="ml-auto flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-primary text-lg font-black text-primary-foreground shadow-sm transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20"
+                className="soft-button ml-auto flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center bg-primary text-lg font-black text-primary-foreground shadow-sm hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-primary/20"
               >
                 +
               </button>
@@ -1026,7 +839,7 @@ export default function App() {
               {filteredNodes.length > 0 ? (
                 <NodeList nodes={filteredNodes} selectedNodeID={selectedNodeID} onSelectNode={(node) => setSelectedNodeID(node.id)} />
               ) : (
-                <div className="rounded-xl border border-dashed border-border bg-surface p-5 text-center">
+                <div className="soft-empty-state p-5 text-center">
                   <p className="text-sm font-black text-foreground">未找到匹配主机</p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">请调整筛选或搜索关键词。</p>
                 </div>
@@ -1044,13 +857,13 @@ export default function App() {
   )
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="soft-page min-h-screen text-foreground">
       <div className="flex min-h-screen">
         <div className={`sticky top-0 hidden h-screen shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block relative ${sidebarCollapsed ? 'w-[72px]' : 'w-[232px]'}`}>
           <aside
             aria-label="MizuPanel 侧边栏"
             data-collapsed={sidebarCollapsed ? 'true' : 'false'}
-            className="flex h-full w-full overflow-hidden flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none"
+            className="soft-sidebar flex h-full w-full overflow-hidden flex-col border-r border-sidebar-border text-sidebar-foreground transition-[width] duration-300 ease-in-out motion-reduce:transition-none"
           >
             <div className={`flex h-16 items-center border-b border-sidebar-border transition-[padding,justify-content] duration-300 ease-in-out motion-reduce:transition-none ${sidebarCollapsed ? 'justify-center px-2' : 'justify-start px-4'}`}>
               <div className="flex min-w-0 items-center gap-3 overflow-hidden">
@@ -1071,7 +884,7 @@ export default function App() {
                     title={item.label}
                     aria-current={active ? 'page' : undefined}
                     onClick={() => openPage(item.page)}
-                    className={`flex min-h-11 cursor-pointer items-center rounded-xl text-sm font-black transition-[background-color,color,box-shadow,gap,padding] duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-primary/20 motion-reduce:transition-none ${active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm' : 'text-sidebar-foreground hover:bg-muted hover:text-foreground'} ${sidebarCollapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-3'}`}
+                    className={`soft-button flex min-h-11 cursor-pointer items-center text-sm font-black transition-[background-color,color,box-shadow,gap,padding] duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-primary/20 motion-reduce:transition-none ${active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm' : 'text-sidebar-foreground hover:bg-muted hover:text-foreground'} ${sidebarCollapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-3'}`}
                   >
                     <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-current"><NavIcon name={item.icon} /></span>
                     <span data-testid="sidebar-nav-label" className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-in-out motion-reduce:transition-none ${sidebarCollapsed ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[140px] translate-x-0 opacity-100'}`}>{item.label}</span>
@@ -1092,7 +905,7 @@ export default function App() {
         </div>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 border-b border-header-border bg-header/95 px-4 py-3 backdrop-blur md:px-6">
+          <header className="soft-topbar sticky top-0 z-20 border-b border-header-border px-4 py-3 backdrop-blur md:px-6">
             <nav aria-label="移动端导航" className="mb-3 flex gap-2 overflow-x-auto md:hidden">
               {navItems.map((item) => (
                 <button
@@ -1116,20 +929,20 @@ export default function App() {
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="min-h-9 cursor-pointer rounded-xl border border-border bg-card px-3 text-xs font-black text-muted-foreground transition hover:border-danger/50 hover:text-danger focus:outline-none focus:ring-4 focus:ring-primary/20"
+                      className="soft-button min-h-9 cursor-pointer border border-border bg-card px-3 text-xs font-black text-muted-foreground hover:border-danger/50 hover:text-danger focus:outline-none focus:ring-4 focus:ring-primary/20"
                     >
                       退出登录
                     </button>
                   </div>
                 ) : null}
-                <div className="flex rounded-xl border border-border bg-card p-1" aria-label="主题切换">
+                <div className="soft-toolbar flex p-1" aria-label="主题切换">
                   {(['light', 'dark'] as const).map((item) => (
                     <button
                       key={item}
                       type="button"
                       onClick={() => setTheme(item)}
                       aria-pressed={theme === item}
-                      className={`inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs font-black transition focus:outline-none focus:ring-4 focus:ring-primary/20 ${theme === item ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                      className={`soft-button inline-flex min-h-9 cursor-pointer items-center gap-2 px-3 text-xs font-black focus:outline-none focus:ring-4 focus:ring-primary/20 ${theme === item ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                     >
                       {item === 'light' ? <SunIcon /> : <MoonIcon />}
                       {item === 'light' ? 'Light' : 'Dark'}
@@ -1179,20 +992,20 @@ export default function App() {
                   </>
                 )
               ) : page === 'logs' ? (
-                <section className="rounded-2xl border border-border bg-card p-5 shadow-glass">
+                <section className="soft-panel p-5">
                   <div className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <h2 className="text-xl font-black text-foreground">日志控制台</h2>
                       <p className="mt-1 text-sm font-semibold text-muted-foreground">保留日志控制台结构，等待后端日志接口接入。</p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <input aria-label="搜索日志" placeholder="搜索日志..." className="min-h-10 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-4 focus:ring-primary/15" />
-                      <select aria-label="日志级别" className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm font-black text-foreground outline-none focus:border-primary focus:ring-4 focus:ring-primary/15">
+                      <input aria-label="搜索日志" placeholder="搜索日志..." className="soft-input min-h-10 px-4 text-sm font-semibold placeholder:text-muted-foreground" />
+                      <select aria-label="日志级别" className="soft-input min-h-10 px-3 text-sm font-black">
                         <option>全部级别</option>
                       </select>
                     </div>
                   </div>
-                  <div className="mt-5 rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
+                  <div className="soft-empty-state mt-5 px-6 py-16 text-center">
                     <p className="text-2xl font-black text-foreground">等待日志接口接入</p>
                     <p className="mx-auto mt-3 max-w-xl text-sm font-semibold leading-6 text-muted-foreground">当前不请求新接口、不展示模拟日志；接入真实日志 API 后这里会显示可搜索、可筛选的节点日志。</p>
                   </div>
@@ -1220,7 +1033,7 @@ function TopStatCard({ title, value, subtitle, tone, sparklineData }: { title: s
   const hasSparkline = sparklineData && sparklineData.length > 0
 
   return (
-    <div className="h-[96px] rounded-[14px] border border-border bg-card p-4 shadow-sm">
+    <div className="soft-stat-card h-[96px] p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="truncate text-xs font-black text-muted-foreground">{title}</p>
         <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />

@@ -7,13 +7,17 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/mizupanel/mizupanel/internal/protocol"
 )
@@ -61,6 +65,204 @@ users:
 	message := err.Error()
 	if !strings.Contains(message, "exec") && !strings.Contains(message, "认证插件") {
 		t.Fatalf("expected error to mention exec or 认证插件, got %q", message)
+	}
+}
+
+func TestGetNodesIncludesCapacityAndAllocatableResources(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "master01",
+			Labels: map[string]string{"node-role.kubernetes.io/control-plane": ""},
+		},
+		Spec: corev1.NodeSpec{PodCIDR: "10.42.0.0/24"},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
+				corev1.ResourcePods:   resource.MustParse("110"),
+			},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("3900m"),
+				corev1.ResourceMemory: resource.MustParse("7Gi"),
+				corev1.ResourcePods:   resource.MustParse("100"),
+			},
+			Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.168.98.10"}},
+			Conditions: []corev1.NodeCondition{{
+				Type:   corev1.NodeReady,
+				Status: corev1.ConditionTrue,
+			}},
+			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.28.15"},
+		},
+	}
+	client := &Client{clientset: k8sfake.NewSimpleClientset(node)}
+
+	nodes, err := client.GetNodes(t.Context())
+	if err != nil {
+		t.Fatalf("get nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %#v", nodes)
+	}
+	got := nodes[0]
+	if got.CPUCapacityMilli != 4000 || got.CPUAllocatableMilli != 3900 {
+		t.Fatalf("unexpected cpu capacity fields: %#v", got)
+	}
+	if got.MemoryCapacityBytes != 8*1024*1024*1024 || got.MemoryAllocatableBytes != 7*1024*1024*1024 {
+		t.Fatalf("unexpected memory capacity fields: %#v", got)
+	}
+	if got.PodCapacity != 110 || got.PodAllocatable != 100 {
+		t.Fatalf("unexpected pod capacity fields: %#v", got)
+	}
+}
+
+func TestGetProtocolPodsIncludesCurrentUsageAndResourceSpec(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-7d9f", Namespace: "payments"},
+		Spec: corev1.PodSpec{
+			NodeName: "node-a",
+			Containers: []corev1.Container{{
+				Name:  "api",
+				Image: "example/api:v1",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("128Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("500m"),
+						corev1.ResourceMemory: resource.MustParse("512Mi"),
+					},
+				},
+			}},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.42.0.11",
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "api",
+				Ready:        true,
+				RestartCount: 2,
+				State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			}},
+		},
+	}
+	podMetrics := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "metrics.k8s.io/v1beta1",
+			"kind":       "PodMetrics",
+			"metadata": map[string]interface{}{
+				"name":      "api-7d9f",
+				"namespace": "payments",
+			},
+			"containers": []interface{}{
+				map[string]interface{}{
+					"name": "api",
+					"usage": map[string]interface{}{
+						"cpu":    "37m",
+						"memory": "96Mi",
+					},
+				},
+			},
+		},
+	}
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{{Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"}: "PodMetricsList"},
+	)
+	dynamicClient.Fake.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*podMetrics}}, nil
+	})
+	client := &Client{
+		clientset: k8sfake.NewSimpleClientset(pod),
+		dynamic:   dynamicClient,
+	}
+
+	pods, err := client.GetProtocolPods(t.Context(), "payments")
+	if err != nil {
+		t.Fatalf("get pods: %v", err)
+	}
+	if len(pods) != 1 {
+		t.Fatalf("pods = %#v", pods)
+	}
+	got := pods[0]
+	if !got.MetricsAvailable || got.CPUUsageMilli != 37 || got.MemoryUsageBytes != 96*1024*1024 {
+		t.Fatalf("unexpected pod usage: %#v", got)
+	}
+	if len(got.Containers) != 1 {
+		t.Fatalf("containers = %#v", got.Containers)
+	}
+	container := got.Containers[0]
+	if container.Name != "api" || container.Image != "example/api:v1" || !container.Ready || container.RestartCount != 2 || container.State != "Running" {
+		t.Fatalf("unexpected container basics: %#v", container)
+	}
+	if container.CPUUsageMilli != 37 || container.MemoryUsageBytes != 96*1024*1024 || container.CPURequestMilli != 100 || container.CPULimitMilli != 500 || container.MemoryRequestBytes != 128*1024*1024 || container.MemoryLimitBytes != 512*1024*1024 {
+		t.Fatalf("unexpected container resources: %#v", container)
+	}
+}
+
+func TestGetProtocolPodsIncludesWorkloadOwner(t *testing.T) {
+	controller := true
+	deploymentPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-7d9f-abcde",
+			Namespace: "payments",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1",
+				Kind:       "ReplicaSet",
+				Name:       "api-7d9f",
+				Controller: &controller,
+			}},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api"}}},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: true}},
+		},
+	}
+	statefulSetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mysql-0",
+			Namespace: "payments",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1",
+				Kind:       "StatefulSet",
+				Name:       "mysql",
+				Controller: &controller,
+			}},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mysql"}}},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "mysql", Ready: true}},
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-7d9f",
+			Namespace: "payments",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "api",
+				Controller: &controller,
+			}},
+		},
+	}
+	client := &Client{clientset: k8sfake.NewSimpleClientset(deploymentPod, statefulSetPod, replicaSet)}
+
+	pods, err := client.GetProtocolPods(t.Context(), "payments")
+	if err != nil {
+		t.Fatalf("get pods: %v", err)
+	}
+	byName := make(map[string]protocol.K8sPod, len(pods))
+	for _, pod := range pods {
+		byName[pod.Name] = pod
+	}
+	if got := byName["api-7d9f-abcde"]; got.WorkloadKind != "deployment" || got.WorkloadName != "api" {
+		t.Fatalf("deployment pod owner = %#v, want deployment/api", got)
+	}
+	if got := byName["mysql-0"]; got.WorkloadKind != "statefulset" || got.WorkloadName != "mysql" {
+		t.Fatalf("statefulset pod owner = %#v, want statefulset/mysql", got)
 	}
 }
 
@@ -277,12 +479,103 @@ spec:
 	}
 }
 
+func TestApplyManifestDryRunCreatesMultiDocumentResources(t *testing.T) {
+	dynamicClient := &recordingDynamicClient{}
+	client := &Client{clientset: k8sfake.NewSimpleClientset(), dynamic: dynamicClient}
+	body := `apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: staging
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.27
+`
+
+	result, err := client.ApplyManifest(t.Context(), protocol.K8sApplyManifestRequest{RequestID: "req-apply", YAML: body, DryRun: true})
+	if err != nil {
+		t.Fatalf("dry-run create manifest: %v", err)
+	}
+	if !result.Success || result.Type != protocol.MessageTypeK8sApplyManifestResult || !strings.Contains(result.Message, "校验") {
+		t.Fatalf("unexpected dry-run result: %#v", result)
+	}
+	if len(dynamicClient.creates) != 2 {
+		t.Fatalf("expected two create calls, got %#v", dynamicClient.creates)
+	}
+	if dynamicClient.creates[0].resource.Resource != "namespaces" || dynamicClient.creates[0].namespace != "" || dynamicClient.creates[0].name != "staging" {
+		t.Fatalf("unexpected namespace create: %#v", dynamicClient.creates[0])
+	}
+	if dynamicClient.creates[1].resource.Resource != "deployments" || dynamicClient.creates[1].namespace != "staging" || dynamicClient.creates[1].name != "web" {
+		t.Fatalf("unexpected deployment create: %#v", dynamicClient.creates[1])
+	}
+	for _, item := range dynamicClient.creates {
+		if len(item.dryRun) != 1 || item.dryRun[0] != metav1.DryRunAll {
+			t.Fatalf("expected dry-run create option, got %#v", dynamicClient.creates)
+		}
+	}
+}
+
+func TestApplyManifestSupportsAdvancedNativeKindsFromCustomYAML(t *testing.T) {
+	client := &Client{clientset: k8sfake.NewSimpleClientset(), dynamic: &recordingDynamicClient{}}
+	body := `apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reader
+  namespace: default
+`
+
+	result, err := client.ApplyManifest(t.Context(), protocol.K8sApplyManifestRequest{YAML: body, DryRun: true})
+	if err != nil {
+		t.Fatalf("apply advanced native kind: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestApplyManifestRejectsUnknownCustomResourceInstance(t *testing.T) {
+	client := &Client{clientset: k8sfake.NewSimpleClientset(), dynamic: &recordingDynamicClient{}}
+	body := `apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: alpha
+  namespace: default
+`
+
+	_, err := client.ApplyManifest(t.Context(), protocol.K8sApplyManifestRequest{YAML: body, DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "不支持的资源类型") {
+		t.Fatalf("expected unsupported kind error, got %v", err)
+	}
+}
+
 type recordingDynamicClient struct {
 	resource  schema.GroupVersionResource
 	namespace string
 	name      string
 	patchType types.PatchType
 	data      []byte
+	dryRun    []string
+	creates   []recordedDynamicCreate
+}
+
+type recordedDynamicCreate struct {
+	resource  schema.GroupVersionResource
+	namespace string
+	name      string
 	dryRun    []string
 }
 
@@ -303,6 +596,12 @@ func (r *recordingDynamicResource) Namespace(namespace string) dynamic.ResourceI
 }
 
 func (r *recordingDynamicResource) Create(ctx context.Context, obj *unstructured.Unstructured, options metav1.CreateOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	r.client.creates = append(r.client.creates, recordedDynamicCreate{
+		resource:  r.client.resource,
+		namespace: r.namespace,
+		name:      obj.GetName(),
+		dryRun:    append([]string(nil), options.DryRun...),
+	})
 	return obj, nil
 }
 

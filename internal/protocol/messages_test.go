@@ -352,3 +352,39 @@ func TestK8sResourceActionMessagesJSON(t *testing.T) {
 		t.Fatalf("unexpected action result: %#v", gotResult)
 	}
 }
+
+func TestK8sApplyManifestMessagesJSON(t *testing.T) {
+	request := K8sApplyManifestRequest{
+		Type:              MessageTypeK8sApplyManifest,
+		RequestID:         "req-apply",
+		ClusterID:         "cluster-1",
+		YAML:              "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: staging\n",
+		DryRun:            true,
+		KubeconfigContent: "secret",
+		Context:           "prod",
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal apply request: %v", err)
+	}
+	var gotRequest K8sApplyManifestRequest
+	if err := json.Unmarshal(data, &gotRequest); err != nil {
+		t.Fatalf("unmarshal apply request: %v", err)
+	}
+	if gotRequest.Type != MessageTypeK8sApplyManifest || !gotRequest.DryRun || gotRequest.YAML == "" || gotRequest.KubeconfigContent != "secret" || gotRequest.Context != "prod" {
+		t.Fatalf("unexpected apply request: %#v", gotRequest)
+	}
+
+	result := K8sApplyManifestResult{Type: MessageTypeK8sApplyManifestResult, RequestID: "req-apply", Success: true, Message: "资源校验成功"}
+	data, err = json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal apply result: %v", err)
+	}
+	var gotResult K8sApplyManifestResult
+	if err := json.Unmarshal(data, &gotResult); err != nil {
+		t.Fatalf("unmarshal apply result: %v", err)
+	}
+	if gotResult.Type != MessageTypeK8sApplyManifestResult || !gotResult.Success || gotResult.Message != "资源校验成功" {
+		t.Fatalf("unexpected apply result: %#v", gotResult)
+	}
+}

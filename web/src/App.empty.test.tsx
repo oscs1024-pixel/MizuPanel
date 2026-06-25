@@ -90,7 +90,6 @@ describe('App empty state', () => {
     expect(installButton).toHaveAttribute('aria-expanded', 'false')
 
     fireEvent.click(installButton)
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     expect(await screen.findByText(/ws:\/\/panel\.example:8080\/api\/agent\/ws/)).toBeInTheDocument()
     expect(createInstallCommandMock).toHaveBeenCalledWith('linux')
@@ -154,7 +153,6 @@ describe('App empty state', () => {
 
     expect(await screen.findByText('暂无节点接入')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '安装目标主机 Agent 进行采集' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     const installDialog = await screen.findByRole('dialog', { name: '添加主机' })
     expect(await within(installDialog).findByText('安装命令生成失败')).toBeInTheDocument()

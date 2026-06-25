@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteNode, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
+import { createContainerExecSession, createInstallCommand, createTerminalSession, deleteAlertHistories, deleteAlertHistory, deleteNode, deleteNodePath, getAgentLogs, getAgentStatus, getAuthSession, getNodeDocker, getNodeFiles, getNodeMetrics, getNodeProcesses, getNodes, getSettings, login, logout, readNodeFile, rebootNode, resolveAlertHistory, restartAgent, startSSHInstall, startSSHUninstall, updateSettings, uploadNodeFile, writeNodeFile } from './client'
 
 describe('api client', () => {
   afterEach(() => {
@@ -263,6 +263,31 @@ describe('api client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/nodes/node%201/containers/container%2F1/exec/session', { method: 'POST' })
     expect(result.token).toBe('exec-token')
+  })
+
+  test('resolves alert history records', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 42, resolved_at: '2026-06-25T10:00:00Z' })))
+
+    const result = await resolveAlertHistory(42)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/alerts/history/42/resolve', { method: 'PATCH' })
+    expect(result.id).toBe(42)
+  })
+
+  test('deletes alert history records', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: 2 })))
+
+    await deleteAlertHistory(42)
+    await deleteAlertHistories([42, 43])
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/alerts/history/42', { method: 'DELETE' })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/alerts/history', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [42, 43] })
+    })
   })
 
   test('marks unauthorized API responses', async () => {

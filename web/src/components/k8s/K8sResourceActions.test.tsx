@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { executeK8sResourceAction } from '../../api/k8s'
-import { K8sResourceActions } from './K8sResourceActions'
+import { calculateK8sActionMenuPosition, K8sResourceActions } from './K8sResourceActions'
 
 vi.mock('../../api/k8s', () => ({
   executeK8sResourceAction: vi.fn(),
@@ -142,5 +142,24 @@ describe('K8sResourceActions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Deployment web 操作' }))
     await screen.findByRole('button', { name: '详情' })
     expect(screen.queryByRole('button', { name: '编辑 YAML' })).not.toBeInTheDocument()
+  })
+
+  test.each([
+    ['Pod', 3, true, 141],
+    ['Deployment', 3, true, 141],
+    ['StatefulSet', 3, true, 141],
+    ['DaemonSet', 2, true, 101],
+  ])('keeps the %s action menu inside the viewport near the bottom', (_label, actionCount, hasDivider, expectedHeight) => {
+    const position = calculateK8sActionMenuPosition(
+      { top: 560, bottom: 592, right: 760 },
+      actionCount,
+      hasDivider,
+      800,
+      600
+    )
+
+    expect(position.top).toBeLessThan(560)
+    expect(position.top).toBeGreaterThanOrEqual(8)
+    expect(position.top + expectedHeight).toBeLessThanOrEqual(600 - 8)
   })
 })

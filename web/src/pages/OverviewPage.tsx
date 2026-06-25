@@ -187,7 +187,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
   const serverNode = nodes[0]
 
   return (
-    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
       {/* 顶部统计卡片 */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -224,7 +224,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
       {/* 中间区域：资源趋势图 + 服务器状态 */}
       <section className="grid gap-3 lg:grid-cols-[1.5fr_1fr]">
         {/* 左侧：资源使用趋势（折线图） */}
-        <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+        <div className="soft-panel p-4">
           <p className="mb-2 text-xs font-semibold text-muted-foreground">资源使用趋势</p>
           <div className="flex items-start justify-between gap-3">
             {/* 左上角：三个指标按钮 */}
@@ -250,7 +250,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
               <select
                 value={timeRange}
                 onChange={(e) => setTimeRange(e.target.value as RangeOption)}
-                className="rounded-md border border-border bg-card px-2 py-1 text-xs font-semibold text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="soft-input rounded-md px-2 py-1 text-xs font-semibold"
               >
                 <option value="1h">1 小时</option>
                 <option value="6h">6 小时</option>
@@ -272,7 +272,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
                 loading={metricsLoading}
               />
             ) : (
-              <div className="flex h-48 items-center justify-center rounded-xl border border-dashed border-border bg-surface">
+              <div className="soft-empty-state flex h-48 items-center justify-center">
                 <p className="text-sm font-semibold text-muted-foreground">暂无在线节点数据</p>
               </div>
             )}
@@ -280,7 +280,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
         </div>
 
         {/* 右侧：服务器状态 */}
-        <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+        <div className="soft-panel p-4">
           <h2 className="mb-3 text-sm font-black uppercase tracking-[0.1em] text-muted-foreground">服务器状态</h2>
           <div className="space-y-2">
             {nodes.length > 0 ? (
@@ -288,7 +288,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
                 <ServerStatusCard key={node.id} node={node} />
               ))
             ) : (
-              <div className="rounded-xl border border-dashed border-border bg-surface p-8 text-center">
+              <div className="soft-empty-state p-8 text-center">
                 <p className="text-sm font-black text-muted-foreground">暂无节点</p>
               </div>
             )}
@@ -299,7 +299,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
       {/* 底部区域：活跃告警 + 系统信息 + 快捷操作 */}
       <section className="grid gap-3 lg:grid-cols-[40%_30%_30%]">
         {/* 左侧：活跃告警 */}
-        <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+        <div className="soft-panel p-4">
           <div className="mb-3 flex items-center gap-2">
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${
               alertHistory.length > 0 ? 'bg-red-50 text-red-600' : 'bg-muted text-muted-foreground'
@@ -314,8 +314,8 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
                 <AlertCard key={alert.id} alert={alert} />
               ))
             ) : (
-              <div className="rounded-xl border border-dashed border-success/30 bg-success/5 p-6 text-center">
-                <p className="text-sm font-black text-success">✓ 无活跃告警</p>
+              <div className="soft-empty-state border-success/30 bg-success/5 p-6 text-center">
+                <p className="text-sm font-black text-success">无活跃告警</p>
                 <p className="mt-1 text-xs font-semibold text-muted-foreground">所有监控指标正常</p>
               </div>
             )}
@@ -323,7 +323,7 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
         </div>
 
         {/* 中间：系统信息 */}
-        <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+        <div className="soft-panel p-4">
           <h2 className="mb-3 text-sm font-black uppercase tracking-[0.1em] text-muted-foreground">系统信息</h2>
           {serverNode ? (
             <div className="space-y-2">
@@ -350,14 +350,14 @@ export function OverviewPage({ nodes, onlineNodes }: OverviewPageProps) {
               />
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-center">
+            <div className="soft-empty-state p-6 text-center">
               <p className="text-sm font-black text-muted-foreground">暂无节点信息</p>
             </div>
           )}
         </div>
 
         {/* 右侧：快捷操作 */}
-        <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+        <div className="soft-panel p-4">
           <h2 className="mb-3 text-sm font-black uppercase tracking-[0.1em] text-muted-foreground">快捷操作</h2>
           <div className="grid grid-cols-2 gap-3">
             <QuickActionButton icon={<Plus size={24} />} label="添加服务器" color="blue" onClick={() => alert('添加服务器功能待实现')} />
@@ -427,7 +427,7 @@ function StatCard({
   const gradientId = `gradient-${tone}`
 
   return (
-    <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm">
+    <div className="soft-stat-card p-4">
       <div className="flex items-center gap-3">
         <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${iconBgClasses[actualIconTone]}`}>
           {icon}
@@ -476,7 +476,7 @@ function MetricDisplay({
 }) {
   if (!metric) {
     return (
-      <div className="rounded-xl border border-dashed border-border bg-surface p-8 text-center">
+      <div className="soft-empty-state p-8 text-center">
         <p className="text-sm font-black text-muted-foreground">暂无指标数据</p>
       </div>
     )
@@ -518,7 +518,7 @@ function MetricDisplay({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-4">
+    <div className="soft-card p-4">
       <div className="flex items-end justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.1em] text-muted-foreground">
@@ -589,7 +589,7 @@ function TrendChart({
 
   if (!avgMetric) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-border bg-surface">
+      <div className="soft-empty-state flex h-64 items-center justify-center">
         <p className="text-sm font-black text-muted-foreground">暂无指标数据</p>
       </div>
     )
@@ -751,7 +751,7 @@ function TrendChart({
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border bg-muted/50">
+          <div className="soft-empty-state flex h-full items-center justify-center">
             <p className="text-xs font-semibold text-muted-foreground">暂无历史数据</p>
           </div>
         )}
@@ -767,7 +767,7 @@ function ServerStatusCard({ node }: { node: Node }) {
   const statusGlow = node.status === 'online' ? 'shadow-[0_0_14px_rgb(var(--success)/0.45)]' : ''
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-3">
+    <div className="soft-card p-3 shadow-none">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -786,15 +786,15 @@ function ServerStatusCard({ node }: { node: Node }) {
       </div>
       {metric && (
         <div className="mt-2 grid grid-cols-3 gap-2">
-          <div className="rounded-lg border border-border bg-card px-2 py-1.5">
+          <div className="rounded-xl border border-border bg-surface/70 px-2 py-1.5">
             <p className="text-[9px] font-black uppercase tracking-[0.05em] text-muted-foreground">CPU</p>
             <p className="mt-0.5 text-xs font-black text-foreground">{formatPercent(metric.cpu_usage)}</p>
           </div>
-          <div className="rounded-lg border border-border bg-card px-2 py-1.5">
+          <div className="rounded-xl border border-border bg-surface/70 px-2 py-1.5">
             <p className="text-[9px] font-black uppercase tracking-[0.05em] text-muted-foreground">内存</p>
             <p className="mt-0.5 text-xs font-black text-foreground">{formatPercent(metric.memory_usage)}</p>
           </div>
-          <div className="rounded-lg border border-border bg-card px-2 py-1.5">
+          <div className="rounded-xl border border-border bg-surface/70 px-2 py-1.5">
             <p className="text-[9px] font-black uppercase tracking-[0.05em] text-muted-foreground">磁盘</p>
             <p className="mt-0.5 text-xs font-black text-foreground">{formatPercent(metric.disk_usage)}</p>
           </div>
@@ -830,7 +830,7 @@ function AlertCard({ alert }: { alert: AlertHistory }) {
   }
 
   return (
-    <div className="rounded-lg border border-danger/30 bg-danger/5 p-3">
+    <div className="rounded-2xl border border-danger/30 bg-danger/5 p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-black text-foreground">{alert.rule_name}</p>
@@ -849,7 +849,7 @@ function AlertCard({ alert }: { alert: AlertHistory }) {
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+    <div className="soft-card flex items-center justify-between gap-3 px-3 py-2 shadow-none">
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground">{icon}</span>
         <span className="text-xs font-black text-muted-foreground">{label}</span>
@@ -861,26 +861,26 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 
 function QuickActionButton({ icon, label, color, onClick }: { icon: React.ReactNode; label: string; color: string; onClick: () => void }) {
   const colorClasses = {
-    blue: 'bg-blue-50 hover:bg-blue-100 border-blue-200',
-    orange: 'bg-orange-50 hover:bg-orange-100 border-orange-200',
-    green: 'bg-green-50 hover:bg-green-100 border-green-200',
-    purple: 'bg-purple-50 hover:bg-purple-100 border-purple-200',
-    cyan: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200',
+    blue: 'bg-primary/5 hover:bg-primary/10 border-primary/20',
+    orange: 'bg-warning/5 hover:bg-warning/10 border-warning/20',
+    green: 'bg-success/5 hover:bg-success/10 border-success/20',
+    purple: 'bg-info/5 hover:bg-info/10 border-info/20',
+    cyan: 'bg-accent/5 hover:bg-accent/10 border-accent/20',
   }
 
   const iconColorClasses = {
-    blue: 'text-blue-600',
-    orange: 'text-orange-600',
-    green: 'text-green-600',
-    purple: 'text-purple-600',
-    cyan: 'text-cyan-600',
+    blue: 'text-primary',
+    orange: 'text-warning',
+    green: 'text-success',
+    purple: 'text-info',
+    cyan: 'text-accent',
   }
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-3 rounded-xl border p-4 transition focus:outline-none focus:ring-2 focus:ring-primary/20 ${colorClasses[color as keyof typeof colorClasses]}`}
+      className={`soft-button flex flex-col items-center justify-center gap-3 border p-4 focus:outline-none focus:ring-2 focus:ring-primary/20 ${colorClasses[color as keyof typeof colorClasses]}`}
     >
       <div className={`${iconColorClasses[color as keyof typeof iconColorClasses]}`}>
         {icon}

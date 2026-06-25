@@ -2,21 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from './App'
-import { APIError, createInstallCommand, getAuthSession, getNodes, login, logout, setUnauthorizedHandler, startSSHInstall } from './api/client'
-
-const eventSources: FakeEventSource[] = []
-
-class FakeEventSource extends EventTarget {
-  onmessage: ((event: MessageEvent) => void) | null = null
-  constructor(public url: string) {
-    super()
-    eventSources.push(this)
-  }
-  emit(data: unknown) {
-    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(data) }))
-  }
-  close() {}
-}
+import { APIError, createInstallCommand, getAuthSession, getNodes, login, logout, setUnauthorizedHandler } from './api/client'
 
 vi.mock('./api/client', () => ({
   APIError: class APIError extends Error {
@@ -92,9 +78,7 @@ vi.mock('./api/client', () => ({
 
 describe('App', () => {
   beforeEach(() => {
-    eventSources.length = 0
     vi.clearAllMocks()
-    vi.stubGlobal('EventSource', FakeEventSource)
   })
 
   test('renders dashboard title and node card without authentication', async () => {
@@ -166,60 +150,59 @@ describe('App', () => {
     expect(screen.getByText(/登录已过期/)).toBeInTheDocument()
   })
 
-  test('keeps manual command controls out of the SSH install tab and hides fixed install options', async () => {
+  test('opens add host directly in manual command mode and hides SSH install controls', async () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
     expect(await screen.findByRole('dialog', { name: '添加主机' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'SSH 自动安装' }))
 
-    expect(screen.getByLabelText('SSH Host')).toBeInTheDocument()
+    await waitFor(() => expect(createInstallCommand).toHaveBeenCalledWith('linux'))
+    expect(await screen.findByText('已生成一次性 install_token')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('button', { name: 'SSH 自动安装' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('SSH Host')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
     expect(screen.queryByText('Agent 运行模式')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /普通模式/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /运维模式/ })).not.toBeInTheDocument()
     expect(screen.getByText('默认以 root 运维模式安装，自动启用节点终端与 Docker 容器监控。')).toBeInTheDocument()
-    expect(screen.queryByLabelText('选择 Agent 安装系统')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '复制安装命令' })).not.toBeInTheDocument()
-    expect(screen.queryByText('token 来源：点击添加主机时，Server 会自动生成一次性 install_token。')).not.toBeInTheDocument()
-    expect(screen.queryByText('简化状态')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('选择 Agent 安装系统')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制安装命令' })).toBeInTheDocument()
+    expect(screen.getByText('token 来源：点击添加主机时，Server 会自动生成一次性 install_token。')).toBeInTheDocument()
   })
 
-  test('does not create manual install tokens while using the SSH install tab', async () => {
+  test('creates a fresh manual install token when the add host dialog opens', async () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
     expect(await screen.findByRole('dialog', { name: '添加主机' })).toBeInTheDocument()
-    await waitFor(() => expect(createInstallCommand).not.toHaveBeenCalled())
+    await waitFor(() => expect(createInstallCommand).toHaveBeenCalledWith('linux'))
 
     expect(screen.queryByLabelText('启用 Docker 容器监控')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('启用节点终端')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /运维模式/ })).not.toBeInTheDocument()
-    expect(createInstallCommand).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'SSH 自动安装' })).not.toBeInTheDocument()
   })
 
-  test('clears one-time SSH credentials when the add host dialog closes', async () => {
+  test('reopens the add host dialog with a fresh install command', async () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
-    fireEvent.change(await screen.findByLabelText('SSH Host'), { target: { value: '192.168.1.10' } })
-    fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'secret' } })
-    fireEvent.change(screen.getByLabelText('节点 ID'), { target: { value: 'node-ssh' } })
-    fireEvent.click(screen.getByRole('button', { name: '关闭添加主机' }))
+    await waitFor(() => expect(createInstallCommand).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: '关闭安装命令' }))
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
 
-    expect(screen.getByLabelText('SSH Host')).toHaveValue('')
-    expect(screen.getByLabelText('SSH 密码')).toHaveValue('')
-    expect(screen.getByLabelText('节点 ID')).toHaveValue('')
+    await waitFor(() => expect(createInstallCommand).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: 'Linux' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByLabelText('SSH Host')).not.toBeInTheDocument()
   })
 
-  test('shows simplified manual install status in the manual command tab', async () => {
+  test('shows simplified manual install status in the add host dialog', async () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
-    fireEvent.click(await screen.findByRole('button', { name: '手动命令安装' }))
 
     await waitFor(() => expect(createInstallCommand).toHaveBeenCalled())
     expect(await screen.findByText('已生成一次性 install_token')).toBeInTheDocument()
@@ -227,62 +210,5 @@ describe('App', () => {
     expect(screen.getByText('等待 Agent 首次注册')).toBeInTheDocument()
     expect(screen.getByText(/超时未连接时，请检查 server_url、防火墙或 Agent 日志/)).toBeInTheDocument()
     expect(screen.queryByLabelText('SSH Host')).not.toBeInTheDocument()
-  })
-
-  test('groups SSH install step logs and closes from the bottom after completion', async () => {
-    render(<App />)
-
-    fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
-    fireEvent.click(screen.getByRole('button', { name: 'SSH 自动安装' }))
-    fireEvent.change(screen.getByLabelText('SSH Host'), { target: { value: '192.168.1.10' } })
-    fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'secret' } })
-    fireEvent.change(screen.getByLabelText('节点 ID'), { target: { value: 'node-ssh' } })
-    fireEvent.change(screen.getByLabelText('节点名称'), { target: { value: 'SSH Node' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始 SSH 安装' }))
-
-    await waitFor(() => expect(startSSHInstall).toHaveBeenCalled())
-    act(() => {
-      eventSources[0].emit({ step: 'connect_ssh', label: '连接 SSH', status: 'running', message: '正在连接 root@192.168.1.10:22' })
-      eventSources[0].emit({ step: 'connect_ssh', label: '连接 SSH', status: 'success', message: 'SSH 已连接' })
-      eventSources[0].emit({ step: 'done', label: '完成', status: 'success', message: '任务已完成', done: true })
-    })
-
-    await waitFor(() => expect(screen.getByText('SSH 已连接')).toBeInTheDocument())
-    expect(screen.getByText('正在连接 root@192.168.1.10:22')).toBeInTheDocument()
-    expect(screen.getAllByText('连接 SSH')).toHaveLength(1)
-    expect(screen.getAllByText('成功').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: '完成并关闭' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加主机' })).not.toBeInTheDocument())
-  })
-
-  test('starts SSH root install from the add host dialog', async () => {
-    render(<App />)
-
-    fireEvent.click(await screen.findByRole('button', { name: '添加主机' }))
-    expect(await screen.findByRole('dialog', { name: '添加主机' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'SSH 自动安装' }))
-    fireEvent.change(screen.getByLabelText('SSH Host'), { target: { value: '192.168.1.10' } })
-    fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'secret' } })
-    fireEvent.change(screen.getByLabelText('节点 ID'), { target: { value: 'node-ssh' } })
-    fireEvent.change(screen.getByLabelText('节点名称'), { target: { value: 'SSH Node' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始 SSH 安装' }))
-
-    await waitFor(() => expect(startSSHInstall).toHaveBeenCalledWith(expect.objectContaining({
-      host: '192.168.1.10',
-      port: 22,
-      username: 'root',
-      auth_type: 'password',
-      password: 'secret',
-      node_id: 'node-ssh',
-      name: 'SSH Node',
-      enable_terminal: true,
-      enable_docker: true,
-      mode: 'ops'
-    })))
-    expect(await screen.findByText('SSH 安装任务已创建：ssh-install-1')).toBeInTheDocument()
-    expect(eventSources[0]?.url).toBe('/api/install/ssh/ssh-install-1/events')
-    eventSources[0].emit({ step: 'connect_ssh', label: '连接 SSH', status: 'success', message: 'SSH 已连接' })
-    expect(await screen.findByText('连接 SSH')).toBeInTheDocument()
-    expect(screen.getByText('SSH 已连接')).toBeInTheDocument()
   })
 })

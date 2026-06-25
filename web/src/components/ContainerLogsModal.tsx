@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { RefreshCw, X } from 'lucide-react'
 import type { ContainerLogsData, ContainerLogsError, ContainerLogsExit, ContainerLogsRequest, ContainerLogsResponse, ContainerLogsStop } from '../types'
 
 interface ContainerLogsModalProps {
@@ -188,39 +189,39 @@ export default function ContainerLogsModal({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleClose}>
+    <div className="soft-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
       <div
-        className="flex h-[80vh] w-[90vw] max-w-6xl flex-col rounded-lg border border-border bg-card shadow-xl"
+        className="soft-modal-shell flex h-[80vh] w-[90vw] max-w-6xl flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="soft-modal-header flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-lg font-bold text-foreground">
             容器日志: <span className="font-mono">{containerName}</span>
           </h3>
           <button
             onClick={handleClose}
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="soft-button inline-flex h-9 w-9 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
             title="关闭"
+            aria-label="关闭"
           >
-            ✕
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Controls */}
-        <div className="border-b border-border px-4 py-3">
-          <div className="flex items-center gap-3">
+        <div className="px-4 py-3">
+          <div className="soft-toolbar flex flex-wrap items-center gap-3 p-3">
             <button
               onClick={connectLogs}
-              className="rounded bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="soft-button inline-flex min-h-9 items-center gap-1.5 bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               disabled={isConnected}
             >
-              🔄 刷新
+              <RefreshCw size={15} aria-hidden="true" />
+              刷新
             </button>
             <select
               value={lines}
               onChange={(e) => setLines(parseInt(e.target.value))}
-              className="rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground disabled:opacity-50"
+              className="soft-input min-h-9 px-2 text-sm disabled:opacity-50"
               disabled={isConnected}
             >
               <option value={50}>50 行</option>
@@ -244,7 +245,7 @@ export default function ContainerLogsModal({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索日志..."
-              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              className="soft-input min-h-9 min-w-[220px] flex-1 px-3 text-sm placeholder:text-muted-foreground"
             />
             <label className="flex items-center gap-1.5 text-sm text-foreground">
               <input
@@ -257,7 +258,7 @@ export default function ContainerLogsModal({
             </label>
             <button
               onClick={handleClear}
-              className="rounded border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+              className="soft-button min-h-9 border border-border bg-card px-3 text-sm font-medium text-foreground hover:bg-muted"
             >
               清空
             </button>
@@ -272,15 +273,14 @@ export default function ContainerLogsModal({
 
         {/* Error display */}
         {error && (
-          <div className="mx-4 mt-4 rounded border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="mx-4 mt-1 rounded-2xl border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
             {error}
           </div>
         )}
 
-        {/* Log content */}
         <div
           ref={logContainerRef}
-          className="flex-1 overflow-auto px-4 py-3 font-mono text-xs"
+          className="mx-4 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-code px-4 py-3 font-mono text-xs text-code-foreground"
         >
           {filteredLogs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -291,7 +291,7 @@ export default function ContainerLogsModal({
               {filteredLogs.map((line, index) => (
                 <div
                   key={index}
-                  className={line.stream === 'stderr' ? 'text-red-500' : 'text-foreground'}
+                  className={line.stream === 'stderr' ? 'text-danger' : 'text-code-foreground'}
                 >
                   {highlightText(line.text, searchQuery)}
                 </div>
@@ -300,8 +300,7 @@ export default function ContainerLogsModal({
           )}
         </div>
 
-        {/* Footer info */}
-        <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+        <div className="soft-modal-footer mt-4 border-t px-4 py-2 text-xs text-muted-foreground">
           共 {logContent.length} 行
           {searchQuery && ` · 筛选后 ${filteredLogs.length} 行`}
         </div>

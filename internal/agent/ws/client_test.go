@@ -169,6 +169,7 @@ func TestRunDispatchesAllK8sResourceRequests(t *testing.T) {
 		protocol.MessageTypeK8sGetServices,
 		protocol.MessageTypeK8sGetIngresses,
 		protocol.MessageTypeK8sGetDiagnostics,
+		protocol.MessageTypeK8sApplyManifest,
 		protocol.MessageTypeK8sGetPodLogs,
 	}
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}

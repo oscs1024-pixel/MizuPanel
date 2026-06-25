@@ -67,8 +67,8 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="soft-empty-state px-10 py-8 text-center">
           <div className="mb-3 inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
           <p className="text-sm font-semibold text-muted-foreground">加载集群列表...</p>
         </div>
@@ -78,13 +78,13 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <p className="text-sm font-semibold text-destructive">{error}</p>
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="soft-empty-state px-10 py-8 text-center">
+          <p className="text-sm font-semibold text-danger">{error}</p>
           <button
             type="button"
             onClick={loadClusters}
-            className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+            className="soft-button mt-4 bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
           >
             重试
           </button>
@@ -111,14 +111,14 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
         <button
           type="button"
           onClick={onConnectCluster}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition hover:bg-primary/90"
+          className="soft-button bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90"
         >
           连接集群
         </button>
       </div>
 
       {clusters.length === 0 ? (
-        <div className="flex h-64 items-center justify-center rounded-[14px] border border-border bg-card">
+        <div className="soft-empty-state flex h-64 items-center justify-center">
           <div className="text-center">
             <p className="text-sm font-semibold text-muted-foreground">暂无集群</p>
             <p className="mt-1 text-xs text-muted-foreground">点击"连接集群"按钮开始</p>
@@ -126,7 +126,7 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
         </div>
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-3 shadow-sm">
+          <div className="soft-toolbar mb-4 flex flex-wrap items-center justify-between gap-3 p-3">
             <div className="relative min-w-[260px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <input
@@ -134,7 +134,7 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
                 value={clusterSearch}
                 onChange={(event) => setClusterSearch(event.target.value)}
                 placeholder="搜索集群、Agent、IP、Context"
-                className="h-11 w-full rounded-xl border border-border bg-surface pl-9 pr-4 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                className="soft-input h-11 w-full pl-9 pr-4 text-sm font-semibold placeholder:text-muted-foreground"
               />
             </div>
             <span className="shrink-0 rounded-full bg-muted px-3 py-1.5 text-xs font-black text-muted-foreground">
@@ -143,7 +143,7 @@ export function K8sClustersPage({ onConnectCluster, onViewDetail }: K8sClustersP
           </div>
 
           {filteredClusters.length === 0 ? (
-            <div className="flex h-64 items-center justify-center rounded-[14px] border border-dashed border-border bg-card">
+            <div className="soft-empty-state flex h-64 items-center justify-center">
               <p className="text-sm font-semibold text-muted-foreground">没有匹配的集群</p>
             </div>
           ) : (
@@ -181,7 +181,7 @@ function ClusterCard({ cluster, pendingDelete, onRequestDelete, onCancelDelete, 
   const isOnline = cluster.node_status === 'online' && cluster.status === 'online'
 
   return (
-    <div className="rounded-[14px] border border-border bg-card p-4 shadow-sm transition hover:shadow-md">
+    <div className="soft-card p-4 transition hover:border-primary/25">
       <div className="mb-3 flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -209,21 +209,21 @@ function ClusterCard({ cluster, pendingDelete, onRequestDelete, onCancelDelete, 
         <button
           type="button"
           onClick={() => onViewDetail?.(cluster.id)}
-          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground transition hover:bg-muted"
+          className="soft-button flex-1 border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground hover:bg-muted"
         >
           查看详情
         </button>
         {pendingDelete ? (
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => onConfirmDelete(cluster.id)} className="rounded-lg bg-destructive px-3 py-2 text-xs font-bold text-destructive-foreground transition hover:bg-destructive/90">
+            <button type="button" onClick={() => onConfirmDelete(cluster.id)} className="soft-button bg-danger px-3 py-2 text-xs font-bold text-white hover:bg-danger/90">
               确认删除
             </button>
-            <button type="button" onClick={onCancelDelete} className="rounded-lg border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground transition hover:bg-muted">
+            <button type="button" onClick={onCancelDelete} className="soft-button border border-border bg-surface px-3 py-2 text-xs font-bold text-foreground hover:bg-muted">
               取消
             </button>
           </div>
         ) : (
-          <button type="button" onClick={() => onRequestDelete(cluster.id)} className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20">
+          <button type="button" onClick={() => onRequestDelete(cluster.id)} className="soft-button border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-bold text-danger hover:bg-danger/20">
             删除
           </button>
         )}
@@ -234,7 +234,7 @@ function ClusterCard({ cluster, pendingDelete, onRequestDelete, onCancelDelete, 
 
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface px-2 py-1.5">
+    <div className="rounded-xl border border-border bg-surface/70 px-2 py-1.5">
       <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className="mt-0.5 truncate text-xs font-bold text-foreground">{value}</p>
     </div>

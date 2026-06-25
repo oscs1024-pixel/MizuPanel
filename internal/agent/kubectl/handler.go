@@ -78,6 +78,8 @@ func (h *Handler) Handle(ctx context.Context, msgType string, data json.RawMessa
 		return h.handleGetDiagnostics(ctx, data, sendFunc)
 	case protocol.MessageTypeK8sResourceAction:
 		return h.handleResourceAction(ctx, data, sendFunc)
+	case protocol.MessageTypeK8sApplyManifest:
+		return h.handleApplyManifest(ctx, data, sendFunc)
 	case protocol.MessageTypeK8sGetPodLogs:
 		return h.handleGetPodLogs(ctx, data, sendFunc)
 	}
@@ -266,6 +268,22 @@ func (h *Handler) handleResourceAction(ctx context.Context, data json.RawMessage
 	result, err := client.ExecuteResourceAction(ctx, req)
 	if err != nil {
 		return sendFunc(protocol.K8sResourceActionResult{Type: protocol.MessageTypeK8sResourceActionResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	return sendFunc(result)
+}
+
+func (h *Handler) handleApplyManifest(ctx context.Context, data json.RawMessage, sendFunc func(interface{}) error) error {
+	var req protocol.K8sApplyManifestRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return sendFunc(protocol.K8sApplyManifestResult{Type: protocol.MessageTypeK8sApplyManifestResult, RequestID: req.RequestID, Success: false, Error: "解析创建请求失败"})
+	}
+	client, err := h.clientFor(req.ClusterID, req.KubeconfigContent, req.Context)
+	if err != nil {
+		return sendFunc(protocol.K8sApplyManifestResult{Type: protocol.MessageTypeK8sApplyManifestResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
+	}
+	result, err := client.ApplyManifest(ctx, req)
+	if err != nil {
+		return sendFunc(protocol.K8sApplyManifestResult{Type: protocol.MessageTypeK8sApplyManifestResult, RequestID: req.RequestID, Success: false, Error: err.Error()})
 	}
 	return sendFunc(result)
 }

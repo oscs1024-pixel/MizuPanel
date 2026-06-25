@@ -448,6 +448,16 @@ type ResourceActionResult struct {
 	Message string `json:"message,omitempty"`
 }
 
+type ApplyManifestRequest struct {
+	YAML   string `json:"yaml"`
+	DryRun bool   `json:"dry_run,omitempty"`
+}
+
+type ApplyManifestResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
 func supportedResourceAction(kind, action string) bool {
 	switch action {
 	case "delete":
@@ -594,4 +604,58 @@ func (s *Service) ExecuteResourceAction(ctx context.Context, clusterID, kind, na
 		log.Printf("[debug][server][k8s] action done request_id=%s cluster_id=%s node_id=%s kind=%s namespace=%s name=%s action=%s elapsed=%s success=true", requestID, clusterID, cluster.NodeID, kind, namespace, name, action, time.Since(start))
 	}
 	return &ResourceActionResult{Success: true, Message: agentResp.Message}, nil
+}
+
+func (s *Service) ApplyManifest(ctx context.Context, clusterID string, req ApplyManifestRequest) (*ApplyManifestResult, error) {
+	body := strings.TrimSpace(req.YAML)
+	if body == "" {
+		return nil, fmt.Errorf("YAML 不能为空")
+	}
+
+	cluster, err := s.store.GetCluster(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.hub.IsNodeOnline(cluster.NodeID) {
+		return nil, fmt.Errorf("Agent 节点离线")
+	}
+	if strings.TrimSpace(cluster.KubeconfigContent) == "" {
+		return nil, fmt.Errorf("集群缺少 kubeconfig 内容，请重新连接集群")
+	}
+
+	requestID := uuid.New().String()
+	agentReq := protocol.K8sApplyManifestRequest{
+		Type:              protocol.MessageTypeK8sApplyManifest,
+		RequestID:         requestID,
+		ClusterID:         clusterID,
+		YAML:              req.YAML,
+		DryRun:            req.DryRun,
+		KubeconfigContent: cluster.KubeconfigContent,
+		Context:           cluster.Context,
+	}
+	start := time.Now()
+	if s.debug {
+		log.Printf("[debug][server][k8s] apply_manifest start request_id=%s cluster_id=%s node_id=%s dry_run=%v", requestID, clusterID, cluster.NodeID, req.DryRun)
+	}
+	rawResp, err := s.hub.SendToNodeWithTimeout(cluster.NodeID, agentReq, 30*time.Second)
+	if err != nil {
+		if s.debug {
+			log.Printf("[debug][server][k8s] apply_manifest done request_id=%s cluster_id=%s node_id=%s dry_run=%v elapsed=%s error=%v", requestID, clusterID, cluster.NodeID, req.DryRun, time.Since(start), err)
+		}
+		return nil, fmt.Errorf("Agent 响应超时: %w", err)
+	}
+	var agentResp protocol.K8sApplyManifestResult
+	if err := json.Unmarshal(rawResp, &agentResp); err != nil {
+		return nil, fmt.Errorf("解析 Agent 响应失败: %w", err)
+	}
+	if !agentResp.Success {
+		if s.debug {
+			log.Printf("[debug][server][k8s] apply_manifest done request_id=%s cluster_id=%s node_id=%s dry_run=%v elapsed=%s agent_success=false error=%s", requestID, clusterID, cluster.NodeID, req.DryRun, time.Since(start), agentResp.Error)
+		}
+		return nil, fmt.Errorf("操作失败: %s", agentResp.Error)
+	}
+	if s.debug {
+		log.Printf("[debug][server][k8s] apply_manifest done request_id=%s cluster_id=%s node_id=%s dry_run=%v elapsed=%s success=true", requestID, clusterID, cluster.NodeID, req.DryRun, time.Since(start))
+	}
+	return &ApplyManifestResult{Success: true, Message: agentResp.Message}, nil
 }

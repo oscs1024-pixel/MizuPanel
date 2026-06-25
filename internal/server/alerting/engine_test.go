@@ -234,11 +234,11 @@ func TestCheckRulesIntegration(t *testing.T) {
 
 	// Insert a metric that triggers the rule
 	metric := store.Metric{
-		NodeID:       "node-1",
-		MemoryUsage:  95.0,
-		CPUUsage:     50.0,
-		DiskUsage:    60.0,
-		CreatedAt:    time.Now().UTC(),
+		NodeID:      "node-1",
+		MemoryUsage: 95.0,
+		CPUUsage:    50.0,
+		DiskUsage:   60.0,
+		CreatedAt:   time.Now().UTC(),
 	}
 	if err := metrics.Insert(context.Background(), metric); err != nil {
 		t.Fatalf("insert metric: %v", err)
@@ -254,5 +254,138 @@ func TestCheckRulesIntegration(t *testing.T) {
 	state := engine.getAlertState(rule.ID, "node-1")
 	if state == nil || !state.ConditionMet {
 		t.Fatal("expected alert state to be created and condition met")
+	}
+}
+
+func TestCheckRulesResolvesTriggeredAlertWhenMetricRecovers(t *testing.T) {
+	engine, alerts, metrics, nodes := testEngine(t)
+	ctx := context.Background()
+
+	node := store.Node{
+		ID:       "node-1",
+		Name:     "Test Node",
+		OS:       "linux",
+		Hostname: "test-host",
+	}
+	if err := nodes.Upsert(ctx, node); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := alerts.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := metrics.Insert(ctx, store.Metric{NodeID: "node-1", CPUUsage: 95.0, CreatedAt: now}); err != nil {
+		t.Fatalf("insert triggering metric: %v", err)
+	}
+	if err := engine.CheckRules(ctx); err != nil {
+		t.Fatalf("check triggering rules: %v", err)
+	}
+
+	active, err := alerts.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get active alerts: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active alerts = %d, want 1", len(active))
+	}
+
+	if err := metrics.Insert(ctx, store.Metric{NodeID: "node-1", CPUUsage: 30.0, CreatedAt: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("insert recovery metric: %v", err)
+	}
+	if err := engine.CheckRules(ctx); err != nil {
+		t.Fatalf("check recovered rules: %v", err)
+	}
+
+	active, err = alerts.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get active alerts after recovery: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active alerts after recovery = %d, want 0", len(active))
+	}
+
+	history, err := alerts.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get alert history: %v", err)
+	}
+	if len(history) != 1 || history[0].ResolvedAt == nil {
+		t.Fatalf("history = %+v, want one resolved alert", history)
+	}
+}
+
+func TestCheckRulesClearsExternallyResolvedStateBeforeRetriggering(t *testing.T) {
+	engine, alerts, metrics, nodes := testEngine(t)
+	ctx := context.Background()
+
+	node := store.Node{
+		ID:       "node-1",
+		Name:     "Test Node",
+		OS:       "linux",
+		Hostname: "test-host",
+	}
+	if err := nodes.Upsert(ctx, node); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := alerts.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := metrics.Insert(ctx, store.Metric{NodeID: "node-1", CPUUsage: 95.0, CreatedAt: now}); err != nil {
+		t.Fatalf("insert first metric: %v", err)
+	}
+	if err := engine.CheckRules(ctx); err != nil {
+		t.Fatalf("check first rules: %v", err)
+	}
+
+	active, err := alerts.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get active alerts: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active alerts = %d, want 1", len(active))
+	}
+	firstHistoryID := active[0].ID
+	if err := alerts.UpdateAlertHistoryResolved(firstHistoryID, now.Add(30*time.Second)); err != nil {
+		t.Fatalf("externally resolve alert: %v", err)
+	}
+
+	if err := metrics.Insert(ctx, store.Metric{NodeID: "node-1", CPUUsage: 96.0, CreatedAt: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("insert second metric: %v", err)
+	}
+	if err := engine.CheckRules(ctx); err != nil {
+		t.Fatalf("check second rules: %v", err)
+	}
+
+	active, err = alerts.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get retriggered active alerts: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active alerts after retrigger = %d, want 1", len(active))
+	}
+	if active[0].ID == firstHistoryID {
+		t.Fatalf("retriggered alert reused resolved history id %d", firstHistoryID)
 	}
 }

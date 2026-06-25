@@ -407,7 +407,21 @@ export type K8sResourceSummary = {
 }
 
 export type K8sNamespace = { name: string; status: string; age: string }
-export type K8sNode = { name: string; status: string; roles: string; version: string; internal_ip: string; pod_cidr?: string; age: string }
+export type K8sNode = {
+  name: string
+  status: string
+  roles: string
+  version: string
+  internal_ip: string
+  pod_cidr?: string
+  age: string
+  cpu_capacity_milli?: number
+  cpu_allocatable_milli?: number
+  memory_capacity_bytes?: number
+  memory_allocatable_bytes?: number
+  pod_capacity?: number
+  pod_allocatable?: number
+}
 export type K8sDeployment = { name: string; namespace: string; ready: string; up_to_date: number; available: number; age: string }
 export type K8sStatefulSet = { name: string; namespace: string; ready: string; service_name: string; age: string }
 export type K8sDaemonSet = { name: string; namespace: string; desired: number; current: number; ready: number; available: number; age: string }
@@ -478,6 +492,16 @@ export type K8sResourceActionResponse = {
   message?: string
 }
 
+export type K8sApplyManifestRequest = {
+  yaml: string
+  dry_run?: boolean
+}
+
+export type K8sApplyManifestResponse = {
+  success: boolean
+  message?: string
+}
+
 export type K8sPod = {
   name: string
   namespace: string
@@ -487,6 +511,27 @@ export type K8sPod = {
   age: string
   node: string
   ip?: string
+  workload_kind?: string
+  workload_name?: string
+  metrics_available?: boolean
+  cpu_usage_milli?: number
+  memory_usage_bytes?: number
+  containers?: K8sPodContainer[]
+}
+
+export type K8sPodContainer = {
+  name: string
+  image?: string
+  ready: boolean
+  restart_count: number
+  state?: string
+  state_reason?: string
+  cpu_usage_milli?: number
+  memory_usage_bytes?: number
+  cpu_request_milli?: number
+  cpu_limit_milli?: number
+  memory_request_bytes?: number
+  memory_limit_bytes?: number
 }
 
 export type K8sPodsResponse = {

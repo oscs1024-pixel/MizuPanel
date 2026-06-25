@@ -93,6 +93,8 @@ const (
 	MessageTypeK8sGetDiagnosticsResult  = "k8s_get_diagnostics_result"
 	MessageTypeK8sResourceAction        = "k8s_resource_action"
 	MessageTypeK8sResourceActionResult  = "k8s_resource_action_result"
+	MessageTypeK8sApplyManifest         = "k8s_apply_manifest"
+	MessageTypeK8sApplyManifestResult   = "k8s_apply_manifest_result"
 )
 
 type HelloMessage struct {
@@ -613,13 +615,19 @@ type K8sNamespace struct {
 }
 
 type K8sNode struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Roles      string `json:"roles"`
-	Version    string `json:"version"`
-	InternalIP string `json:"internal_ip"`
-	PodCIDR    string `json:"pod_cidr,omitempty"`
-	Age        string `json:"age"`
+	Name                   string `json:"name"`
+	Status                 string `json:"status"`
+	Roles                  string `json:"roles"`
+	Version                string `json:"version"`
+	InternalIP             string `json:"internal_ip"`
+	PodCIDR                string `json:"pod_cidr,omitempty"`
+	Age                    string `json:"age"`
+	CPUCapacityMilli       int64  `json:"cpu_capacity_milli,omitempty"`
+	CPUAllocatableMilli    int64  `json:"cpu_allocatable_milli,omitempty"`
+	MemoryCapacityBytes    int64  `json:"memory_capacity_bytes,omitempty"`
+	MemoryAllocatableBytes int64  `json:"memory_allocatable_bytes,omitempty"`
+	PodCapacity            int64  `json:"pod_capacity,omitempty"`
+	PodAllocatable         int64  `json:"pod_allocatable,omitempty"`
 }
 
 type K8sDeployment struct {
@@ -814,6 +822,24 @@ type K8sResourceActionResult struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type K8sApplyManifestRequest struct {
+	Type              string `json:"type"`
+	RequestID         string `json:"request_id"`
+	ClusterID         string `json:"cluster_id"`
+	YAML              string `json:"yaml"`
+	DryRun            bool   `json:"dry_run"`
+	KubeconfigContent string `json:"kubeconfig_content,omitempty"`
+	Context           string `json:"context,omitempty"`
+}
+
+type K8sApplyManifestResult struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 type K8sClusterConnectResult struct {
 	Type        string          `json:"type"`
 	RequestID   string          `json:"request_id"`
@@ -849,14 +875,35 @@ type K8sGetPodsResult struct {
 }
 
 type K8sPod struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Status    string `json:"status"`   // Running, Pending, Failed, etc.
-	Ready     string `json:"ready"`    // 1/1, 0/1, etc.
-	Restarts  int    `json:"restarts"` // 重启次数
-	Age       string `json:"age"`      // 运行时间
-	Node      string `json:"node"`     // 所在节点
-	IP        string `json:"ip,omitempty"`
+	Name             string            `json:"name"`
+	Namespace        string            `json:"namespace"`
+	Status           string            `json:"status"`   // Running, Pending, Failed, etc.
+	Ready            string            `json:"ready"`    // 1/1, 0/1, etc.
+	Restarts         int               `json:"restarts"` // 重启次数
+	Age              string            `json:"age"`      // 运行时间
+	Node             string            `json:"node"`     // 所在节点
+	IP               string            `json:"ip,omitempty"`
+	WorkloadKind     string            `json:"workload_kind,omitempty"`
+	WorkloadName     string            `json:"workload_name,omitempty"`
+	MetricsAvailable bool              `json:"metrics_available"`
+	CPUUsageMilli    int64             `json:"cpu_usage_milli,omitempty"`
+	MemoryUsageBytes int64             `json:"memory_usage_bytes,omitempty"`
+	Containers       []K8sPodContainer `json:"containers,omitempty"`
+}
+
+type K8sPodContainer struct {
+	Name               string `json:"name"`
+	Image              string `json:"image,omitempty"`
+	Ready              bool   `json:"ready"`
+	RestartCount       int    `json:"restart_count"`
+	State              string `json:"state,omitempty"`
+	StateReason        string `json:"state_reason,omitempty"`
+	CPUUsageMilli      int64  `json:"cpu_usage_milli,omitempty"`
+	MemoryUsageBytes   int64  `json:"memory_usage_bytes,omitempty"`
+	CPURequestMilli    int64  `json:"cpu_request_milli,omitempty"`
+	CPULimitMilli      int64  `json:"cpu_limit_milli,omitempty"`
+	MemoryRequestBytes int64  `json:"memory_request_bytes,omitempty"`
+	MemoryLimitBytes   int64  `json:"memory_limit_bytes,omitempty"`
 }
 
 // K8s Pod 日志

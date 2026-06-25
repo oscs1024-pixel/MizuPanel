@@ -5,20 +5,21 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mizupanel/mizupanel/internal/server/store"
 )
 
 var validMetricFields = map[string]bool{
-	"cpu_usage":         true,
-	"memory_usage":      true,
-	"disk_usage":        true,
-	"swap_usage":        true,
-	"network_rx_bytes":  true,
-	"network_tx_bytes":  true,
-	"load_1":            true,
-	"load_5":            true,
-	"load_15":           true,
+	"cpu_usage":        true,
+	"memory_usage":     true,
+	"disk_usage":       true,
+	"swap_usage":       true,
+	"network_rx_bytes": true,
+	"network_tx_bytes": true,
+	"load_1":           true,
+	"load_5":           true,
+	"load_15":          true,
 }
 
 var validOperators = map[string]bool{
@@ -114,6 +115,15 @@ func (s *Server) handleAlertRule(w http.ResponseWriter, r *http.Request, idStr s
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+		existingRule, err := alertStore.GetAlertRule(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if existingRule == nil {
+			writeError(w, http.StatusNotFound, "rule not found")
+			return
+		}
 		var rule store.AlertRule
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -132,10 +142,35 @@ func (s *Server) handleAlertRule(w http.ResponseWriter, r *http.Request, idStr s
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if existingRule.Name != rule.Name {
+			if _, err := alertStore.UpdateAlertHistoryRuleNameByRuleID(rule.ID, rule.Name); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		if !rule.Enabled {
+			if _, err := alertStore.ResolveActiveAlertHistoryByRuleID(rule.ID, time.Now().UTC()); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, rule)
 	case http.MethodDelete:
 		if !sameOrigin(r) {
 			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		rule, err := alertStore.GetAlertRule(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if rule == nil {
+			writeError(w, http.StatusNotFound, "rule not found")
+			return
+		}
+		if _, err := alertStore.ResolveActiveAlertHistoryByRuleID(id, time.Now().UTC()); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		if err := alertStore.DeleteAlertRule(id); err != nil {
@@ -186,6 +221,12 @@ func (s *Server) handleToggleAlertRule(w http.ResponseWriter, r *http.Request, i
 	if err := alertStore.UpdateAlertRule(rule); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if !rule.Enabled {
+		if _, err := alertStore.ResolveActiveAlertHistoryByRuleID(rule.ID, time.Now().UTC()); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, rule)

@@ -1,7 +1,7 @@
 import type { ReactNode, MouseEvent as ReactMouseEvent } from 'react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreHorizontal, Play, RotateCw, ScrollText, Square, Terminal, Trash2 } from 'lucide-react'
+import { MoreHorizontal, Play, RotateCw, ScrollText, Square, Terminal, Trash2, X } from 'lucide-react'
 
 import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, DockerContainer, DockerSnapshotResponse, FileDeleteResponse, FileEntry, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, Metric, Node, ProcessInfo, ProcessSnapshotResponse, RangeOption, RebootResponse, SSHAuthType, SSHJobResponse, SSHProgressEvent, SSHUninstallRequest } from '../types'
 import { formatBytes, formatPercent, formatSpeed } from '../lib/format'
@@ -1085,7 +1085,9 @@ export function NodeDetail({ node, metrics, processSnapshot, dockerSnapshot, mon
                 <h3 className="mt-1 font-display text-2xl font-black tracking-tight text-foreground">卸载 Agent</h3>
                 <p className="mt-2 text-sm font-bold leading-6 text-danger">通过 SSH 登录 root，停止并删除目标机器上的 MizuPanel Agent。</p>
               </div>
-              <button type="button" aria-label="关闭" onClick={closeSSHUninstallDialog} className="shrink-0 rounded-2xl border border-danger/30 bg-danger/5 px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/10 focus:outline-none focus:ring-4 focus:ring-danger/20">✕</button>
+              <button type="button" aria-label="关闭" onClick={closeSSHUninstallDialog} className="soft-button inline-flex h-9 w-9 shrink-0 items-center justify-center border border-danger/30 bg-danger/5 text-danger hover:bg-danger/10 focus:outline-none focus:ring-4 focus:ring-danger/20">
+                <X size={16} aria-hidden="true" />
+              </button>
             </div>
             <div className="grid gap-3 overflow-y-auto px-5 py-4 sm:grid-cols-2">
               <label className="text-xs font-black text-foreground">SSH Host<input aria-label="SSH Host" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} className="mt-1 min-h-10 w-full rounded-2xl border border-border bg-card px-3 text-sm font-bold text-foreground outline-none focus:border-red-400 focus:ring-4 focus:ring-danger/20" /></label>
@@ -1611,10 +1613,11 @@ function StatusPill({ value, detail }: { value: string, detail?: string }) {
       : normalized.includes('restart') || normalized.includes('zombie')
         ? 'bg-warning/10 text-warning ring-warning/20'
         : 'bg-info/10 text-info ring-info/20'
+  const widthClass = detail ? 'w-full min-w-0' : 'w-fit max-w-full whitespace-nowrap'
   return (
-    <span className={`inline-flex w-full flex-col rounded-2xl px-3 py-1 text-xs font-black ring-1 ${className}`}>
-      <span>{value || 'unknown'}</span>
-      {detail ? <span className="mt-0.5 truncate font-semibold opacity-75">{detail}</span> : null}
+    <span className={`inline-flex ${widthClass} flex-col rounded-2xl px-3 py-1 text-xs font-black ring-1 ${className}`}>
+      <span className={detail ? 'truncate' : undefined}>{value || 'unknown'}</span>
+      {detail ? <span className="mt-0.5 max-w-full truncate font-semibold opacity-75">{detail}</span> : null}
     </span>
   )
 }

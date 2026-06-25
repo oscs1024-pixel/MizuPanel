@@ -1,4 +1,4 @@
-import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AlertHistoryResponse, AlertRule, AlertRulesResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest, K8sClustersResponse } from '../types'
+import type { AgentLogsResponse, AgentRestartResponse, AgentStatusResponse, AlertHistory, AlertHistoryResponse, AlertRule, AlertRulesResponse, AuthSessionResponse, DockerSnapshotResponse, FileDeleteResponse, FileListResponse, FileReadResponse, FileUploadResponse, FileWriteResponse, InstallCommandOptions, InstallCommandResponse, InstallPlatform, LoginResponse, MetricsResponse, NodesResponse, ProcessSnapshotResponse, RangeOption, RebootResponse, SettingsResponse, SettingsUpdate, SSHInstallRequest, SSHJobResponse, SSHUninstallRequest, K8sClustersResponse } from '../types'
 
 export type SessionTokenResponse = {
   token: string
@@ -210,7 +210,22 @@ export function getAlertHistory(nodeID: string, limit = 100): Promise<AlertHisto
   return request<AlertHistoryResponse>(`/api/alerts/history?node_id=${encodeURIComponent(nodeID)}&limit=${limit}`)
 }
 
+export function resolveAlertHistory(id: number): Promise<AlertHistory> {
+  return request<AlertHistory>(`/api/alerts/history/${encodeURIComponent(id.toString())}/resolve`, { method: 'PATCH' })
+}
+
+export function deleteAlertHistory(id: number): Promise<void> {
+  return requestVoid(`/api/alerts/history/${encodeURIComponent(id.toString())}`, { method: 'DELETE' })
+}
+
+export function deleteAlertHistories(ids: number[]): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>('/api/alerts/history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids })
+  })
+}
+
 export function getK8sClusters(): Promise<K8sClustersResponse> {
   return request<K8sClustersResponse>('/api/k8s/clusters')
 }
-

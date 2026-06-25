@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -305,6 +306,436 @@ func TestToggleAlertRule(t *testing.T) {
 	}
 	if response.Enabled {
 		t.Fatal("response.Enabled = true, want false after toggle")
+	}
+}
+
+func TestToggleAlertRuleResolvesActiveAlertsWhenDisabled(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "Toggle Rule",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create active history: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"enabled": false})
+	req := httptest.NewRequest("PATCH", "/api/alerts/rules/1/toggle", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	active, err := s.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get active alerts: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active alerts = %d, want 0 after disabling rule", len(active))
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 || history[0].ResolvedAt == nil {
+		t.Fatalf("history = %+v, want disabled rule alert resolved", history)
+	}
+}
+
+func TestUpdateAlertRuleRenamesActiveHistory(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "Old Rule",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create active history: %v", err)
+	}
+
+	update := map[string]interface{}{
+		"name":                  "New Rule",
+		"enabled":               true,
+		"metric_field":          "cpu_usage",
+		"operator":              ">",
+		"threshold":             80.0,
+		"duration_seconds":      0,
+		"scope_type":            "all",
+		"notification_channels": []map[string]interface{}{},
+	}
+	body, _ := json.Marshal(update)
+	req := httptest.NewRequest("PUT", "/api/alerts/rules/1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 || history[0].RuleName != "New Rule" {
+		t.Fatalf("history = %+v, want active history rule name updated", history)
+	}
+}
+
+func TestUpdateAlertRuleRenamesResolvedHistory(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "Old Rule",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	resolvedAt := time.Now().UTC()
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: resolvedAt.Add(-time.Minute),
+		ResolvedAt:  &resolvedAt,
+	}); err != nil {
+		t.Fatalf("create resolved history: %v", err)
+	}
+
+	update := map[string]interface{}{
+		"name":                  "New Rule",
+		"enabled":               true,
+		"metric_field":          "cpu_usage",
+		"operator":              ">",
+		"threshold":             80.0,
+		"duration_seconds":      0,
+		"scope_type":            "all",
+		"notification_channels": []map[string]interface{}{},
+	}
+	body, _ := json.Marshal(update)
+	req := httptest.NewRequest("PUT", "/api/alerts/rules/1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 || history[0].RuleName != "New Rule" {
+		t.Fatalf("history = %+v, want resolved history rule name updated", history)
+	}
+}
+
+func TestResolveAlertHistory(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	history := &store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: time.Now().UTC(),
+	}
+	if err := s.CreateAlertHistory(history); err != nil {
+		t.Fatalf("create active history: %v", err)
+	}
+
+	req := httptest.NewRequest("PATCH", "/api/alerts/history/1/resolve", nil)
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var response store.AlertHistory
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.ID != history.ID || response.ResolvedAt == nil {
+		t.Fatalf("response = %+v, want resolved history %d", response, history.ID)
+	}
+
+	active, err := s.GetActiveAlertHistory()
+	if err != nil {
+		t.Fatalf("get active alerts: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active alerts = %d, want 0 after manual resolve", len(active))
+	}
+}
+
+func TestDeleteResolvedAlertHistory(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	resolvedAt := time.Now().UTC()
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: resolvedAt.Add(-time.Minute),
+		ResolvedAt:  &resolvedAt,
+	}); err != nil {
+		t.Fatalf("create resolved history: %v", err)
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/alerts/history/1", nil)
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("history = %+v, want deleted resolved alert removed", history)
+	}
+}
+
+func TestDeleteAlertHistoryRejectsActiveAlert(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create active history: %v", err)
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/alerts/history/1", nil)
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 || history[0].ResolvedAt != nil {
+		t.Fatalf("history = %+v, want active alert kept", history)
+	}
+}
+
+func TestDeleteResolvedAlertHistoryBatch(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "CPU High",
+		Enabled:         true,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	resolvedAt := time.Now().UTC()
+	for index := 0; index < 2; index++ {
+		if err := s.CreateAlertHistory(&store.AlertHistory{
+			RuleID:      rule.ID,
+			RuleName:    rule.Name,
+			NodeID:      "node-1",
+			NodeName:    "Node 1",
+			MetricField: "cpu_usage",
+			MetricValue: 95 + float64(index),
+			Threshold:   80,
+			TriggeredAt: resolvedAt.Add(time.Duration(-index-1) * time.Minute),
+			ResolvedAt:  &resolvedAt,
+		}); err != nil {
+			t.Fatalf("create resolved history %d: %v", index, err)
+		}
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"ids": []int64{1, 2}})
+	req := httptest.NewRequest("DELETE", "/api/alerts/history", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+req.Host)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var response struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", response.Deleted)
+	}
+	history, err := s.GetAlertHistory("node-1", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("history = %+v, want all selected resolved alerts removed", history)
+	}
+}
+
+func TestListAlertHistoryResolvesAlertsForDisabledRules(t *testing.T) {
+	router, s := testAlertRouter(t)
+
+	rule := &store.AlertRule{
+		Name:            "Disabled CPU High",
+		Enabled:         false,
+		MetricField:     "cpu_usage",
+		Operator:        ">",
+		Threshold:       80.0,
+		DurationSeconds: 0,
+		ScopeType:       "all",
+	}
+	if err := s.CreateAlertRule(rule); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if err := s.CreateAlertHistory(&store.AlertHistory{
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		NodeID:      "node-1",
+		NodeName:    "Node 1",
+		MetricField: "cpu_usage",
+		MetricValue: 95,
+		Threshold:   80,
+		TriggeredAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create active history: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/alerts/history?node_id=node-1", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var response struct {
+		History []store.AlertHistory `json:"history"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.History) != 1 || response.History[0].ResolvedAt == nil {
+		t.Fatalf("history = %+v, want disabled rule alert resolved during listing", response.History)
 	}
 }
 

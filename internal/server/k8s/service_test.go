@@ -188,3 +188,44 @@ func TestExecuteResourceActionRejectsUnsupportedCombinationBeforeAgentRequest(t 
 		t.Fatalf("expected no agent request, got %#v", hub.lastMsg)
 	}
 }
+
+func TestApplyManifestSendsStoredKubeconfigContextAndYAML(t *testing.T) {
+	hub := &recordingHub{online: true, resp: json.RawMessage(`{"success":true,"message":"资源校验成功"}`)}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+	body := `apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+`
+
+	result, err := service.ApplyManifest(context.Background(), "cluster-1", ApplyManifestRequest{YAML: body, DryRun: true})
+	if err != nil {
+		t.Fatalf("apply manifest: %v", err)
+	}
+	if result.Message != "资源校验成功" {
+		t.Fatalf("unexpected apply result: %#v", result)
+	}
+	req, ok := hub.lastMsg.(protocol.K8sApplyManifestRequest)
+	if !ok {
+		t.Fatalf("expected K8sApplyManifestRequest, got %#v", hub.lastMsg)
+	}
+	if req.Type != protocol.MessageTypeK8sApplyManifest || req.ClusterID != "cluster-1" || req.YAML != body || !req.DryRun {
+		t.Fatalf("unexpected apply request: %#v", req)
+	}
+	if req.KubeconfigContent != "apiVersion: v1\nkind: Config\n" || req.Context != "ctx-a" {
+		t.Fatalf("expected stored kubeconfig/context, got content=%q context=%q", req.KubeconfigContent, req.Context)
+	}
+}
+
+func TestApplyManifestRejectsEmptyYAMLBeforeAgentRequest(t *testing.T) {
+	hub := &recordingHub{online: true}
+	service := newTestService(t, "apiVersion: v1\nkind: Config\n", "ctx-a", hub)
+
+	_, err := service.ApplyManifest(context.Background(), "cluster-1", ApplyManifestRequest{YAML: " \n\t"})
+	if err == nil || !strings.Contains(err.Error(), "YAML 不能为空") {
+		t.Fatalf("expected empty YAML error, got %v", err)
+	}
+	if hub.lastMsg != nil {
+		t.Fatalf("expected no agent request, got %#v", hub.lastMsg)
+	}
+}

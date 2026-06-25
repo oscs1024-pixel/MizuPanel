@@ -33,6 +33,7 @@ vi.mock('../api/k8s', () => ({
   fetchK8sDiagnostics: vi.fn(),
   fetchK8sPodLogs: vi.fn(),
   executeK8sResourceAction: vi.fn(),
+  applyK8sManifest: vi.fn(),
   deleteK8sCluster: vi.fn(),
 }))
 

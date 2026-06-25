@@ -16,7 +16,7 @@ export function MetricCard({ label, value, tone = 'blue', detail }: MetricCardPr
   const [dot, text, ring] = toneClasses[tone].split(' ')
 
   return (
-    <div className={`rounded-2xl border border-border bg-card p-4 shadow-sm ring-4 ${ring}`}>
+    <div className={`soft-stat-card p-4 ring-4 ${ring}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-xs font-black tracking-[0.16em] text-muted-foreground">{label}</p>
         <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />

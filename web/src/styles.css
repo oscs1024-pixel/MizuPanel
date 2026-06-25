@@ -47,6 +47,9 @@
   --chart-network-out: 220 38 38;
   --chart-load: 124 58 237;
   --chart-swap: 20 184 166;
+  --soft-shadow: 0 18px 48px rgb(20 83 45 / 0.07);
+  --soft-shadow-strong: 0 26px 80px rgb(15 23 42 / 0.16);
+  --soft-inner-highlight: inset 0 1px 0 rgb(255 255 255 / 0.78);
   background: rgb(var(--background));
 }
 
@@ -94,6 +97,9 @@
   --chart-network-out: 248 113 113;
   --chart-load: 167 139 250;
   --chart-swap: 45 212 191;
+  --soft-shadow: 0 18px 54px rgb(0 0 0 / 0.28);
+  --soft-shadow-strong: 0 26px 90px rgb(0 0 0 / 0.45);
+  --soft-inner-highlight: inset 0 1px 0 rgb(255 255 255 / 0.05);
 }
 
 * {
@@ -105,6 +111,149 @@ body {
   min-width: 320px;
   background: rgb(var(--background));
   color: rgb(var(--foreground));
+}
+
+@layer components {
+  .soft-page {
+    background:
+      linear-gradient(180deg, rgb(var(--background)) 0%, rgb(var(--surface)) 100%);
+  }
+
+  .soft-sidebar {
+    background:
+      linear-gradient(180deg, rgb(var(--sidebar-background)) 0%, rgb(var(--surface-elevated)) 100%);
+    box-shadow: var(--soft-shadow);
+  }
+
+  .soft-topbar {
+    background: rgb(var(--header-background) / 0.88);
+    box-shadow: 0 10px 34px rgb(15 23 42 / 0.04);
+  }
+
+  .soft-panel {
+    overflow: hidden;
+    border: 1px solid rgb(var(--border) / 0.88);
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface-elevated)) 100%);
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-panel-header {
+    border-bottom: 1px solid rgb(var(--border) / 0.78);
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface)) 100%);
+  }
+
+  .soft-card {
+    border: 1px solid rgb(var(--border) / 0.86);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface-elevated)) 100%);
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-stat-card {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgb(var(--border) / 0.86);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface-elevated)) 100%);
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-table {
+    overflow: hidden;
+    border: 1px solid rgb(var(--border) / 0.86);
+    border-radius: 20px;
+    background: rgb(var(--card));
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-table thead tr {
+    background:
+      linear-gradient(180deg, rgb(var(--surface)) 0%, rgb(var(--card)) 100%);
+  }
+
+  .soft-table tbody tr {
+    transition: background-color 140ms ease, box-shadow 140ms ease;
+  }
+
+  .soft-table tbody tr:hover {
+    background: rgb(var(--primary) / 0.045);
+  }
+
+  .soft-empty-state {
+    border: 1px dashed rgb(var(--border) / 0.95);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface)) 100%);
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-toolbar {
+    border: 1px solid rgb(var(--border) / 0.86);
+    border-radius: 18px;
+    background: rgb(var(--card) / 0.92);
+    box-shadow: var(--soft-shadow), var(--soft-inner-highlight);
+  }
+
+  .soft-input {
+    border: 1px solid rgb(var(--border) / 0.95);
+    border-radius: 14px;
+    background: rgb(var(--surface) / 0.88);
+    color: rgb(var(--foreground));
+    transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+  }
+
+  .soft-input:focus {
+    border-color: rgb(var(--primary) / 0.58);
+    box-shadow: 0 0 0 4px rgb(var(--primary) / 0.14);
+    outline: none;
+  }
+
+  .soft-button {
+    border-radius: 14px;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+  }
+
+  .soft-button:active {
+    transform: translateY(1px);
+  }
+
+  .soft-modal-overlay {
+    background: rgb(3 7 18 / 0.46);
+    backdrop-filter: blur(8px);
+  }
+
+  .soft-modal-shell {
+    overflow: hidden;
+    border: 1px solid rgb(var(--border) / 0.88);
+    border-radius: 26px;
+    background: rgb(var(--card));
+    box-shadow: var(--soft-shadow-strong);
+  }
+
+  .soft-modal-header,
+  .soft-modal-footer {
+    border-color: rgb(var(--border) / 0.82);
+    background:
+      linear-gradient(180deg, rgb(var(--card)) 0%, rgb(var(--surface)) 100%);
+  }
+
+  .soft-drawer {
+    border-left: 1px solid rgb(var(--border) / 0.88);
+    background:
+      linear-gradient(180deg, rgb(var(--background)) 0%, rgb(var(--surface)) 100%);
+    box-shadow: var(--soft-shadow-strong);
+  }
+
+  .soft-chip {
+    border: 1px solid rgb(var(--border) / 0.88);
+    border-radius: 999px;
+    background: rgb(var(--surface) / 0.86);
+  }
 }
 
 .dark .bg-white,

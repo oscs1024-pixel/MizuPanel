@@ -497,6 +497,7 @@ func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, termina
 			protocol.MessageTypeK8sGetIngresses,
 			protocol.MessageTypeK8sGetDiagnostics,
 			protocol.MessageTypeK8sResourceAction,
+			protocol.MessageTypeK8sApplyManifest,
 			protocol.MessageTypeK8sGetPodLogs:
 			if c.kubectlHandler == nil {
 				if c.debug {
@@ -523,6 +524,9 @@ func (c *Client) readLoop(ctx context.Context, writer *connectionWriter, termina
 func k8sRequestTimeout(msgType string) time.Duration {
 	if msgType == protocol.MessageTypeK8sClusterConnect || msgType == protocol.MessageTypeK8sGetPodLogs {
 		return 10 * time.Second
+	}
+	if msgType == protocol.MessageTypeK8sApplyManifest {
+		return 30 * time.Second
 	}
 	return 15 * time.Second
 }

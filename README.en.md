@@ -65,7 +65,17 @@
 
 <strong>Run From Release Package</strong>
 
-Prefer the release package for deployment. Pick the build target that matches the Server machine:
+Prefer the prebuilt package from GitHub Releases. Download the package that matches the Server machine:
+
+```bash
+# x86_64 / amd64
+curl -LO https://github.com/LeoKon3/MizuPanel/releases/latest/download/mizupanel-linux-amd64.tar.gz
+
+# ARM64 / aarch64
+curl -LO https://github.com/LeoKon3/MizuPanel/releases/latest/download/mizupanel-linux-arm64.tar.gz
+```
+
+If you want to build from source locally, run:
 
 ```bash
 # x86_64 / amd64
@@ -78,7 +88,7 @@ make package-linux-arm64
 Extract the package and prepare local config:
 
 ```bash
-tar -xzf dist/mizupanel-linux-amd64.tar.gz
+tar -xzf mizupanel-linux-amd64.tar.gz
 cd mizupanel-linux-amd64
 cp server.example.yaml server.yaml
 ```

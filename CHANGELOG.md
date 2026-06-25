@@ -45,6 +45,7 @@ All notable changes to MizuPanel will be documented in this file.
 - Added `/api/system/about` and `VERSION`-backed system metadata for Dashboard settings.
 - Added GitHub repository link and version display to the System Settings page.
 - Added refreshed README screenshot gallery and separate detailed configuration/screenshot documentation pages in Chinese and English.
+- Added GitHub Actions release workflow to build and upload Linux amd64/arm64 release packages for `v*` tags and manual tag dispatch.
 
 ### Changed
 
@@ -59,6 +60,7 @@ All notable changes to MizuPanel will be documented in this file.
 - Changed Kubernetes row actions to use softer body-portaled "more" menus so table actions remain usable near scroll boundaries.
 - Changed Kubernetes table density so deeper CPU/memory/container details live in drawers or expanded rows instead of crowding the main tables.
 - Changed Kubernetes YAML display/editing to remove noisy managed-fields output from normal viewing and require dry-run before saving edits.
+- Changed release packaging to include the `VERSION` file and documented direct GitHub Release package downloads.
 - Reworked `README.md` and `README.en.md` as visual product introductions with release-package deployment first, current screenshots, and detailed setup moved to docs pages.
 - Updated screenshot assets to match the current Dashboard, host, Kubernetes, create-resource, and alert interfaces.
 

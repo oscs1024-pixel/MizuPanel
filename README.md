@@ -65,7 +65,17 @@
 
 <strong>Release 包部署运行</strong>
 
-优先使用 Release 包部署。按 Server 所在机器架构选择构建目标：
+优先使用 GitHub Release 里的预构建包。按 Server 所在机器架构下载：
+
+```bash
+# x86_64 / amd64
+curl -LO https://github.com/LeoKon3/MizuPanel/releases/latest/download/mizupanel-linux-amd64.tar.gz
+
+# ARM64 / aarch64
+curl -LO https://github.com/LeoKon3/MizuPanel/releases/latest/download/mizupanel-linux-arm64.tar.gz
+```
+
+如果你从源码本地构建，也可以执行：
 
 ```bash
 # x86_64 / amd64
@@ -78,7 +88,7 @@ make package-linux-arm64
 解压发布包并准备本机配置：
 
 ```bash
-tar -xzf dist/mizupanel-linux-amd64.tar.gz
+tar -xzf mizupanel-linux-amd64.tar.gz
 cd mizupanel-linux-amd64
 cp server.example.yaml server.yaml
 ```
